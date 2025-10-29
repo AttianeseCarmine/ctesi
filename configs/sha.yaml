@@ -1,5 +1,6 @@
 metadata:
   name: sha
+  data_dir: '/mnt/localstorage/datasets/sha/part_a' 
   description: Training configuration on the ShanghaiTech A dataset.
 
 input_size: 448
