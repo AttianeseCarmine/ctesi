@@ -1,12 +1,13 @@
-from .jhu import JHU_Crowd
-from .shha import SHHA
-from .ucf_qnrf import UCF_QNRF
-from .nwpu import NWPU
 
-def get_dataset(name):
-    name = name.lower()
-    if name == "jhu": return JHU_Crowd
-    if name == "shha": return SHHA
-    if name == "ucf": return UCF_QNRF
-    if name == "nwpu": return NWPU
-    raise ValueError(f"Dataset {name} non riconosciuto.")
+from .crowd import Crowd, InMemoryCrowd, available_datasets, standardize_dataset_name, NWPUTest, ShanghaiTech
+from .transforms import RandomCrop, Resize, RandomResizedCrop, RandomHorizontalFlip, Resize2Multiple, ZeroPad2Multiple
+from .transforms import ColorJitter, RandomGrayscale, GaussianBlur, RandomApply, PepperSaltNoise
+from .utils import collate_fn
+
+
+__all__ = [
+    "Crowd", "InMemoryCrowd", "available_datasets", "standardize_dataset_name", "NWPUTest", "ShanghaiTech",
+    "RandomCrop", "Resize", "RandomResizedCrop", "RandomHorizontalFlip", "Resize2Multiple", "ZeroPad2Multiple",
+    "ColorJitter", "RandomGrayscale", "GaussianBlur", "RandomApply", "PepperSaltNoise",
+    "collate_fn",
+]
