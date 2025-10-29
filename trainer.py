@@ -16,7 +16,7 @@ from models import get_model
 from utils import setup, cleanup, init_seeds, get_logger, get_config, barrier
 from utils import get_dataloader, get_loss_fn, get_optimizer, load_checkpoint, save_checkpoint
 from utils import get_writer, update_train_result, update_eval_result, log, calc_bin_center
-from train_zip import train
+from train import train
 from evaluate import evaluate
 
 
