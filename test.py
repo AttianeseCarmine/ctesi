@@ -8,7 +8,7 @@ import os
 current_dir = os.path.abspath(os.path.dirname(__file__))
 
 from datasets import standardize_dataset_name
-from models.ebc import get_model
+from models import get_model
 from utils import get_config, get_dataloader, setup, cleanup
 from evaluate import evaluate
 
