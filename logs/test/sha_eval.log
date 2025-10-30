@@ -1,28 +1,38 @@
+/user/cattianese/miniconda3/envs/ctesi/lib/python3.12/site-packages/open_clip/factory.py:450: UserWarning: QuickGELU mismatch between final model config (quick_gelu=False) and pretrained tag 'openai' (quick_gelu=True).
+  warnings.warn(
+Using 1 GPUs.
+Rank 0 process among 1 processes.
+Single process. No need to setup dist.
+Initialized successfully. Training with 1 GPUs.
+Using device: cuda:0.
+weight_path    :	checkpoints/sha/ebc_b_vit_best/best_mae.pth
+output_filename:	None
+dataset        :	sha
+split          :	val
+input_size     :	224
+sliding_window :	False
+max_input_size :	4096
+max_num_windows:	8
+resize_to_multiple:	False
+stride         :	224
+amp            :	False
+device         :	cuda
+num_workers    :	8
+local_rank     :	-1
+in_memory_dataset:	False
+nprocs         :	1
 Traceback (most recent call last):
-  File "/user/cattianese/ctesi/test.py", line 11, in <module>
-    from models.ebc import get_model
-  File "/user/cattianese/ctesi/models/__init__.py", line 5, in <module>
-    from .clip_ebc import _clip_ebc, CLIP_EBC
-  File "/user/cattianese/ctesi/models/clip_ebc/__init__.py", line 1, in <module>
-    from .model import CLIP_EBC, _clip_ebc
-  File "/user/cattianese/ctesi/models/clip_ebc/model.py", line 8, in <module>
-    from .vit import vit_names_and_weights, _vit
-  File "/user/cattianese/ctesi/models/clip_ebc/vit.py", line 6, in <module>
-    from peft import get_peft_model, LoraConfig
-  File "/user/cattianese/miniconda3/envs/clip_ebc_zip/lib/python3.12/site-packages/peft/__init__.py", line 17, in <module>
-    from .auto import (
-  File "/user/cattianese/miniconda3/envs/clip_ebc_zip/lib/python3.12/site-packages/peft/auto.py", line 21, in <module>
-    from transformers import (
-  File "/user/cattianese/miniconda3/envs/clip_ebc_zip/lib/python3.12/site-packages/transformers/__init__.py", line 27, in <module>
-    from . import dependency_versions_check
-  File "/user/cattianese/miniconda3/envs/clip_ebc_zip/lib/python3.12/site-packages/transformers/dependency_versions_check.py", line 57, in <module>
-    require_version_core(deps[pkg])
-  File "/user/cattianese/miniconda3/envs/clip_ebc_zip/lib/python3.12/site-packages/transformers/utils/versions.py", line 117, in require_version_core
-    return require_version(requirement, hint)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/user/cattianese/miniconda3/envs/clip_ebc_zip/lib/python3.12/site-packages/transformers/utils/versions.py", line 111, in require_version
-    _compare_versions(op, got_ver, want_ver, requirement, pkg, hint)
-  File "/user/cattianese/miniconda3/envs/clip_ebc_zip/lib/python3.12/site-packages/transformers/utils/versions.py", line 44, in _compare_versions
-    raise ImportError(
-ImportError: tokenizers>=0.21,<0.22 is required for a normal functioning of this module, but found tokenizers==0.22.1.
-Try: `pip install transformers -U` or `pip install -e '.[dev]'` if you're working with git main
+  File "/user/cattianese/ctesi/test.py", line 97, in <module>
+    run(0, 1, args)
+  File "/user/cattianese/ctesi/test.py", line 53, in run
+    dataloader = get_dataloader(args, split=args.split)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/user/cattianese/ctesi/utils/data_utils.py", line 72, in get_dataloader
+    dataset = dataset_class(
+              ^^^^^^^^^^^^^^
+  File "/user/cattianese/ctesi/datasets/crowd.py", line 69, in __init__
+    self.__check_sanity__()
+  File "/user/cattianese/ctesi/datasets/crowd.py", line 102, in __check_sanity__
+    assert len(self.image_names) == len(self.label_names) == 182, f"ShanghaiTech_A val split should have 182 images, but found {len(self.image_names)}."
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: ShanghaiTech_A val split should have 182 images, but found 0.
