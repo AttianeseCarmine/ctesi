@@ -5,7 +5,7 @@ set -e # Interrompe se un comando fallisce
 
 # 1. Percorso ai tuoi pesi della baseline
 #    (Assicurati che sia il percorso corretto!)
-PESI_BASELINE="pretrained_weights/nome_del_tuo_file.pth"
+PESI_BASELINE="checkpoints/sha/ebc_b_vit_best/best_mae.pth"
 
 # 2. File di configurazione
 #    Usa il primo argomento ($1), altrimenti usa sha.yaml
@@ -29,10 +29,7 @@ if [ ! -f "$CONFIG_FILE" ]; then
 fi
 
 # --- ESECUZIONE ---
-
-# ATTENZIONE: Questo comando fallirà finché non aggiungi "test.py"
-COMMAND="python3 test.py --config $CONFIG_FILE --ckpt_path $PESI_BASELINE"
-
+COMMAND="python3 test.py --config $CONFIG_FILE --weight_path $PESI_BASELINE"
 echo "🚀 Avvio valutazione..."
 echo "Config:   $CONFIG_FILE"
 echo "Pesi:     $PESI_BASELINE"

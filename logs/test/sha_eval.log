@@ -1,0 +1,10 @@
+Traceback (most recent call last):
+  File "/user/cattianese/ctesi/test.py", line 11, in <module>
+    from models import get_model
+  File "/user/cattianese/ctesi/models/__init__.py", line 4, in <module>
+    from .ebc import _ebc, EBC
+  File "/user/cattianese/ctesi/models/ebc/__init__.py", line 1, in <module>
+    from .model import EBC, _ebc
+  File "/user/cattianese/ctesi/models/ebc/model.py", line 8, in <module>
+    from .cannet import _cannet, _cannet_bn
+ModuleNotFoundError: No module named 'models.ebc.cannet'
