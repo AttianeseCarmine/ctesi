@@ -5,8 +5,9 @@ from typing import Optional, List, Tuple
 
 
 def get_id(x: str) -> int:
-    return int(x.split(".")[0])
-
+    filename_no_ext = x.split(".")[0]
+    id_str = filename_no_ext.replace("IMG_", "") # Rimuove il prefisso
+    return int(id_str)
 
 def generate_density_map(label: Tensor, height: int, width: int, sigma: Optional[float] = None) -> Tensor:
     """

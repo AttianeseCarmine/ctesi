@@ -1,38 +1,26 @@
-/user/cattianese/miniconda3/envs/ctesi/lib/python3.12/site-packages/open_clip/factory.py:450: UserWarning: QuickGELU mismatch between final model config (quick_gelu=False) and pretrained tag 'openai' (quick_gelu=True).
-  warnings.warn(
+Unexpected keys (norm_head.num_batches_tracked, classifier.bias, classifier.weight, conv_head.weight, norm_head.bias, norm_head.running_mean, norm_head.running_var, norm_head.weight) found while loading pretrained weights. This may be expected if model is being adapted.
 Using 1 GPUs.
 Rank 0 process among 1 processes.
 Single process. No need to setup dist.
 Initialized successfully. Training with 1 GPUs.
 Using device: cuda:0.
-weight_path    :	checkpoints/sha/ebc_b_vit_best/best_mae.pth
+weight_path    :	checkpoints/sha/ebc_t_best/best_mae.pth
 output_filename:	None
 dataset        :	sha
 split          :	val
 input_size     :	224
-sliding_window :	False
+sliding_window :	True
 max_input_size :	4096
 max_num_windows:	8
 resize_to_multiple:	False
 stride         :	224
-amp            :	False
+amp            :	True
 device         :	cuda
 num_workers    :	8
 local_rank     :	-1
 in_memory_dataset:	False
 nprocs         :	1
-Traceback (most recent call last):
-  File "/user/cattianese/ctesi/test.py", line 97, in <module>
-    run(0, 1, args)
-  File "/user/cattianese/ctesi/test.py", line 53, in run
-    dataloader = get_dataloader(args, split=args.split)
-                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/user/cattianese/ctesi/utils/data_utils.py", line 72, in get_dataloader
-    dataset = dataset_class(
-              ^^^^^^^^^^^^^^
-  File "/user/cattianese/ctesi/datasets/crowd.py", line 69, in __init__
-    self.__check_sanity__()
-  File "/user/cattianese/ctesi/datasets/crowd.py", line 102, in __check_sanity__
-    assert len(self.image_names) == len(self.label_names) == 182, f"ShanghaiTech_A val split should have 182 images, but found {len(self.image_names)}."
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-AssertionError: ShanghaiTech_A val split should have 182 images, but found 0.
+  0%|          | 0/182 [00:00<?, ?it/s]  1%|          | 1/182 [00:01<04:49,  1.60s/it]  2%|▏         | 3/182 [00:01<01:21,  2.19it/s]  4%|▍         | 7/182 [00:01<00:29,  5.99it/s]  5%|▌         | 10/182 [00:01<00:19,  8.78it/s]  7%|▋         | 13/182 [00:02<00:16, 10.42it/s] 10%|▉         | 18/182 [00:02<00:10, 16.15it/s] 12%|█▏        | 22/182 [00:02<00:08, 19.48it/s] 14%|█▎        | 25/182 [00:02<00:08, 18.19it/s] 16%|█▌        | 29/182 [00:02<00:07, 21.83it/s] 18%|█▊        | 33/182 [00:02<00:05, 25.00it/s] 20%|██        | 37/182 [00:03<00:06, 23.97it/s] 22%|██▏       | 40/182 [00:03<00:05, 24.37it/s] 24%|██▎       | 43/182 [00:03<00:05, 25.23it/s] 26%|██▌       | 47/182 [00:03<00:04, 28.21it/s] 28%|██▊       | 51/182 [00:03<00:04, 28.78it/s] 31%|███▏      | 57/182 [00:03<00:03, 33.23it/s] 34%|███▍      | 62/182 [00:03<00:03, 35.22it/s] 36%|███▋      | 66/182 [00:03<00:03, 35.25it/s] 39%|███▉      | 71/182 [00:03<00:03, 36.65it/s] 41%|████      | 75/182 [00:04<00:02, 35.76it/s] 43%|████▎     | 79/182 [00:04<00:02, 36.18it/s] 46%|████▌     | 84/182 [00:04<00:02, 37.20it/s] 48%|████▊     | 88/182 [00:04<00:02, 36.09it/s] 51%|█████     | 92/182 [00:04<00:02, 36.87it/s] 54%|█████▍    | 99/182 [00:04<00:01, 43.50it/s] 57%|█████▋    | 104/182 [00:04<00:01, 40.60it/s] 60%|█████▉    | 109/182 [00:04<00:01, 40.94it/s] 63%|██████▎   | 114/182 [00:05<00:01, 38.23it/s] 65%|██████▌   | 119/182 [00:05<00:01, 39.07it/s] 68%|██████▊   | 123/182 [00:05<00:01, 38.18it/s] 70%|██████▉   | 127/182 [00:05<00:01, 37.62it/s] 72%|███████▏  | 131/182 [00:05<00:01, 37.40it/s] 75%|███████▍  | 136/182 [00:05<00:01, 40.69it/s] 77%|███████▋  | 141/182 [00:05<00:00, 42.29it/s] 81%|████████  | 147/182 [00:05<00:00, 45.34it/s] 84%|████████▎ | 152/182 [00:05<00:00, 45.34it/s] 86%|████████▋ | 157/182 [00:06<00:00, 43.99it/s] 90%|████████▉ | 163/182 [00:06<00:00, 47.84it/s] 92%|█████████▏| 168/182 [00:06<00:00, 48.10it/s] 95%|█████████▌| 173/182 [00:06<00:00, 44.38it/s] 98%|█████████▊| 178/182 [00:06<00:00, 43.77it/s]100%|██████████| 182/182 [00:06<00:00, 27.32it/s]
+mae: 65.80129713540549
+rmse: 100.59041262706688
+nae: 0.18376026814268728

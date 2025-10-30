@@ -4,7 +4,7 @@ set -e # Interrompe se un comando fallisce
 # --- CONFIGURAZIONE ---
 
 # 1. Percorso ai tuoi pesi
-PESI_BASELINE="checkpoints/sha/ebc_b_vit_best/best_mae.pth"
+PESI_BASELINE="checkpoints/sha/ebc_t_best/best_mae.pth"
 
 # 2. File di configurazione da cui estrarre il nome del dataset
 CONFIG_FILE=${1:-"configs/sha.yaml"}
@@ -29,18 +29,12 @@ fi
 # MODIFICA CHIAVE:
 # test.py non usa --config. Passiamo --dataset usando il BASENAME.
 #
-COMMAND="python3 test.py --weight_path $PESI_BASELINE --dataset $BASENAME"
-
-#
-# NOTA IMPORTANTE:
-# Altri parametri (es. --split, --input_size, --sliding_window)
-# useranno i valori di default definiti in test.py.
-# Se i valori nel tuo 'sha.yaml' sono diversi, devi aggiungerli
-# manualmente al comando qui sotto.
-#
-# Esempio se volessi specificare più cose:
-# COMMAND="python3 test.py --weight_path $PESI_BASELINE --dataset $BASENAME --split val --input_size 768 --sliding_window"
-#
+COMMAND="python3 test.py \
+    --weight_path $PESI_BASELINE \
+    --dataset $BASENAME \
+    --sliding_window \
+    --input_size 224 \
+    --amp"
 
 echo "🚀 Avvio valutazione..."
 echo "Comando:  $COMMAND"
