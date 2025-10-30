@@ -1,33 +1,68 @@
-metadata:
-  name: sha
-  description: Training configuration on the ShanghaiTech A dataset.
+# configs/sha.yaml
+# Questo è il file con la struttura corretta
 
-input_size: 448
-block_size: 16
-batch_size: 8
-num_crops: 1
+# 1. IMPOSTAZIONI DEL MODELLO
+# (Questo esempio usa EBC/ZIP. Per CLIP-EBC, dovrai cambiarlo)
+model:
+  name: '_ebc'
+  encoder: 'vgg16_bn'
+  decoder: 'vgg16_bn'
+  block_size: 16
+  # === Per usare CLIP-EBC, sostituisci la sezione 'model' con questa: ===
+  # name: 'CLIP_EBC_RN50'
+  # block_size: 16
+  # clip_weight_name: 'RN50'
+  # vpt_shallow: True
 
-aug_min_scale: 0.75
-aug_max_scale: 2.0
-aug_brightness: 0.15
-aug_contrast: 0.15
-aug_saturation: 0.1
-aug_hue: 0.0
-aug_blur_prob: 0.0
-aug_saltiness: 0.001
-aug_spiciness: 0.001
 
-lr: 0.0001
-vpt_lr: 0.0001
-adapter_lr: 0.0001
-lora_lr: 0.0001
-backbone_lr: 0.0001
+# 2. IMPOSTAZIONI DEL DATASET
+dataset:
+  name: 'SHA'
 
-weight_decay: 0.0001
-vpt_weight_decay: 0.0001
-adapter_weight_decay: 0.0001
-lora_weight_decay: 0.0001
-backbone_weight_decay: 0.0001
+  num_classes: 10
+  input_size: 448
+  train_split: 'train'
+  eval_split: 'val' # (Usa 'val' o 'test' a seconda di cosa vuoi valutare)
+  aug_config: 'aug_config_1'
+  multi_scale_eval: False
+  eval_input_size: 0
 
-eval_freq: 0.25
-eval_start: 100
+
+# 3. IMPOSTAZIONI DELLA LOSS (ZIP)
+loss:
+  name: 'zip_nll'
+  use_regression: True
+  use_classification: True
+  use_auxiliary: True
+  weight_cls: 0.1
+  weight_reg: 1.0
+  weight_aux: 0.1
+  reg_loss: 'l1'
+  aux_loss: 'l1'
+  count_bins: [[0, 0], [1, 1], [2, 2], [3, 3], [4, 4], [5, 5], [6, 6], [7, 7], 
+               [8, 8], [9, 9], [10, 10], [11, 12], [13, 14], [15, 9999]]
+
+
+# 4. IMPOSTAZIONI DI TRAINING (puoi ignorarle se fai solo valutazione)
+train:
+  optimizer: 'adamw'
+  scheduler: 'cosine'
+  lr: 0.0001
+  weight_decay: 0.0001
+  num_epochs: 2000
+  batch_size: 8
+  num_workers: 4
+  eval_freq: 0.25 # Frequenza di valutazione
+  eval_start: 100 # Inizia a valutare dopo l'epoca 100
+  # ... (altri parametri di learning rate specifici) ...
+
+
+# 5. IMPOSTAZIONI DI VALUTAZIONE
+eval:
+  batch_size: 1
+  num_workers: 4
+  sliding_window: True
+  window_size: 512
+  stride: 256
+  max_num_windows: 20
+  max_input_size: 2048
