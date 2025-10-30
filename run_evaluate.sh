@@ -4,7 +4,7 @@ set -e # Interrompe se un comando fallisce
 # --- CONFIGURAZIONE ---
 
 # 1. Percorso ai tuoi pesi
-PESI_BASELINE="checkpoints/sha/ebc_t_best/best_mae.pth"
+PESI_BASELINE="checkpoints/sha/ebc_b_vit_best/best_mae.pth"
 
 # 2. File di configurazione da cui estrarre il nome del dataset
 CONFIG_FILE=${1:-"configs/sha.yaml"}
