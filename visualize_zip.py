@@ -70,7 +70,7 @@ def main(args):
     
     input_tensor = transform(img_pil).unsqueeze(0).to(device)
 
-    # --- 4. Esecuzione Inferenza (con "trucco" per ottenere pi_map) ---
+    # --- 4. Esecuzione Inferenza (con "trucco" per ottenere pi_map e den_map) ---
     print("Esecuzione inferenza...")
     with torch.no_grad():
         # Trucco: imposta temporaneamente training=True per forzare
@@ -88,7 +88,10 @@ def main(args):
 
         # Da models/clip_ebc/model.py (quando self.training=True):
         # return pi_logit_map, lambda_logit_map, lambda_map, den_map
-        pi_logit_map = outputs[0]
+        
+        # --- RIGA MODIFICATA ---
+        # Catturiamo sia pi_logit_map (per lo zero) che den_map (per il conteggio)
+        pi_logit_map, den_map = outputs[0], outputs[3]
 
     # --- 5. Elaborazione Mappa Zero-Probability ---
     print("Elaborazione mappa probabilità zero...")
@@ -103,6 +106,12 @@ def main(args):
     # Genera una maschera binaria basata sulla soglia
     # (H, W)
     zero_mask_binary = (zero_prob_map > args.threshold).astype(np.uint8)
+
+    # --- NUOVA SEZIONE: Calcolo Conteggio ---
+    # den_map è la mappa di densità finale (shape [1, 1, H, W])
+    # Il conteggio totale è la somma di tutti i valori in questa mappa.
+    predicted_count = den_map.sum().item()
+    # ------------------------------------
 
     # --- 6. Visualizzazione e Salvataggio ---
     
@@ -145,7 +154,12 @@ def main(args):
     cv2.imwrite(output_path_overlay, overlay)
 
     print("\n--- Completato ---")
-    print(f"Immagine originale: {args.image_path}")
+    
+    # --- RIGA AGGIUNTA ---
+    # Stampa il conteggio stimato sul terminale
+    print(f"\nConteggio persone stimato: {predicted_count:.2f}")
+    
+    print(f"\nImmagine originale: {args.image_path}")
     print(f"Mappa probabilità (heatmap): {output_path_prob}")
     print(f"Maschera 'zero' (bianco/nero): {output_path_mask}")
     print(f"Overlay (immagine + heatmap): {output_path_overlay}")
