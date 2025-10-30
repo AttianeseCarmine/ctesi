@@ -4,6 +4,7 @@ from typing import List, Tuple, Optional, Union, Dict
 from .ebc import _ebc, EBC
 from .clip_ebc import _clip_ebc, CLIP_EBC
 
+
 def get_model(
     model_info_path: str,
     model_name: Optional[str] = None,

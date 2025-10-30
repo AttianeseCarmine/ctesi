@@ -12,7 +12,6 @@ from .vit import _vit, supported_vit_backbones
 from .timm_models import _timm_model
 from .timm_models import regular_models as timm_regular_models, heavy_models as timm_heavy_models, light_models as timm_light_models, lighter_models as timm_lighter_models
 from .hrnet import _hrnet, available_hrnets
-from .ebc import EBC
 
 from ..utils import conv1x1
 
