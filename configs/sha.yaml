@@ -1,63 +1,88 @@
 # configs/sha.yaml
-# Questo è il file con la struttura corretta
+# FILE MODIFICATO PER GENERALIZZAZIONE (CLIP-EBC + LoRA)
 
 # 1. IMPOSTAZIONI DEL MODELLO
-# (Questo esempio usa EBC/ZIP. Per CLIP-EBC, dovrai cambiarlo)
 model:
-  name: '_ebc'
-  encoder: 'vgg16_bn'
-  decoder: 'vgg16_bn'
+  name: '_clip_ebc'
+  model_name: 'ViT-B-16'     # Modello backbone di CLIP
+  weight_name: 'openai'        # Pesi pre-addestrati (es. 'openai', 'laion2b')
   block_size: 16
-  # === Per usare CLIP-EBC, sostituisci la sezione 'model' con questa: ===
-  # name: 'CLIP_EBC_RN50'
-  # block_size: 16
-  # clip_weight_name: 'RN50'
-  # vpt_shallow: True
+  input_size: 448              # Deve corrispondere a dataset.input_size
+  zero_inflated: True        # Abilita il modulo ZIP
 
+  # === 1.A: GENERALIZZAZIONE (LoRA) ===
+  lora: True
+  lora_rank: 8
+  lora_alpha: 16.
+  lora_dropout: 0.1
 
-# 2. IMPOSTAZIONI DEL DATASET
+  # === 1.B: BINS E PROMPTS SEMANTICI ===
+  # Bins da bin_config.json["sha"]["16"]
+  bins: [
+      [0, 0], [1, 1], [2, 2], [3, 3], [4, 4], [5, 5], [6, 6], [7, 7], [8, 8], [9, 9],
+      [10, 10], [11, 12], [13, 14], [15, "inf"]
+    ]
+  bin_centers: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11.5, 13.5, 15] # 15 è un placeholder per l'ultimo bin
+
+  text_prompts:
+    # Prompts per il modulo ZIP (maschera zero / non-zero)
+    pi:
+      - ["a photo of an empty space", "a deserted street", "a sidewalk with no people", "nobody here", "background"]
+      - ["a photo of a person", "an image with people", "a crowd", "someone here", "people present"]
+    
+    # Prompts per il modulo VLM (conteggio), 13 prompts per 13 bin non-zero
+    lambda:
+      - ["one person"]
+      - ["two people"]
+      - ["three people"]
+      - ["four people"]
+      - ["five people"]
+      - ["six people"]
+      - ["seven people"]
+      - ["eight people"]
+      - ["nine people"]
+      - ["ten people"]
+      - ["a small group of people"]   # Bin [11, 12]
+      - ["a group of people"]         # Bin [13, 14]
+      - ["a large crowd of people"]   # Bin [15, "inf"]
+
+# 2. IMPOSTAZIONI DEL DATASET (da sha.yaml originale)
 dataset:
   name: 'SHA'
-
-  num_classes: 10
+  num_classes: 10 # Non più usato da CLIP-EBC, ma innocuo
   input_size: 448
   train_split: 'train'
-  eval_split: 'val' # (Usa 'val' o 'test' a seconda di cosa vuoi valutare)
+  eval_split: 'val'
   aug_config: 'aug_config_1'
   multi_scale_eval: False
   eval_input_size: 0
 
-
-# 3. IMPOSTAZIONI DELLA LOSS (ZIP)
+# 3. IMPOSTAZIONI DELLA LOSS (da sha.yaml originale)
 loss:
   name: 'zip_nll'
   use_regression: True
   use_classification: True
   use_auxiliary: True
-  weight_cls: 0.1
+  weight_cls: 0.1  # Parametro da testare (es. 0.1, 0.5, 1.0)
   weight_reg: 1.0
   weight_aux: 0.1
   reg_loss: 'l1'
   aux_loss: 'l1'
-  count_bins: [[0, 0], [1, 1], [2, 2], [3, 3], [4, 4], [5, 5], [6, 6], [7, 7], 
-               [8, 8], [9, 9], [10, 10], [11, 12], [13, 14], [15, 9999]]
+  # 'count_bins' rimosso, ora è gestito dal modello
 
-
-# 4. IMPOSTAZIONI DI TRAINING (puoi ignorarle se fai solo valutazione)
+# 4. IMPOSTAZIONI DI TRAINING (da sha.yaml originale)
 train:
   optimizer: 'adamw'
   scheduler: 'cosine'
   lr: 0.0001
   weight_decay: 0.0001
-  num_epochs: 2000
+  num_epochs: 1 #Verifico se funziona tutto, facendo 1 epoca di addestramento
   batch_size: 8
   num_workers: 4
-  eval_freq: 0.25 # Frequenza di valutazione
-  eval_start: 100 # Inizia a valutare dopo l'epoca 100
-  # ... (altri parametri di learning rate specifici) ...
+  eval_freq: 0.25
+  eval_start: 100
 
-
-# 5. IMPOSTAZIONI DI VALUTAZIONE
+# 5. IMPOSTAZIONI DI VALUTAZIONE (da sha.yaml originale)
 eval:
   batch_size: 1
   num_workers: 4
