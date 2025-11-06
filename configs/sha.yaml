@@ -1,33 +1,93 @@
-metadata:
-  name: sha
-  description: Training configuration on the ShanghaiTech A dataset.
+# configs/sha.yaml
+# FILE MODIFICATO PER GENERALIZZAZIONE (CLIP-EBC + LoRA)
 
-input_size: 448
-block_size: 16
-batch_size: 8
-num_crops: 1
+# 1. IMPOSTAZIONI DEL MODELLO
+model:
+  name: '_clip_ebc'
+  model_name: 'ViT-B-16'     # Modello backbone di CLIP
+  weight_name: 'openai'        # Pesi pre-addestrati (es. 'openai', 'laion2b')
+  block_size: 16
+  input_size: 448              # Deve corrispondere a dataset.input_size
+  zero_inflated: True        # Abilita il modulo ZIP
 
-aug_min_scale: 0.75
-aug_max_scale: 2.0
-aug_brightness: 0.15
-aug_contrast: 0.15
-aug_saturation: 0.1
-aug_hue: 0.0
-aug_blur_prob: 0.0
-aug_saltiness: 0.001
-aug_spiciness: 0.001
+  # === 1.A: GENERALIZZAZIONE (LoRA) ===
+  lora: True
+  lora_rank: 8
+  lora_alpha: 16.
+  lora_dropout: 0.1
 
-lr: 0.0001
-vpt_lr: 0.0001
-adapter_lr: 0.0001
-lora_lr: 0.0001
-backbone_lr: 0.0001
+  # === 1.B: BINS E PROMPTS SEMANTICI ===
+  # Bins da bin_config.json["sha"]["16"]
+  bins: [
+      [0, 0], [1, 1], [2, 2], [3, 3], [4, 4], [5, 5], [6, 6], [7, 7], [8, 8], [9, 9],
+      [10, 10], [11, 12], [13, 14], [15, "inf"]
+    ]
+  bin_centers: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11.5, 13.5, 15] # 15 è un placeholder per l'ultimo bin
 
-weight_decay: 0.0001
-vpt_weight_decay: 0.0001
-adapter_weight_decay: 0.0001
-lora_weight_decay: 0.0001
-backbone_weight_decay: 0.0001
+  text_prompts:
+    # Prompts per il modulo ZIP (maschera zero / non-zero)
+    pi:
+      - ["a photo of an empty space", "a deserted street", "a sidewalk with no people", "nobody here", "background"]
+      - ["a photo of a person", "an image with people", "a crowd", "someone here", "people present"]
+    
+    # Prompts per il modulo VLM (conteggio), 13 prompts per 13 bin non-zero
+    lambda:
+      - ["one person"]
+      - ["two people"]
+      - ["three people"]
+      - ["four people"]
+      - ["five people"]
+      - ["six people"]
+      - ["seven people"]
+      - ["eight people"]
+      - ["nine people"]
+      - ["ten people"]
+      - ["a small group of people"]   # Bin [11, 12]
+      - ["a group of people"]         # Bin [13, 14]
+      - ["a large crowd of people"]   # Bin [15, "inf"]
 
-eval_freq: 0.25
-eval_start: 100
+# 2. IMPOSTAZIONI DEL DATASET (da sha.yaml originale)
+dataset:
+  name: 'SHA'
+  num_classes: 10 # Non più usato da CLIP-EBC, ma innocuo
+  input_size: 448
+  train_split: 'train'
+  eval_split: 'val'
+  aug_config: 'aug_config_1'
+  multi_scale_eval: False
+  eval_input_size: 0
+
+# 3. IMPOSTAZIONI DELLA LOSS (da sha.yaml originale)
+loss:
+  name: 'zip_nll'
+  use_regression: True
+  use_classification: True
+  use_auxiliary: True
+  weight_cls: 0.1  # Parametro da testare (es. 0.1, 0.5, 1.0)
+  weight_reg: 1.0
+  weight_aux: 0.1
+  reg_loss: 'l1'
+  aux_loss: 'l1'
+  # 'count_bins' rimosso, ora è gestito dal modello
+
+# 4. IMPOSTAZIONI DI TRAINING (da sha.yaml originale)
+train:
+  optimizer: 'adamw'
+  scheduler: 'cosine'
+  lr: 0.0001
+  weight_decay: 0.0001
+  num_epochs: 1 #Verifico se funziona tutto, facendo 1 epoca di addestramento
+  batch_size: 8
+  num_workers: 4
+  eval_freq: 0.25
+  eval_start: 100
+
+# 5. IMPOSTAZIONI DI VALUTAZIONE (da sha.yaml originale)
+eval:
+  batch_size: 1
+  num_workers: 4
+  sliding_window: True
+  window_size: 512
+  stride: 256
+  max_num_windows: 20
+  max_input_size: 2048
