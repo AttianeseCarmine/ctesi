@@ -1,31 +1,28 @@
+# utils/train_utils.py
+from argparse import ArgumentParser
 import torch
 from torch import nn, Tensor
-
 from torch.optim import SGD, Adam, AdamW, RAdam
 from torch.amp import GradScaler
-from torch.optim.lr_scheduler import LambdaLR
+from torch.optim.lr_scheduler import LambdaLR, CosineAnnealingLR, MultiStepLR
 
 from functools import partial
-from argparse import ArgumentParser
-
 import os, sys, math
 from typing import Union, Tuple, Dict, List, Optional
 from collections import OrderedDict
+from torch.nn.parallel import DistributedDataParallel as DDP
 
 parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(parent_dir)
 
-import losses
 
-
+# === FUNZIONI HELPER PER SCHEDULER (COPIATE) ===
 def _check_lr(lr: float, eta_min: float) -> None:
     assert lr > eta_min > 0, f"lr and eta_min must satisfy 0 < eta_min < lr, got lr={lr} and eta_min={eta_min}."
-
 
 def _check_warmup(warmup_epochs: int, warmup_lr: float) -> None:
     assert warmup_epochs >= 0, f"warmup_epochs must be non-negative, got {warmup_epochs}."
     assert warmup_lr > 0, f"warmup_lr must be positive, got {warmup_lr}."
-
 
 def _warmup_lr(
     epoch: int,
@@ -33,250 +30,186 @@ def _warmup_lr(
     warmup_epochs: int,
     warmup_lr: float,
 ) -> float:
-    """
-    Linear Warmup
-    """
     base_lr, warmup_lr = float(base_lr), float(warmup_lr)
     assert epoch >= 0, f"epoch must be non-negative, got {epoch}."
     _check_warmup(warmup_epochs, warmup_lr)
+    if epoch < warmup_epochs:
+        return (base_lr - warmup_lr) * epoch / warmup_epochs + warmup_lr
+    return base_lr
 
-    if epoch < warmup_epochs:        
-        # Compute the current learning rate in log-linear scale
-        lr = math.exp(math.log(warmup_lr) + epoch * (math.log(base_lr) - math.log(warmup_lr)) / warmup_epochs)
-    else:
-        lr = base_lr
-
-    return lr
-
-
-def step_decay(
+def _cosine_lr(
     epoch: int,
     base_lr: float,
-    warmup_epochs: int,
-    warmup_lr: float,
-    step_size: int,
+    eta_min: float,
+    num_epochs: int,
+) -> float:
+    base_lr, eta_min = float(base_lr), float(eta_min)
+    _check_lr(base_lr, eta_min)
+    if epoch < 0:
+        return base_lr
+    return eta_min + 0.5 * (base_lr - eta_min) * (1.0 + math.cos(math.pi * epoch / num_epochs))
+
+def _multistep_lr(
+    epoch: int,
+    base_lr: float,
+    milestones: List[int],
     gamma: float,
-    eta_min: float,
 ) -> float:
-    """
-    Warmup + Step Decay
-    """
-    base_lr, warmup_lr, eta_min = float(base_lr), float(warmup_lr), float(eta_min)
-    assert epoch >= 0, f"epoch must be non-negative, got {epoch}."
-    assert step_size >= 1, f"step_size must be greater than or equal to 1, got {step_size}."
-    assert 0 < gamma < 1, f"gamma must be in the range (0, 1), got {gamma}."
-    _check_lr(base_lr, eta_min)
-    _check_warmup(warmup_epochs, warmup_lr)
-
-    if epoch < warmup_epochs:
-        lr = _warmup_lr(epoch, base_lr, warmup_epochs, warmup_lr)
-    else:
-        epoch -= warmup_epochs
-        lr = base_lr * (gamma ** (epoch // step_size))
-        lr = max(lr, eta_min)
-
-    return lr / base_lr
+    base_lr = float(base_lr)
+    assert all(milestones[i] < milestones[i + 1] for i in range(len(milestones) - 1)), "milestones must be a list of increasing integers."
+    assert gamma > 0, f"gamma must be positive, got {gamma}."
+    if epoch < 0:
+        return base_lr
+    power = 0
+    for m in milestones:
+        if epoch >= m:
+            power += 1
+    return base_lr * (gamma ** power)
 
 
-def cosine_annealing(
-    epoch: int,
-    base_lr: float,
-    warmup_epochs: int,
-    warmup_lr: float,
-    T_max: int,
-    eta_min: float,
-) -> float:
-    """
-    Warmup + Cosine Annealing
-    """
-    base_lr, warmup_lr, eta_min = float(base_lr), float(warmup_lr), float(eta_min)
-    assert epoch >= 0, f"epoch must be non-negative, got {epoch}."
-    assert T_max >= 1, f"T_max must be greater than or equal to 1, got {T_max}."
-    _check_lr(base_lr, eta_min)
-    _check_warmup(warmup_epochs, warmup_lr)
-
-    if epoch < warmup_epochs:
-        lr = _warmup_lr(epoch, base_lr, warmup_epochs, warmup_lr)
-    else:
-        epoch -= warmup_epochs
-        lr = eta_min + (base_lr - eta_min) * (1 + math.cos(math.pi * epoch / T_max)) / 2
-
-    return lr / base_lr
-
-
-def cosine_annealing_warm_restarts(
-    epoch: int,
-    base_lr: float,
-    warmup_epochs: int,
-    warmup_lr: float,
-    T_0: int,
-    T_mult: int,
-    eta_min: float,
-) -> float:
-    """
-    Warmup + Cosine Annealing with Warm Restarts
-    """
-    base_lr, warmup_lr, eta_min = float(base_lr), float(warmup_lr), float(eta_min)
-    assert epoch >= 0, f"epoch must be non-negative, got {epoch}."
-    assert isinstance(T_0, int) and T_0 >= 1, f"T_0 must be greater than or equal to 1, got {T_0}."
-    assert isinstance(T_mult, int) and T_mult >= 1, f"T_mult must be greater than or equal to 1, got {T_mult}."
-    _check_lr(base_lr, eta_min)
-    _check_warmup(warmup_epochs, warmup_lr)
-
-    if epoch < warmup_epochs:
-        lr = _warmup_lr(epoch, base_lr, warmup_epochs, warmup_lr)
-    else:
-        epoch -= warmup_epochs
-        if T_mult == 1:
-            T_cur = epoch % T_0
-            T_i = T_0
-        else:
-            n = int(math.log((epoch / T_0 * (T_mult - 1) + 1), T_mult))
-            T_cur = epoch - T_0 * (T_mult ** n - 1) / (T_mult - 1)
-            T_i = T_0 * T_mult ** (n)
-        
-        lr = eta_min + (base_lr - eta_min) * (1 + math.cos(math.pi * T_cur / T_i)) / 2
-
-    return lr / base_lr
-
-
-def get_loss_fn(args: ArgumentParser) -> nn.Module:
-    return losses.QuadLoss(
-        input_size=args.input_size,
-        block_size=args.block_size,
-        bins=args.bins,
-        reg_loss=args.reg_loss,
-        aux_loss=args.aux_loss,
-        weight_cls=args.weight_cls,
-        weight_reg=args.weight_reg,
-        weight_aux=args.weight_aux,
-        numItermax=args.numItermax,
-        regularization=args.regularization,
-        scales=args.scales,
-        min_scale_weight=args.min_scale_weight,
-        max_scale_weight=args.max_scale_weight,
-        alpha=args.alpha,
-    )
-
-
-def get_optimizer(
-    args: ArgumentParser,
-    model: nn.Module
-) -> Tuple[Union[SGD, Adam, AdamW, RAdam], LambdaLR]:
-    backbone_params = []
-    new_params = []
-    vpt_params = []
-    adpater_params = []
-
-    for name, param in model.named_parameters():
-        if not param.requires_grad:
-            continue
-
-        if "vpt" in name:
-            vpt_params.append(param)
-        elif "adapter" in name:
-            adpater_params.append(param)
-        elif "backbone" not in name or ("refiner" in name or "decoder" in name):
-            new_params.append(param)
-        else:
-            backbone_params.append(param)
+# === FUNZIONE PRINCIPALE (MODIFICATA) ===
+def get_optimizer_and_scheduler(
+    params: List[nn.Parameter],
+    cfg: Dict, # <--- MODIFICA: Accetta un dizionario (lo stage_cfg)
+    len_loader: int, # <--- Aggiunto len_loader (anche se non usato, per compatibilità)
+) -> Tuple[torch.optim.Optimizer, torch.optim.lr_scheduler._LRScheduler]:
     
-    if args.num_vpt is not None:  # using VTP to tune ViT-based model
-        assert len(backbone_params) == 0, f"Expected backbone_params to be empty when using VTP, got {len(backbone_params)}"
-        assert len(adpater_params) == 0, f"Expected adpater_params to be empty when using VTP, got {len(adpater_params)}"
-        param_groups = [
-            {"params": vpt_params,"lr": args.vpt_lr, "weight_decay": args.vpt_weight_decay},
-            {"params": new_params, "lr": args.lr, "weight_decay": args.weight_decay},
-        ]
-    elif args.adapter:  # using adapter to tune CLIP-based model
-        assert len(backbone_params) == 0, f"Expected backbone_params to be empty when using adapter, got {len(backbone_params)}"
-        assert len(vpt_params) == 0, f"Expected vpt_params to be empty when using adapter, got {len(vpt_params)}"
-        param_groups = [
-            {"params": adpater_params, "lr": args.adapter_lr, "weight_decay": args.adapter_weight_decay},
-            {"params": new_params, "lr": args.lr, "weight_decay": args.weight_decay},
-        ]
+    # Legge i parametri dal dizionario cfg (es. cfg['train_stage1'])
+    optimizer_name = cfg.get("optimizer", "adamw").lower()
+    lr = float(cfg.get("lr", 1e-4))
+    weight_decay = float(cfg.get("weight_decay", 1e-4))
+    
+    optimizer: torch.optim.Optimizer
+    if optimizer_name == "sgd":
+        momentum = cfg.get("momentum", 0.9)
+        optimizer = SGD(params, lr=lr, momentum=momentum, weight_decay=weight_decay)
+    elif optimizer_name == "adam":
+        optimizer = Adam(params, lr=lr, weight_decay=weight_decay)
+    elif optimizer_name == "adamw":
+        optimizer = AdamW(params, lr=lr, weight_decay=weight_decay)
+    elif optimizer_name == "radam":
+        optimizer = RAdam(params, lr=lr, weight_decay=weight_decay)
     else:
-        param_groups = [
-            {"params": new_params, "lr": args.lr, "weight_decay": args.weight_decay},
-            {"params": backbone_params, "lr": args.backbone_lr, "weight_decay": args.backbone_weight_decay}
-        ]
-    if args.optimizer == "adam":
-        optimizer = Adam(param_groups)
-    elif args.optimizer == "adamw":
-        optimizer = AdamW(param_groups)
-    elif args.optimizer == "sgd":
-        optimizer = SGD(param_groups, momentum=0.9)
+        raise ValueError(f"Optimizer {optimizer_name} not supported.")
+
+    # Scheduler
+    scheduler_name = cfg.get("scheduler", "cosine").lower()
+    num_epochs = int(cfg.get("num_epochs", 100))
+    eta_min = float(cfg.get("eta_min", 0.0))
+    warmup_epochs = int(cfg.get("warmup_epochs", 0))
+    warmup_lr = float(cfg.get("warmup_lr", 1e-6))
+    
+    scheduler: torch.optim.lr_scheduler._LRScheduler
+    if scheduler_name == "none":
+        scheduler = LambdaLR(optimizer, lr_lambda=lambda epoch: 1.0) # Dummy scheduler
+        
+    elif scheduler_name == "cosine":
+        if warmup_epochs > 0:
+            lr_lambda = partial(
+                _warmup_lr,
+                base_lr=lr,
+                warmup_epochs=warmup_epochs,
+                warmup_lr=warmup_lr,
+            )
+            scheduler = LambdaLR(optimizer, lr_lambda=lr_lambda)
+        else:
+            scheduler = CosineAnnealingLR(optimizer, T_max=num_epochs, eta_min=eta_min)
+            
+    elif scheduler_name == "multistep":
+        milestones = cfg.get("milestones", [int(num_epochs * 0.6), int(num_epochs * 0.8)])
+        gamma = cfg.get("gamma", 0.1)
+        if warmup_epochs > 0:
+            lr_lambda = partial(
+                _warmup_lr,
+                base_lr=lr,
+                warmup_epochs=warmup_epochs,
+                warmup_lr=warmup_lr,
+            )
+            scheduler = LambdaLR(optimizer, lr_lambda=lr_lambda)
+        else:
+            scheduler = MultiStepLR(optimizer, milestones=milestones, gamma=gamma)
+            
     else:
-        assert args.optimizer == "radam", f"Expected optimizer to be one of ['adam', 'adamw', 'sgd', 'radam'], got {args.optimizer}."
-        optimizer = RAdam(param_groups, decoupled_weight_decay=True)
-
-    if args.scheduler == "step":
-        lr_lambda = partial(
-            step_decay,
-            base_lr=args.lr,
-            warmup_epochs=args.warmup_epochs,
-            warmup_lr=args.warmup_lr,
-            step_size=args.step_size,
-            eta_min=args.eta_min,
-            gamma=args.gamma,
-        )
-    elif args.scheduler == "cos":
-        lr_lambda = partial(
-            cosine_annealing,
-            base_lr=args.lr,
-            warmup_epochs=args.warmup_epochs,
-            warmup_lr=args.warmup_lr,
-            T_max=args.T_max,
-            eta_min=args.eta_min,
-        )
-    elif args.scheduler == "cos_restarts":
-        lr_lambda = partial(
-            cosine_annealing_warm_restarts,
-            warmup_epochs=args.warmup_epochs,
-            warmup_lr=args.warmup_lr,
-            T_0=args.T_0,
-            T_mult=args.T_mult,
-            eta_min=args.eta_min,
-            base_lr=args.lr
-        )
-
-    scheduler = LambdaLR(
-        optimizer=optimizer,
-        lr_lambda=[lr_lambda for _ in range(len(param_groups))]
-    )
+        raise ValueError(f"Scheduler {scheduler_name} not supported.")
 
     return optimizer, scheduler
 
+# === ALTRE UTILS (MANTENUTE) ===
+
+def set_seed(seed: int) -> None:
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+# (Mantieni qui le tue vecchie funzioni 'load_checkpoint' e 'save_checkpoint'
+#  se servono ad altri script come 'evaluate.py', anche se 'train.py' non le usa più)
 
 def load_checkpoint(
-    args: ArgumentParser,
+    ckpt_path: str,
     model: nn.Module,
-    optimizer: Union[SGD, Adam, AdamW, RAdam],
-    scheduler: LambdaLR,
-    grad_scaler: GradScaler,
-    ckpt_dir: Optional[str] = None,
-) -> Tuple[nn.Module, Union[SGD, Adam, AdamW, RAdam], Union[LambdaLR, None], GradScaler, int, Union[Dict[str, float], None], Dict[str, List[float]], Dict[str, float]]:
-    ckpt_path = os.path.join(args.ckpt_dir if ckpt_dir is None else ckpt_dir, "ckpt.pth")
+    optimizer: Optional[torch.optim.Optimizer] = None,
+    scheduler: Optional[torch.optim.lr_scheduler._LRScheduler] = None,
+    grad_scaler: Optional[GradScaler] = None,
+    args: Optional[ArgumentParser] = None,
+) -> Tuple[
+    nn.Module,
+    Optional[torch.optim.Optimizer],
+    Optional[torch.optim.lr_scheduler._LRScheduler],
+    Optional[GradScaler],
+    int,
+    Optional[Dict[str, List[float]]],
+    Dict[str, List[float]],
+    Dict[str, float],
+]:
     if os.path.exists(ckpt_path):
-        ckpt = torch.load(ckpt_path, weights_only=False)
-        model.load_state_dict(ckpt["model_state_dict"])
-        optimizer.load_state_dict(ckpt["optimizer_state_dict"])
-        start_epoch = ckpt["epoch"]
-        loss_info = ckpt["loss_info"]
-        hist_scores = ckpt["hist_scores"]
-        best_scores = ckpt["best_scores"]
+        ckpt = torch.load(ckpt_path, map_location="cpu")
+        
+        # Gestisce checkpoint salvati da Trainer e checkpoint standard
+        if "model" in ckpt:
+            model_state_dict = ckpt["model"]
+        elif "model_state_dict" in ckpt:
+            model_state_dict = ckpt["model_state_dict"]
+        else:
+            model_state_dict = ckpt
 
-        if scheduler is not None:
+        # Carica il modello
+        if isinstance(model, DDP):
+            model.module.load_state_dict(model_state_dict)
+        else:
+            model.load_state_dict(model_state_dict)
+
+        # Carica componenti opzionali
+        if optimizer is not None and "optimizer" in ckpt:
+            optimizer.load_state_dict(ckpt["optimizer"])
+        elif optimizer is not None and "optimizer_state_dict" in ckpt:
+            optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+
+        if scheduler is not None and "scheduler" in ckpt:
+            scheduler.load_state_dict(ckpt["scheduler"])
+        elif scheduler is not None and "scheduler_state_dict" in ckpt:
             scheduler.load_state_dict(ckpt["scheduler_state_dict"])
-        if grad_scaler is not None:
+            
+        if grad_scaler is not None and "grad_scaler" in ckpt:
+            grad_scaler.load_state_dict(ckpt["grad_scaler"])
+        elif grad_scaler is not None and "grad_scaler_state_dict" in ckpt:
             grad_scaler.load_state_dict(ckpt["grad_scaler_state_dict"])
+
+        start_epoch = ckpt.get("epoch", 1) + 1
+        loss_info = ckpt.get("loss_info", None)
+        hist_scores = ckpt.get("hist_scores", {"mae": [], "rmse": [], "nae": []})
+        best_scores = ckpt.get("best_scores", {k: [torch.inf] * args.save_best_k for k in hist_scores.keys()})
 
         print(f"Loaded checkpoint from {ckpt_path}.")
 
     else:
         start_epoch = 1
         loss_info, hist_scores = None, {"mae": [], "rmse": [], "nae": []}
-        best_scores = {k: [torch.inf] * args.save_best_k for k in hist_scores.keys()}
+        if args is not None:
+             best_scores = {k: [torch.inf] * args.save_best_k for k in hist_scores.keys()}
+        else:
+             best_scores = {k: [torch.inf] for k in hist_scores.keys()}
         print(f"Checkpoint not found at {ckpt_path}.")
 
     return model, optimizer, scheduler, grad_scaler, start_epoch, loss_info, hist_scores, best_scores
@@ -303,4 +236,4 @@ def save_checkpoint(
         "hist_scores": hist_scores,
         "best_scores": best_scores,
     }
-    torch.save(ckpt, os.path.join(ckpt_dir, "ckpt.pth"))
+    torch.save(ckpt, os.path.join(ckpt_dir, "last.pth"))

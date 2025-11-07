@@ -10,27 +10,28 @@ model:
   input_size: 448              # Deve corrispondere a dataset.input_size
   zero_inflated: True        # Abilita il modulo ZIP
 
-  # === 1.A: GENERALIZZAZIONE (LoRA) ===
+ # === 1.A: GENERALIZZAZIONE (LoRA) ===
   lora: True
   lora_rank: 8
   lora_alpha: 16.
   lora_dropout: 0.1
+  
+  # === 1.B: NUOVI PARAMETRI DI GATING (per la logica seriale) ===
+  pi_thresh: 0.5             # Soglia per la maschera (usa 0.5)
+  gate_mode: "multiply"      # Metodo di Gating
 
-  # === 1.B: BINS E PROMPTS SEMANTICI ===
-  # Bins da bin_config.json["sha"]["16"]
+  # === 1.C: BINS E PROMPTS SEMANTICI ===
+  # (Nessuna modifica richiesta qui, la tua configurazione è già corretta)
   bins: [
       [0, 0], [1, 1], [2, 2], [3, 3], [4, 4], [5, 5], [6, 6], [7, 7], [8, 8], [9, 9],
       [10, 10], [11, 12], [13, 14], [15, "inf"]
     ]
-  bin_centers: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11.5, 13.5, 15] # 15 è un placeholder per l'ultimo bin
+  bin_centers: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11.5, 13.5, 15] 
 
   text_prompts:
-    # Prompts per il modulo ZIP (maschera zero / non-zero)
     pi:
       - ["a photo of an empty space", "a deserted street", "a sidewalk with no people", "nobody here", "background"]
       - ["a photo of a person", "an image with people", "a crowd", "someone here", "people present"]
-    
-    # Prompts per il modulo VLM (conteggio), 13 prompts per 13 bin non-zero
     lambda:
       - ["one person"]
       - ["two people"]
@@ -68,19 +69,42 @@ loss:
   weight_aux: 0.1
   reg_loss: 'l1'
   aux_loss: 'l1'
-  # 'count_bins' rimosso, ora è gestito dal modello
-
+ 
 # 4. IMPOSTAZIONI DI TRAINING (da sha.yaml originale)
-train:
+
+# STADIO 1: Pre-training PI Head (ZIP)
+train_stage1:
   optimizer: 'adamw'
   scheduler: 'cosine'
   lr: 0.0001
   weight_decay: 0.0001
-  num_epochs: 1 #Verifico se funziona tutto, facendo 1 epoca di addestramento
+  num_epochs: 100 
   batch_size: 8
   num_workers: 4
-  eval_freq: 0.25
-  eval_start: 100
+  # Early stopping non necessario per lo stadio 1
+
+# STADIO 2: Pre-training LAMBDA Head (EBC)
+train_stage2:
+  optimizer: 'adamw'
+  scheduler: 'cosine'
+  lr: 0.0001
+  weight_decay: 0.0001
+  num_epochs: 150
+  batch_size: 8
+  num_workers: 4
+  early_stopping_patience: 20 # <-- NUOVA RIGA: Interrompi dopo 20 val senza miglioramenti
+
+# STADIO 3: Joint Fine-tuning
+train_stage3:
+  optimizer: 'adamw'
+  scheduler: 'cosine'
+  lr: 0.00001 
+  weight_decay: 0.0001
+  num_epochs: 50 
+  batch_size: 8
+  num_workers: 4
+  early_stopping_patience: 10 # <-- NUOVA RIGA: Interrompi dopo 10 val senza miglioramenti
+
 
 # 5. IMPOSTAZIONI DI VALUTAZIONE (da sha.yaml originale)
 eval:

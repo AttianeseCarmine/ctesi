@@ -1,120 +1,183 @@
+# train.py (Senza Omegaconf, aggiornato per Stadi)
+import os
 import torch
-from torch import nn
-from torch.optim import Optimizer
+import torch.nn as nn
+import argparse
+import yaml  # Importa la libreria standard YAML
 from torch.utils.data import DataLoader
-from torch.amp import GradScaler, autocast
-import numpy as np
-from tqdm import tqdm
-from typing import Dict, Tuple, Union
-from copy import deepcopy
+from models import build_model
+from datasets import build_dataloader
+from losses import build_loss
+from utils import build_optimizer, build_scheduler, set_seed
+from trainer import Trainer # Importa la *classe* Trainer
+from typing import Optional, Dict
 
-from utils import barrier, reduce_mean, update_loss_info
-from evaluate import evaluate
-
-
-def train(
-    model: nn.Module,
-    data_loader: DataLoader,
-    loss_fn: nn.Module,
-    optimizer: Optimizer,
-    grad_scaler: Union[GradScaler, None],
-    device: torch.device = torch.device("cuda"),
-    rank: int = 0,
-    nprocs: int = 1,
-    **kwargs,
-) -> Tuple[nn.Module, Optimizer, GradScaler, Dict[str, float]]:
-    info = None
-    data_iter = tqdm(data_loader) if rank == 0 else data_loader
-    ddp = nprocs > 1
-
-    if "eval_data_loader" in kwargs:  # we are evaluting the model withing one training epoch
-        assert "eval_freq" in kwargs and 0 < kwargs["eval_freq"] < 1, f"eval_freq should be a float between 0 and 1, but got {kwargs['eval_freq']}"
-        assert "sliding_window" in kwargs, "sliding_window should be provided in kwargs"
-        assert "max_input_size" in kwargs, "max_input_size should be provided in kwargs"
-        assert "window_size" in kwargs, "window_size should be provided in kwargs"
-        assert "stride" in kwargs, "stride should be provided in kwargs"
-        assert "max_num_windows" in kwargs, "max_num_windows should be provided in kwargs"
-
-        eval_within_epoch = True
-        eval_data_loader = kwargs["eval_data_loader"]
-        eval_freq = int(kwargs["eval_freq"] * len(data_loader))
-        sliding_window = kwargs["sliding_window"]
-        max_input_size = kwargs["max_input_size"]
-        window_size = kwargs["window_size"]
-        stride = kwargs["stride"]
-        max_num_windows = kwargs["max_num_windows"]
-
-        best_scores = {}
-        best_weights = {}
-
-    else:
-        eval_within_epoch = False
-        best_scores = None
-        best_weights = None
-        
-    for batch_idx, (image, gt_points, gt_den_map) in enumerate(data_iter):
-        image = image.to(device)
-        gt_points = [p.to(device) for p in gt_points]
-        gt_den_map = gt_den_map.to(device)
-        model.train()
-        with torch.set_grad_enabled(True):
-            with autocast(device_type="cuda", enabled=grad_scaler is not None and grad_scaler.is_enabled()):
-                if (model.module.zero_inflated if ddp else model.zero_inflated):
-                    pred_logit_pi_map, pred_logit_map, pred_lambda_map, pred_den_map = model(image)
-                    total_loss, total_loss_info = loss_fn(
-                        pred_logit_pi_map=pred_logit_pi_map,
-                        pred_logit_map=pred_logit_map,
-                        pred_lambda_map=pred_lambda_map,
-                        pred_den_map=pred_den_map,
-                        gt_den_map=gt_den_map,
-                        gt_points=gt_points,
-                    )
-                else:
-                    pred_logit_map, pred_den_map = model(image)
-                    total_loss, total_loss_info = loss_fn(
-                        pred_logit_map=pred_logit_map,
-                        pred_den_map=pred_den_map,
-                        gt_den_map=gt_den_map,
-                        gt_points=gt_points,
-                    )
-
-        optimizer.zero_grad()
-        if grad_scaler is not None:
-            grad_scaler.scale(total_loss).backward()
-            grad_scaler.step(optimizer)
-            grad_scaler.update()
-        else:
-            total_loss.backward()
-            optimizer.step()
-
-        total_loss_info = {k: reduce_mean(v.detach(), nprocs).item() if ddp else v.detach().item() for k, v in total_loss_info.items()}
-        info = update_loss_info(info, total_loss_info)
-        barrier(ddp)
+def main(args, cfg: Dict): 
+    # Carica la configurazione base (condivisa)
+    train_cfg_base = cfg['train_base']
     
-        if eval_within_epoch and ((batch_idx + 1) % eval_freq == 0 or batch_idx == len(data_loader) - 1):
-            batch_scores = evaluate(
-                model=model,
-                data_loader=eval_data_loader,
-                sliding_window=sliding_window,
-                max_input_size=max_input_size,
-                window_size=window_size,
-                stride=stride,
-                max_num_windows=max_num_windows,
-                device=device,
-                amp=grad_scaler is not None and grad_scaler.is_enabled(),
-                local_rank=rank,
-                nprocs=nprocs,
-                progress_bar=False,
-            )
-            for k, v in batch_scores.items():
-                if k not in best_scores:
-                    best_scores[k] = v
-                    best_weights[k] = deepcopy(model.module.state_dict() if ddp else model.state_dict())
-                elif v < best_scores[k]:  # smaller is better
-                    best_scores[k] = v
-                    best_weights[k] = deepcopy(model.module.state_dict() if ddp else model.state_dict())
+    # Carica la configurazione specifica per lo stadio corrente
+    train_cfg_stage = cfg[f'train_stage{args.stage}']
+    
+    # Unisci la config base con quella dello stadio
+    # (train_cfg_stage sovrascrive train_cfg_base se ci sono duplicati)
+    train_cfg = {**train_cfg_base, **train_cfg_stage}
+    
+    # Ora usa 'train_cfg' per tutti i parametri
+    set_seed(train_cfg['seed']) 
+    device = torch.device(train_cfg['device'] if torch.cuda.is_available() else "cpu") 
 
-            barrier(ddp)
+    print(f"🚀 AVVIO DELLO STADIO {args.stage} 🚀")
 
-    torch.cuda.empty_cache()
-    return model, optimizer, grad_scaler, {k: np.mean(v) for k, v in info.items()}, best_scores, best_weights
+    # --- 1. Definizione Percorsi Checkpoint ---
+    output_dir = cfg['train_base']['output_dir'] # Leggi dalla config base
+    stage1_ckpt_path = os.path.join(output_dir, "stage1_best.pth")
+    stage2_ckpt_path = os.path.join(output_dir, "stage2_best.pth")
+    final_ckpt_path = os.path.join(output_dir, "best_mae.pth") 
+
+    load_path = args.load_ckpt
+    save_path = final_ckpt_path 
+
+    # --- 2. Creazione Modello ---
+    model = build_model(cfg).to(device)
+    
+    # --- 3. Logica di Stadio (Congelamento e Caricamento) ---
+    if args.stage == 1:
+        print("--- Configurazione STADIO 1: Pre-training PI Head (ZIP) ---")
+        # Loss: Addestra solo con la loss ZIPNLL (reg_loss)
+        cfg['loss']['weight_cls'] = 0.0  
+        cfg['loss']['weight_reg'] = 1.0  
+        cfg['loss']['weight_aux'] = 0.0  
+        print(f"Pesi loss sovrascritti: CLS=0.0, REG=1.0, AUX=0.0")
+
+        # Congelamento: Congela la lambda_head
+        print("Congelamento: lambda_head, lambda_logit_scale")
+        for param in model.lambda_head.parameters():
+            param.requires_grad = False
+        model.lambda_logit_scale.requires_grad = False
+        
+        save_path = stage1_ckpt_path
+
+    elif args.stage == 2:
+        print("--- Configurazione STADIO 2: Pre-training LAMBDA Head (EBC) ---")
+        
+        # Caricamento: Carica i pesi dello Stadio 1
+        if load_path is None: load_path = stage1_ckpt_path
+        if os.path.exists(load_path):
+            print(f"✅ Caricamento checkpoint Stage 1 da: {load_path}")
+            state_dict = torch.load(load_path, map_location=device)
+            if 'model' in state_dict: state_dict = state_dict['model']
+            model.load_state_dict(state_dict, strict=False)
+        else:
+            print(f"⚠️ Checkpoint Stage 1 non trovato in {load_path}. Addestro da zero (sconsigliato).")
+
+        # Loss: Addestra solo con ZICE (cls_loss)
+        cfg['loss']['weight_cls'] = 1.0 
+        cfg['loss']['weight_reg'] = 0.0 
+        cfg['loss']['weight_aux'] = 0.0 
+        print(f"Pesi loss sovrascritti: CLS=1.0, REG=0.0, AUX=0.0")
+
+        # Congelamento: Congela Backbone e pi_head
+        print("Congelamento: backbone, pi_head, pi_logit_scale")
+        for param in model.backbone.parameters():
+            param.requires_grad = False
+        for param in model.pi_head.parameters():
+            param.requires_grad = False
+        model.pi_logit_scale.requires_grad = False
+        
+        # Scongela la lambda_head per sicurezza
+        for param in model.lambda_head.parameters():
+            param.requires_grad = True
+        model.lambda_logit_scale.requires_grad = True
+
+        save_path = stage2_ckpt_path 
+
+    elif args.stage == 3:
+        print("--- Configurazione STADIO 3: Joint Fine-tuning ---")
+        
+        # Caricamento: Carica i pesi dello Stadio 2
+        if load_path is None: load_path = stage2_ckpt_path
+        if os.path.exists(load_path):
+            print(f"✅ Caricamento checkpoint Stage 2 da: {load_path}")
+            state_dict = torch.load(load_path, map_location=device)
+            if 'model' in state_dict: state_dict = state_dict['model']
+            model.load_state_dict(state_dict, strict=False)
+        else:
+            print(f"⚠️ Checkpoint Stage 2 non trovato in {load_path}. Addestro da zero (sconsigliato).")
+            
+        # Loss: Usa i pesi finali dal config
+        print(f"Pesi loss da config: CLS={cfg['loss']['weight_cls']}, REG={cfg['loss']['weight_reg']}, AUX={cfg['loss']['weight_aux']}")
+
+        # Congelamento: Scongela tutto
+        print("Scongelamento: Tutti i parametri sono addestrabili.")
+        for param in model.parameters():
+            param.requires_grad = True
+        
+        save_path = final_ckpt_path 
+
+    # --- 4. Creazione Dataloaders ---
+    # Usa 'train_cfg' per i parametri di Dataloader
+    train_loader = build_dataloader(cfg, split='train', stage_cfg=train_cfg)
+    val_loader = build_dataloader(cfg, split='eval', stage_cfg=train_cfg)
+
+    # --- 5. Creazione Optimizer e Scheduler ---
+    params_to_train = [p for p in model.parameters() if p.requires_grad]
+    print(f"Numero di parametri da addestrare in questo stadio: {sum(p.numel() for p in params_to_train)}")
+    
+    # Passa la config dello stadio corrente
+    optimizer = build_optimizer(params_to_train, train_cfg)
+    scheduler = build_scheduler(optimizer, train_cfg, len(train_loader))
+
+    # --- 6. Creazione Loss ---
+    criterion = build_loss(cfg).to(device)
+
+    # --- 7. Creazione Trainer ---
+    trainer = Trainer(
+        model=model,
+        train_loader=train_loader,
+        val_loader=val_loader,
+        criterion=criterion,
+        optimizer=optimizer,
+        scheduler=scheduler,
+        device=device,
+        cfg=cfg, # Passa la config *globale* (contiene 'train_base', 'eval', ecc.)
+        stage_cfg=train_cfg, # Passa la config *dello stadio* (contiene 'num_epochs', 'eval_freq')
+        best_ckpt_path=save_path 
+    )
+
+    print(f"Checkpoint per 'best_mae' sarà salvato in: {save_path}")
+    
+    # --- 8. Avvio Addestramento ---
+    trainer.train()
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--config', type=str, required=True, help='Path to config file')
+    parser.add_argument('--output_dir', type=str, default=None, help='Path to output directory')
+    
+    parser.add_argument(
+        '--stage', 
+        type=int, 
+        default=3, 
+        choices=[1, 2, 3],
+        help='Stadio di addestramento (1: Pre-train PI, 2: Pre-train LAMBDA, 3: Joint Fine-tuning)'
+    )
+    parser.add_argument(
+        '--load_ckpt', 
+        type=str, 
+        default=None,
+        help='Percorso checkpoint da caricare (sovrascrive la logica di default degli stadi)'
+    )
+    
+    args = parser.parse_args()
+
+    # Caricamento con PyYAML
+    with open(args.config, 'r') as f:
+        cfg = yaml.safe_load(f)
+    
+    # Sovrascrivi output_dir (nella config base) se fornito da linea di comando
+    if args.output_dir:
+        cfg['train_base']['output_dir'] = args.output_dir
+    os.makedirs(cfg['train_base']['output_dir'], exist_ok=True)
+    
+    main(args, cfg)
