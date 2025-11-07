@@ -4,11 +4,11 @@ import torch
 import torch.nn as nn
 import argparse
 import yaml  # Importa la libreria standard YAML
+from utils import get_optimizer_and_scheduler, set_seed # Importa la funzione corretta
 from torch.utils.data import DataLoader
 from models import build_model
 from datasets import build_dataloader
 from losses import build_loss
-from utils import build_optimizer, build_scheduler, set_seed
 from trainer import Trainer # Importa la *classe* Trainer
 from typing import Optional, Dict
 
