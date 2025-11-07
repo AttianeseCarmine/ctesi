@@ -1,6 +1,9 @@
 # configs/sha.yaml
 # FILE MODIFICATO PER GENERALIZZAZIONE (CLIP-EBC + LoRA)
-
+train_base:
+  output_dir: './outputs/sha'  # Aggiungi un percorso di output di default
+  seed: 42                      # Aggiungi un seed (richiesto da train.py)
+  device: 'cuda:0'
 # 1. IMPOSTAZIONI DEL MODELLO
 model:
   name: '_clip_ebc'
@@ -9,6 +12,8 @@ model:
   block_size: 16
   input_size: 448              # Deve corrispondere a dataset.input_size
   zero_inflated: True        # Abilita il modulo ZIP
+  num_vpt: 0
+  
 
  # === 1.A: GENERALIZZAZIONE (LoRA) ===
   lora: True

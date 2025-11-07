@@ -1,0 +1,15 @@
+=========================================
+PIPELINE AVVIATA: Fri Nov  7 06:52:54 PM CET 2025
+CONFIG: configs/sha.yaml
+OUTPUT: output/sha_staged_training_v1
+LOG: logs/test/pipeline_20251107_185254.log
+=========================================
+ 
+=========================================
+🚀 AVVIO STADIO 1: Pre-training PI Head (ZIP)
+=========================================
+Traceback (most recent call last):
+  File "/user/cattianese/ctesi/train.py", line 179, in <module>
+    cfg['train_base']['output_dir'] = args.output_dir
+    ~~~^^^^^^^^^^^^^^
+KeyError: 'train_base'

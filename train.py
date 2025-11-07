@@ -125,8 +125,7 @@ def main(args, cfg: Dict):
     print(f"Numero di parametri da addestrare in questo stadio: {sum(p.numel() for p in params_to_train)}")
     
     # Passa la config dello stadio corrente
-    optimizer = build_optimizer(params_to_train, train_cfg)
-    scheduler = build_scheduler(optimizer, train_cfg, len(train_loader))
+    optimizer, scheduler = get_optimizer_and_scheduler(params_to_train, train_cfg, len(train_loader))
 
     # --- 6. Creazione Loss ---
     criterion = build_loss(cfg).to(device)

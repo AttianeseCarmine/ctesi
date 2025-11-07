@@ -86,7 +86,11 @@ class ViT(nn.Module):
             assert num_vpt is None or num_vpt == 0, "num_vpt should be None or 0 when using adapter."
             assert vpt_drop is None or vpt_drop == 0.0, "vpt_drop should be None or 0.0 when using adapter."
         else:
-            assert num_vpt > 0, f"Number of VPT tokens should be greater than 0, but got {num_vpt}."
+            assert num_vpt >= 0, f"Number of VPT tokens should be 0 or greater, but got {num_vpt}."
+            if num_vpt > 0:
+                self.vpt_tokens = nn.Parameter(torch.zeros(1, num_vpt, embed_dim))
+            else:
+                self.vpt_tokens = None
             assert 0.0 <= vpt_drop < 1.0, f"VPT dropout should be in [0.0, 1.0), but got {vpt_drop}."
 
         self.model_name, self.weight_name = model_name, weight_name
