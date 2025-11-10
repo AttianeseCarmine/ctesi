@@ -141,50 +141,51 @@ class CLIP_EBC(nn.Module):
         self._build_text_feats()
         self._build_head()
 
-    def _build_text_feats(self) -> None:
-        # (Questo metodo rimane identico)
-        model_name, weight_name = self.model_name, self.weight_name
-        text_prompts = self.text_prompts
-
-        if text_prompts is None:
-            bins = [b[0] if b[0] == b[1] else b for b in self.bins]  # if the bin is a single value (e.g., [0, 0]), use that value
-            if self.zero_inflated:  # separate 0 from the rest
-                assert bins[0] == 0, f"Expected the first bin to be 0, got {bins[0]}."
-                bins_pi = [0, (1, float("inf"))]
-                bins_lambda = bins[1:]
-                pi_text_prompts = optimize_text_prompts(model_name, weight_name, bins_pi)
-                lambda_text_prompts = optimize_text_prompts(model_name, weight_name, bins_lambda)
-                self.text_prompts = {"pi": pi_text_prompts, "lambda": lambda_text_prompts}
-                pi_text_feats = encode_text(model_name, weight_name, pi_text_prompts)
-                lambda_text_feats = encode_text(model_name, weight_name, lambda_text_prompts)
-                pi_text_feats.requires_grad = False
-                lambda_text_feats.requires_grad = False
-                self.register_buffer("pi_text_feats", pi_text_feats)
-                self.register_buffer("lambda_text_feats", lambda_text_feats)
-
-            else:
-                text_prompts = optimize_text_prompts(model_name, weight_name, bins)
-                self.text_prompts = text_prompts
-                text_feats = encode_text(model_name, weight_name, text_prompts)
-                text_feats.requires_grad = False
-                self.register_buffer("text_feats", text_feats)
+    def _build_text_feats(self):
+        # --- FUNZIONE MODIFICATA PER GESTIRE I GRUPPI DI PROMPT ---
+        import torch
+        from .utils import encode_text # Assicurati che importi la funzione corretta
         
-        else:
-            if self.zero_inflated:
-                assert "pi" in text_prompts and "lambda" in text_prompts, f"Expected text_prompts to have keys 'pi' and 'lambda', got {text_prompts.keys()}."
-                pi_text_prompts = text_prompts["pi"]
-                lambda_text_prompts = text_prompts["lambda"]
-                pi_text_feats = encode_text(model_name, weight_name, pi_text_prompts)
-                lambda_text_feats = encode_text(model_name, weight_name, lambda_text_prompts)
-                pi_text_feats.requires_grad = False
-                lambda_text_feats.requires_grad = False
-                self.register_buffer("pi_text_feats", pi_text_feats)
-                self.register_buffer("lambda_text_feats", lambda_text_feats)
+        model_name = self.model_name
+        weight_name = self.weight_name
+        device = next(self.backbone.parameters()).device
+        
+        # 1. Processa i prompt della PI-Head
+        pi_text_prompts_groups = self.text_prompts["pi"]
+        pi_text_feats_list = []
+        
+        for group in pi_text_prompts_groups:
+            # group è una List[str], es: ["prompt1", "prompt2", ...]
+            # encode_text si aspetta List[str] e ritorna [Num_Prompts, Feature_Dim]
+            group_feats = encode_text(model_name, weight_name, group).to(device)
+            
+            # Calcola la media dei feature vector per questo gruppo
+            avg_feat = group_feats.mean(dim=0)
+            
+            # Ri-normalizza il feature vector medio
+            avg_feat /= avg_feat.norm(dim=-1, keepdim=True)
+            pi_text_feats_list.append(avg_feat)
+        
+        # Registra il buffer finale (es. [2, Feature_Dim])
+        self.register_buffer("pi_text_feats", torch.stack(pi_text_feats_list))
 
-            else:
-                text_feats = encode_text(model_name, weight_name, text_prompts)
-                text_feats.requires_grad = False
-                self.register_buffer("text_feats", text_feats)
+        # 2. Processa i prompt della LAMBDA-Head (EBC)
+        lambda_text_prompts_groups = self.text_prompts["lambda"]
+        lambda_text_feats_list = []
+        
+        for group in lambda_text_prompts_groups:
+            # group è una List[str], es: ["one person"]
+            group_feats = encode_text(model_name, weight_name, group).to(device)
+            
+            # Calcola la media (anche se c'è un solo prompt, è più robusto)
+            avg_feat = group_feats.mean(dim=0)
+            
+            # Ri-normalizza
+            avg_feat /= avg_feat.norm(dim=-1, keepdim=True)
+            lambda_text_feats_list.append(avg_feat)
+        
+        # Registra il buffer finale (es. [13, Feature_Dim])
+        self.register_buffer("lambda_text_feats", torch.stack(lambda_text_feats_list))
 
     def _build_head(self) -> None:
         # (Questo metodo rimane identico)

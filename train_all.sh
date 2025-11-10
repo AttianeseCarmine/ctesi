@@ -5,7 +5,7 @@ set -e # Interrompe lo script se un comando fallisce
 CONFIG_FILE="configs/sha.yaml"
 OUTPUT_DIR="output/sha_staged_training_v1" # Cambia questo per ogni esperimento
 LOG_DIR="logs/test"
-LOG_FILE="$LOG_DIR/pipeline_$(date +%Y%m%d_%H%M%S).log"
+LOG_FILE="$LOG_DIR/_$(date +%Y%m%d_%H%M%S).log"
 # ----------------------
 
 # Crea le directory necessarie

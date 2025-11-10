@@ -28,37 +28,23 @@ def generate_density_map(label: Tensor, height: int, width: int, sigma: Optional
 
     return density_map
 
-
-def collate_fn(batch: List[Tensor]) -> Tuple[Tensor, List[Tensor], Tensor]:
-    batch = list(zip(*batch))
-    images = batch[0]
-    assert len(images[0].shape) == 4, f"images should be a 4D tensor, got {images[0].shape}."
-    if len(batch) == 4:  # image, label, density_map, image_name
-        images = torch.cat(images, 0)
-        points = batch[1]  # list of lists of tensors, flatten it
-        points = [p for points_ in points for p in points_]
-        densities = torch.cat(batch[2], 0)
-        image_names = batch[3]  # list of lists of strings, flatten it
-        image_names = [name for names_ in image_names for name in names_]
-
-        return images, points, densities, image_names
-
-    elif len(batch) == 3:  # image, label, density_map
-        images = torch.cat(images, 0)
-        points = batch[1]
-        points = [p for points_ in points for p in points_]
-        densities = torch.cat(batch[2], 0)
-
-        return images, points, densities
+def collate_fn(batch):
+    # --- MODIFICA INIZIO ---
     
-    elif len(batch) == 2:  # image, image_name. NWPU test dataset
-        images = torch.cat(images, 0)
-        image_names = batch[1]
-        image_names = [name for names_ in image_names for name in names_]
-
-        return images, image_names
-
-    else:
-        images = torch.cat(images, 0)
-
-        return images
+    # 1. Decomprimi i 3 valori restituiti da Crowd.__getitem__
+    #    (Il 'filenames' è stato rimosso perché non viene restituito)
+    images, labels, density_maps = zip(*batch)
+    
+    # 2. Raggruppa le immagini e le mappe di densità in un tensore batch
+    images = torch.cat(images, 0)
+    density_maps = torch.cat(density_maps, 0)
+    
+    # 'labels' è una tupla di tensori (uno per immagine, con N punti)
+    # Lo lasciamo così, perché la loss (QuadLoss) si aspetta una List[Tensor]
+    
+    # 3. Restituisci un DIZIONARIO (dict) come si aspetta il trainer
+    return {
+        'image': images,
+        'points': labels,  # <-- Rinominato in 'points'
+        'density_map': density_maps
+    }

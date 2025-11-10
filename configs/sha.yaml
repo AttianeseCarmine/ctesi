@@ -4,6 +4,7 @@ train_base:
   output_dir: './outputs/sha'  # Aggiungi un percorso di output di default
   seed: 42                      # Aggiungi un seed (richiesto da train.py)
   device: 'cuda:0'
+  eval_freq: 1
 # 1. IMPOSTAZIONI DEL MODELLO
 model:
   name: '_clip_ebc'
@@ -54,6 +55,7 @@ model:
 
 # 2. IMPOSTAZIONI DEL DATASET (da sha.yaml originale)
 dataset:
+  data_root: './data'  
   name: 'SHA'
   num_classes: 10 # Non più usato da CLIP-EBC, ma innocuo
   input_size: 448

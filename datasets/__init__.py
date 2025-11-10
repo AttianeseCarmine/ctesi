@@ -3,10 +3,13 @@ import torch
 from torch.utils.data import DataLoader
 from typing import Dict, Any
 
-# Importa le tue classi Dataset (adatta i percorsi se .crowd è in un'altra cartella)
+# Importa le tue classi Dataset
 from .crowd import Crowd, InMemoryCrowd, available_datasets, standardize_dataset_name, NWPUTest, ShanghaiTech
-from .transforms import RandomCrop, Resize, RandomResizedCrop, RandomHorizontalFlip, Resize2Multiple, ZeroPad2Multiple
+
+# Importa la funzione 'build_transforms' che abbiamo aggiunto a transforms.py
+from .transforms import build_transforms, RandomCrop, Resize, RandomResizedCrop, RandomHorizontalFlip, Resize2Multiple, ZeroPad2Multiple
 from .transforms import ColorJitter, RandomGrayscale, GaussianBlur, RandomApply, PepperSaltNoise
+
 from .utils import collate_fn
 
 
@@ -35,18 +38,28 @@ def build_dataloader(
     else:
         raise ValueError(f"Split '{split}' non riconosciuto.")
 
-    # (Assumiamo che il tuo dataset 'Crowd' sia quello corretto da usare)
-    # Se usi 'ShanghaiTech' o altri, cambia la classe qui
-    # NOTA: Assicurati che il tuo dataset restituisca un dizionario 
-    # con 'image', 'density_map', e 'points'
-    DatasetClass = Crowd # o ShanghaiTech, a seconda di cosa usi
+    # --- INIZIO BLOCCO CORRETTO ---
     
-    dataset = DatasetClass(
-        dataset_name=dataset_name,
-        split=split_name,
-        input_size=dataset_cfg['input_size'],
-        aug_config=dataset_cfg.get('aug_config', 'aug_config_1'), 
+    input_size = dataset_cfg['input_size']
+
+    # Costruisci le trasformazioni
+    transforms = build_transforms(
+        input_size=input_size,
+        aug_config=dataset_cfg.get('aug_config', 'aug_config_1'),
+        is_train=(split == 'train')
     )
+    
+    DatasetClass = Crowd
+    
+    # --- CHIAMATA CORRETTA ---
+    # Questa chiamata ora corrisponde a quella in datasets/crowd.py
+    # Passa 'dataset_name' all'argomento 'dataset'
+    dataset = DatasetClass(
+        dataset=dataset_name,  # <--- 'dataset' (la stringa, es. "sha")
+        split=split_name,      # <--- 'split' (la stringa, es. "train")
+        transforms=transforms  # <--- 'transforms' (l'oggetto Compose)
+    )
+    # --- FINE BLOCCO CORRETTO ---
     
     print(f"Split '{split}' caricato: {dataset_name}/{split_name}, {len(dataset)} campioni.")
     
@@ -61,11 +74,12 @@ def build_dataloader(
     
     return loader
 
-# === MANTIENI GLI EXPORT ORIGINALI E AGGIUNGI IL NUOVO ===
+# === EXPORTS ===
 __all__ = [
     "Crowd", "InMemoryCrowd", "available_datasets", "standardize_dataset_name", "NWPUTest", "ShanghaiTech",
     "RandomCrop", "Resize", "RandomResizedCrop", "RandomHorizontalFlip", "Resize2Multiple", "ZeroPad2Multiple",
     "ColorJitter", "RandomGrayscale", "GaussianBlur", "RandomApply", "PepperSaltNoise",
     "collate_fn",
-    "build_dataloader", # Aggiungi la nuova funzione agli export
+    "build_dataloader", 
+    "build_transforms", 
 ]
