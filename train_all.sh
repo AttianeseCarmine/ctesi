@@ -5,18 +5,13 @@ set -e # Interrompe lo script se un comando fallisce
 CONFIG_FILE="configs/sha.yaml"
 OUTPUT_DIR="output/sha_staged_training_v1" # Cambia questo per ogni esperimento
 LOG_DIR="logs/test"
-LOG_FILE="$LOG_DIR/_$(date +%Y%m%d_%H%M%S).log"
+LOG_FILE="$LOG_DIR/SHA_$(date +%d_%m_%Y).log"
 # ----------------------
 
 # Crea le directory necessarie
 mkdir -p $OUTPUT_DIR
 mkdir -p $LOG_DIR
 
-# --- CORREZIONE ---
-# Invece di 'nohup { ... }', eseguiamo l'intero blocco
-# in una subshell ( ... ) e mandiamo *quella* in background.
-# Redirige sia stdout (>) che stderr (2>&1) al file di log
-# e va in background (&). Non serve 'nohup'.
 (
     echo "========================================="
     echo "PIPELINE AVVIATA: $(date)"
