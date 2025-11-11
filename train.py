@@ -72,12 +72,12 @@ def main(args, cfg: Dict):
             print(f"⚠️ Checkpoint Stage 1 non trovato in {load_path}. Addestro da zero (sconsigliato).")
 
         # Loss: Addestra solo con ZICE (cls_loss)
-        cfg['loss']['weight_cls'] = 0.0 # 
-        cfg['loss']['weight_reg'] = 1.0 # 
+        cfg['loss']['weight_cls'] = 0.0 # <-- MODIFICA QUI
+        cfg['loss']['weight_reg'] = 1.0 # <-- MODIFICA QUI
         cfg['loss']['weight_aux'] = 0.0 
-        print(f"Pesi loss sovrascritti: CLS=1.0, REG=0.0, AUX=0.0")
+        print(f"Pesi loss sovrascritti: CLS=0.0, REG=1.0, AUX=0.0")
 
-        # Congelamento: Congela Backbone e pi_head
+        # Congelamento: Congela Backbone e pi_head (Corretto)
         print("Congelamento: backbone, pi_head, pi_logit_scale")
         for param in model.backbone.parameters():
             param.requires_grad = False
@@ -85,12 +85,12 @@ def main(args, cfg: Dict):
             param.requires_grad = False
         model.pi_logit_scale.requires_grad = False
         
-        # Scongela la lambda_head per sicurezza
+        # Scongela la lambda_head per sicurezza (Corretto)
         for param in model.lambda_head.parameters():
             param.requires_grad = True
         model.lambda_logit_scale.requires_grad = True
 
-        save_path = stage2_ckpt_path 
+        save_path = stage2_ckpt_path
 
     elif args.stage == 3:
         print("--- Configurazione STADIO 3: Joint Fine-tuning ---")

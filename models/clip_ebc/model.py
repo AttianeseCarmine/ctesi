@@ -212,7 +212,7 @@ class CLIP_EBC(nn.Module):
         # --- MODULO A: ZIP (pi_head) ---
         # 2. Calcola i logits di 'pi' (il modulo ZIP)
         pi_image_feats_head = self.pi_head(image_feats) # [B, C_out, H, W]
-        pi_image_feats_norm = F.normalize(pi_image_feats_head.permute(0, 2, 3, 1), p=2, dim=-1) # [B, H, W, C_out]
+        pi_image_feats_norm = F.normalize(pi_image_feats_head.permute(0, 2, 3, 1), p=2, dim=-1, eps=1e-8)
         pi_logit_scale = self.pi_logit_scale.exp()
         pi_logit_map = pi_logit_scale * pi_image_feats_norm @ self.pi_text_feats.t() # [B, H, W, 2]
         pi_logit_map = pi_logit_map.permute(0, 3, 1, 2)  # [B, 2, H, W]
@@ -233,7 +233,7 @@ class CLIP_EBC(nn.Module):
         # --- MODULO B: CLIP-EBC (lambda_head) ---
         # 5. Calcola i logits di 'lambda' (il modulo EBC) dalle *feature mascherate*
         lambda_image_feats_head = self.lambda_head(gated_feats) # [B, C_out, H, W]
-        lambda_image_feats_norm = F.normalize(lambda_image_feats_head.permute(0, 2, 3, 1), p=2, dim=-1) # [B, H, W, C_out]
+        lambda_image_feats_norm = F.normalize(lambda_image_feats_head.permute(0, 2, 3, 1), p=2, dim=-1, eps=1e-8)
         lambda_logit_scale = self.lambda_logit_scale.exp()
         lambda_logit_map = lambda_logit_scale * lambda_image_feats_norm @ self.lambda_text_feats.t() # [B, H, W, N-1]
         lambda_logit_map = lambda_logit_map.permute(0, 3, 1, 2) # [B, N-1, H, W]
