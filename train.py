@@ -44,13 +44,13 @@ def main(args, cfg: Dict):
     # --- 3. Logica di Stadio (Congelamento e Caricamento) ---
     if args.stage == 1:
         print("--- Configurazione STADIO 1: Pre-training PI Head (ZIP) ---")
-        # Loss: Addestra solo con la loss ZIPNLL (reg_loss)
-        cfg['loss']['weight_cls'] = 0.0  
-        cfg['loss']['weight_reg'] = 1.0  
+        # Loss: Addestra solo con ZICE (cls_loss)
+        cfg['loss']['weight_cls'] = 1.0  # <-- MODIFICATO
+        cfg['loss']['weight_reg'] = 0.0  # <-- MODIFICATO
         cfg['loss']['weight_aux'] = 0.0  
-        print(f"Pesi loss sovrascritti: CLS=0.0, REG=1.0, AUX=0.0")
+        print(f"Pesi loss sovrascritti: CLS=1.0, REG=0.0, AUX=0.0")
 
-        # Congelamento: Congela la lambda_head
+        # Congelamento: Congela la lambda_head (Corretto)
         print("Congelamento: lambda_head, lambda_logit_scale")
         for param in model.lambda_head.parameters():
             param.requires_grad = False
@@ -72,8 +72,8 @@ def main(args, cfg: Dict):
             print(f"⚠️ Checkpoint Stage 1 non trovato in {load_path}. Addestro da zero (sconsigliato).")
 
         # Loss: Addestra solo con ZICE (cls_loss)
-        cfg['loss']['weight_cls'] = 1.0 
-        cfg['loss']['weight_reg'] = 0.0 
+        cfg['loss']['weight_cls'] = 0.0 # 
+        cfg['loss']['weight_reg'] = 1.0 # 
         cfg['loss']['weight_aux'] = 0.0 
         print(f"Pesi loss sovrascritti: CLS=1.0, REG=0.0, AUX=0.0")
 
