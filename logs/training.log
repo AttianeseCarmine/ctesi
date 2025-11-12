@@ -1,0 +1,7 @@
+nohup: ignoring input
+🚀 AVVIO SCRIPT DI ADDESTRAMENTO COMPLETO (3 STADI) 🚀
+Configurazione: configs/sha.yaml
+Directory di Output: ./outputs/sha
+I log saranno salvati in: logs/train
+--- Avvio STADIO 1 (Pre-training PI Head)... ---
+Stadio 1 in esecuzione con PID: 3538096. Log in logs/train/stage1.log

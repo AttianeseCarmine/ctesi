@@ -8,8 +8,7 @@ train_base:
 # 1. IMPOSTAZIONI DEL MODELLO
 model:
   name: '_clip_ebc'
-  model_name: 'ViT-B-16'     # Modello backbone di CLIP
-  weight_name: 'openai'        # Pesi pre-addestrati (es. 'openai', 'laion2b')
+  model_name: 'vgg16_bn'     # Modello backbone di CLIP
   block_size: 16
   input_size: 448              # Deve corrispondere a dataset.input_size
   zero_inflated: True        # Abilita il modulo ZIP
@@ -83,19 +82,20 @@ loss:
 train_stage1:
   optimizer: 'adamw'
   scheduler: 'cosine'
-  lr: 0.0001
+  lr: 1.0e-5 
   weight_decay: 0.0001
   num_epochs: 100 
   batch_size: 8
   num_workers: 4
-  clip_grad_norm: 1.0
+  clip_grad_norm: 1.
+  warmup_epochs: 10  # aumenta il warmup
   # Early stopping non necessario per lo stadio 1
 
 # STADIO 2: Pre-training LAMBDA Head (EBC)
 train_stage2:
   optimizer: 'adamw'
   scheduler: 'cosine'
-  lr: 0.0001
+  lr: 1.0e-5 
   weight_decay: 0.0001
   num_epochs: 150
   batch_size: 8
@@ -106,7 +106,7 @@ train_stage2:
 train_stage3:
   optimizer: 'adamw'
   scheduler: 'cosine'
-  lr: 0.00001 
+  lr: 1.0e-5 
   weight_decay: 0.0001
   num_epochs: 50 
   batch_size: 8

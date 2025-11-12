@@ -1,0 +1,12 @@
+🚀 AVVIO DELLO STADIO 1 🚀
+Costruzione modello: _clip_ebc
+Traceback (most recent call last):
+  File "/user/cattianese/ctesi/train.py", line 182, in <module>
+    main(args, cfg)
+  File "/user/cattianese/ctesi/train.py", line 42, in main
+    model = build_model(cfg).to(device)
+            ^^^^^^^^^^^^^^^^
+  File "/user/cattianese/ctesi/models/__init__.py", line 29, in build_model
+    model = _clip_ebc(**build_params)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: _clip_ebc() missing 1 required positional argument: 'weight_name'
