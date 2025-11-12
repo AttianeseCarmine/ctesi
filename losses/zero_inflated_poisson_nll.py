@@ -2,8 +2,8 @@ import torch
 from torch import nn, Tensor
 from typing import List, Tuple
 # Importa le funzioni helper dal file utils.py
-from .utils import _reshape_density, _bin_count
 import torch.nn.functional as F  
+from .utils import _reshape_density, _bin_count
 
 EPS = 1e-8
 

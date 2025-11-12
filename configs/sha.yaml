@@ -100,7 +100,7 @@ train_stage2:
   num_epochs: 150
   batch_size: 8
   num_workers: 4
-  early_stopping_patience: 20 # <-- NUOVA RIGA: Interrompi dopo 20 val senza miglioramenti
+  early_stopping_patience: 20 # Interrompi dopo 20 val senza miglioramenti
 
 # STADIO 3: Joint Fine-tuning
 train_stage3:
