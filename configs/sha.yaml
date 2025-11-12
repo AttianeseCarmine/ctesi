@@ -1,7 +1,7 @@
 # configs/sha.yaml
 # FILE MODIFICATO PER GENERALIZZAZIONE (CLIP-EBC + LoRA)
 train_base:
-  output_dir: './outputs/sha'  # Aggiungi un percorso di output di default
+  output_dir: './output/sha'  # Aggiungi un percorso di output di default
   seed: 42                      # Aggiungi un seed (richiesto da train.py)
   device: 'cuda:0'
   eval_freq: 1
@@ -81,15 +81,16 @@ loss:
 
 # STADIO 1: Pre-training PI Head (ZIP)
 train_stage1:
-  optimizer: 'adamw'
+  optimizer: 'sgd'       # <--- MODIFICATO
+  momentum: 0.9          # <--- AGGIUNTO
   scheduler: 'cosine'
-  lr: 0.0001
+  lr: 0.0001           # Questo LR (1e-4) sarà per la PI-Head
+  lr_backbone: 0.00001 # <--- AGGIUNGI QUESTA RIGA (1e-5)
   weight_decay: 0.0001
   num_epochs: 100 
   batch_size: 8
   num_workers: 4
   clip_grad_norm: 1.0
-  # Early stopping non necessario per lo stadio 1
 
 # STADIO 2: Pre-training LAMBDA Head (EBC)
 train_stage2:

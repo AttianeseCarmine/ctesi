@@ -11,6 +11,8 @@ from datasets import build_dataloader
 from losses import build_loss
 from trainer import Trainer # Importa la *classe* Trainer
 from typing import Optional, Dict
+import torch.optim as optim
+import torch.optim.lr_scheduler as lr_scheduler
 
 def main(args, cfg: Dict): 
     # Carica la configurazione base (condivisa)
@@ -45,10 +47,10 @@ def main(args, cfg: Dict):
     if args.stage == 1:
         print("--- Configurazione STADIO 1: Pre-training PI Head (ZIP) ---")
         # Loss: Addestra solo con ZICE (cls_loss)
-        cfg['loss']['weight_cls'] = 1.0  # <-- MODIFICATO
-        cfg['loss']['weight_reg'] = 0.0  # <-- MODIFICATO
+        cfg['loss']['weight_cls'] = 0.0  # <-- MODIFICATO
+        cfg['loss']['weight_reg'] = 1.0  # <-- MODIFICATO
         cfg['loss']['weight_aux'] = 0.0  
-        print(f"Pesi loss sovrascritti: CLS=1.0, REG=0.0, AUX=0.0")
+        print(f"Pesi loss sovrascritti: CLS=0.0, REG=1.0, AUX=0.0")
 
         # Congelamento: Congela la lambda_head (Corretto)
         print("Congelamento: lambda_head, lambda_logit_scale")
@@ -72,10 +74,10 @@ def main(args, cfg: Dict):
             print(f"⚠️ Checkpoint Stage 1 non trovato in {load_path}. Addestro da zero (sconsigliato).")
 
         # Loss: Addestra solo con ZICE (cls_loss)
-        cfg['loss']['weight_cls'] = 0.0 # <-- MODIFICA QUI
-        cfg['loss']['weight_reg'] = 1.0 # <-- MODIFICA QUI
+        cfg['loss']['weight_cls'] = 1.0 # <-- MODIFICA QUI
+        cfg['loss']['weight_reg'] = 0.0 # <-- MODIFICA QUI
         cfg['loss']['weight_aux'] = 0.0 
-        print(f"Pesi loss sovrascritti: CLS=0.0, REG=1.0, AUX=0.0")
+        print(f"Pesi loss sovrascritti: CLS=1.0, REG=0.0, AUX=0.0")
 
         # Congelamento: Congela Backbone e pi_head (Corretto)
         print("Congelamento: backbone, pi_head, pi_logit_scale")
@@ -125,8 +127,58 @@ def main(args, cfg: Dict):
     print(f"Numero di parametri da addestrare in questo stadio: {sum(p.numel() for p in params_to_train)}")
     
     # Passa la config dello stadio corrente
-    optimizer, scheduler = get_optimizer_and_scheduler(params_to_train, train_cfg, len(train_loader))
+# --- 5. Costruzione Ottimizzatore e Scheduler ---
+    # Logica manuale per supportare LR differenziati (Backbone vs Head)
 
+    main_lr = train_cfg['lr']
+    backbone_lr = train_cfg.get('lr_backbone', main_lr) # Legge 'lr_backbone', se non c'è usa 'lr'
+    weight_decay = train_cfg.get('weight_decay', 0)
+    optimizer_name = train_cfg.get('optimizer', 'adamw').lower()
+
+    # Separa i parametri
+    backbone_params = []
+    head_params = []
+
+    # ATTENZIONE: 'visual_encoder' è il nome del backbone nel modello CLIP-EBC.
+    # Se il tuo modello usa un nome diverso (es. 'backbone', 'visual'), cambialo qui.
+    BACKBONE_NAME = 'visual_encoder' 
+
+    print(f"Separazione parametri: LR testine={main_lr}, LR backbone ('{BACKBONE_NAME}')={backbone_lr}")
+
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+
+        if BACKBONE_NAME in name:
+            backbone_params.append(param)
+            # print(f"  [Backbone] {name}") # (Debug)
+        else:
+            head_params.append(param)
+            # print(f"  [Head] {name}") # (Debug)
+
+    # Crea i gruppi di parametri
+    param_groups = [
+        {'params': backbone_params, 'lr': backbone_lr},
+        {'params': head_params, 'lr': main_lr}
+    ]
+
+    # Costruisci l'optimizer
+    if optimizer_name == 'adamw':
+        optimizer = optim.AdamW(param_groups, lr=main_lr, weight_decay=weight_decay)
+    elif optimizer_name == 'sgd':
+        optimizer = optim.SGD(param_groups, lr=main_lr, momentum=train_cfg.get('momentum', 0.9), weight_decay=weight_decay)
+    else:
+        raise ValueError(f"Optimizer {optimizer_name} non supportato.")
+
+    # Costruisci lo scheduler (la logica rimane invariata)
+    scheduler_name = train_cfg.get('scheduler', 'none').lower()
+    if scheduler_name == 'cosine':
+        scheduler = lr_scheduler.CosineAnnealingLR(optimizer, T_max=train_cfg['num_epochs'])
+    else:
+        # Nessuno scheduler o logica per 'step' se necessaria
+        scheduler = None 
+        if scheduler is None:
+            print("Nessuno scheduler ('cosine' o 'step') specificato, si procede senza scheduler.")
     # --- 6. Creazione Loss ---
     criterion = build_loss(cfg).to(device)
 

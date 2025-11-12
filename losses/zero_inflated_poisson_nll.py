@@ -26,6 +26,7 @@ class ZIPoissonNLL(nn.Module):
         
         # --- FIX per NaN: Assicura che lambda sia positivo ---
         lambda_maps = F.softplus(lambda_maps)
+        lambda_maps = torch.clamp(lambda_maps, min=1e-7)
 
         assert len(logit_pi_maps.shape) == len(lambda_maps.shape) == len(gt_den_maps.shape) == 4, f"Expected 4D (B, C, H, W) tensor, got {logit_pi_maps.shape}, {lambda_maps.shape}, and {gt_den_maps.shape}"
         B, _, H, W = lambda_maps.shape
@@ -45,7 +46,7 @@ class ZIPoissonNLL(nn.Module):
 
         # Evita log(0) in log_poisson
         log_poisson = torch.lgamma(gt_den_maps + 1.0)
-        log_poisson = -lambda_maps + gt_den_maps * torch.log(lambda_maps + EPS) - log_poisson
+        log_poisson = -lambda_maps + gt_den_maps * torch.log(lambda_maps) - log_poisson
         
         nll = -log_pi_zero * gt_zero_mask
         nll -= (log_pi_nonzero + log_poisson) * gt_nonzero_mask
