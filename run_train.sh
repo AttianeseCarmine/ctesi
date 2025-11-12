@@ -1,18 +1,14 @@
 #!/bin/bash
 # Questo script esegue tutti e 3 gli stadi di addestramento in sequenza.
-# Ogni stadio viene eseguito in background con 'nohup' e il suo
-# output è reindirizzato a un file di log separato (es. stage1.log).
 # Lo script attende il completamento di uno stadio prima di avviare il successivo.
-#nohup python train.py --config "configs/sha.yaml" --stage 1 > "logs/train/stage1.log" 2>&1 &
 
+#  nohup sh run_train.sh > logs/training.log 2>&1 &
 CONFIG_FILE="configs/sha.yaml"
-# Legge la output_dir direttamente dal file .yaml per robustezza
 OUTPUT_DIR=$(grep 'output_dir:' $CONFIG_FILE | awk '{print $2}' | tr -d "'")
-
-# Crea la directory di output e la sottocartella train per i log
 LOG_DIR="logs/train"
-mkdir -p "$LOG_DIR"
 
+mkdir -p "$LOG_DIR"
+set -e # Esce se un comando fallisce
 echo "🚀 AVVIO SCRIPT DI ADDESTRAMENTO COMPLETO (3 STADI) 🚀"
 echo "Configurazione: $CONFIG_FILE"
 echo "Directory di Output: $OUTPUT_DIR"
