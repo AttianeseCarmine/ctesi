@@ -11,3 +11,6 @@ output/sha/*.pth
 *.pth  
 *.log*.pth
 output/sha/*.pth
+*.pth
+*.pth
+output/sha/*.pth
