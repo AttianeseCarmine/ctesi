@@ -1,0 +1,62 @@
+# ====================================================================
+# Definizione del Modello (IBRIDO: ConvZIP + CLIP-EBC)
+# ====================================================================
+model:
+  # Backbone
+  name: 'ViT-B-16'
+  weight_name: 'openai'
+  block_size: 16
+  input_size: 448
+  
+  # LoRA (Opzionale)
+  lora: False
+  lora_rank: 8
+  lora_alpha: 16.0
+  lora_dropout: 0.1
+
+  # Gating
+  pi_thresh: 0.5
+  gate_mode: "multiply"
+  
+  # --- 1. Parametri per ConvZIPHead (NUOVI) ---
+  # Bin usati dalla testa ZIP (l'intera lista, incluso lo zero)
+  zip_bins: [
+      [0, 0], [1, 1], [2, 2], [3, 3], [4, 4], [5, 5], [6, 6], [7, 7], [8, 8], [9, 9],
+      [10, 10], [11, 12], [13, 14], [15, "inf"]
+    ]
+  zip_bin_centers: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11.5, 13.5, 15]
+  zip_lambda_max: 8.0 # Valore di default
+
+  # --- 2. Parametri per ClipEBHead (EBC) ---
+  # Bin usati dalla testa EBC (SOLO i bin NON-ZERO)
+  ebc_bins: [
+      [1, 1], [2, 2], [3, 3], [4, 4], [5, 5], [6, 6], [7, 7], [8, 8], [9, 9],
+      [10, 10], [11, 12], [13, 14], [15, "inf"]
+    ]
+  ebc_bin_centers: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11.5, 13.5, 15] 
+
+  # Prompt di testo (SOLO per EBC)
+  text_prompts:
+    # 'pi:' è stato RIMOSSO
+    lambda:
+      - ["one person"]
+      - ["two people"]
+      - ["three people"]
+      - ["four people"]
+      - ["five people"]
+      - ["six people"]
+      - ["seven people"]
+      - ["eight people"]
+      - ["nine people"]
+      - ["ten people"]
+      - ["a small group of people"]   # Bin [11, 12]
+      - ["a group of people"]         # Bin [13, 14]
+      - ["a large crowd of people"]   # Bin [15, "inf"]
+
+  # Parametri opzionali (VPT, etc.)
+  num_vpt: 0
+  vpt_drop: null
+  adapter: false
+  adapter_reduction: null
+  norm: "none"
+  act: "none"
