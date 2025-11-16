@@ -1,11 +1,9 @@
-# trainer.py (Corretto per "Tuple is not defined")
+# trainer.py (VERSIONE CORRETTA PER DIZIONARI)
 
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
-# === INIZIO MODIFICA ===
-from typing import Optional, Dict, List, Tuple # Aggiunto 'Tuple'
-# === FINE MODIFICA ===
+from typing import Optional, Dict, List, Tuple
 import torch.optim as optim
 import torch.optim.lr_scheduler as lr_scheduler
 import os
@@ -115,18 +113,22 @@ class Trainer:
         
         pbar = tqdm(self.train_loader, desc=f"Epoch {self.current_epoch}/{self.num_epochs} [Train]")
         
-        for images, gt_density_map, gt_points in pbar:
-            images = images.to(self.device)
-            gt_density_map = gt_density_map.to(self.device)
-            # gt_points rimane una lista di tensori sulla CPU, gestita dalla loss
+        for batch_data in pbar:
+            # === CORREZIONE: Il dataloader restituisce un dizionario ===
+            if isinstance(batch_data, dict):
+                images = batch_data['image'].to(self.device)
+                gt_density_map = batch_data['density_map'].to(self.device)
+                gt_points = batch_data['points']  # Rimane sulla CPU
+            else:
+                # Fallback per compatibilità con tuple
+                images, gt_density_map, gt_points = batch_data
+                images = images.to(self.device)
+                gt_density_map = gt_density_map.to(self.device)
 
             self.optimizer.zero_grad()
 
-            # Il modello ora restituisce un DIZIONARIO.
+            # Il modello ora restituisce un DIZIONARIO
             outputs_dict = self.model(images)
-            
-            # La tua QuadLoss si aspetta i seguenti argomenti:
-            # (pred_logit_map, pred_den_map, gt_den_map, gt_points, pred_logit_pi_map, pred_lambda_map)
             
             loss, loss_info = self.criterion(
                 pred_logit_map=outputs_dict["pred_logit_map"],
@@ -153,7 +155,7 @@ class Trainer:
 
         return loss_meter.avg
 
-    def _validate_one_epoch(self) -> Tuple[float, float]: # <--- La riga 164 ora è corretta
+    def _validate_one_epoch(self) -> Tuple[float, float]:
         self.model.eval()
         mae_meter = AverageMeter()
         rmse_meter = AverageMeter()
@@ -164,13 +166,20 @@ class Trainer:
         pbar = tqdm(self.val_loader, desc=f"Epoch {self.current_epoch} [Val]")
         
         with torch.no_grad():
-            for images, gt_density_map, gt_points in pbar:
-                images = images.to(self.device)
+            for batch_data in pbar:
+                # === CORREZIONE: Il dataloader restituisce un dizionario ===
+                if isinstance(batch_data, dict):
+                    images = batch_data['image'].to(self.device)
+                    gt_points = batch_data['points']  # Rimane sulla CPU
+                else:
+                    # Fallback per compatibilità con tuple
+                    images, gt_density_map, gt_points = batch_data
+                    images = images.to(self.device)
                 
                 # Il modello in modalità .eval() restituisce solo la mappa di densità
                 pred_den_map = self.model(images)
                 
-                # Calcola MAE/RMSE (presumendo che la tua funzione lo gestisca)
+                # Calcola MAE/RMSE
                 try:
                     mae, rmse = evaluate_mae_rmse(pred_den_map, gt_points, sliding_window, **eval_cfg)
                     
@@ -180,7 +189,7 @@ class Trainer:
                         rmse_meter.update(rmse)
                         
                 except Exception as e:
-                    self.logger.warning(f"Errore during validazione: {e}")
+                    self.logger.warning(f"Errore durante validazione: {e}")
                     pass 
 
         avg_mae = mae_meter.avg if mae_meter.count > 0 else float('nan')
@@ -224,7 +233,7 @@ class Trainer:
                     self._save_checkpoint(epoch, is_best=True)
                 else:
                     self.no_improve_epochs += self.eval_freq
-                    self._save_checkpoint(epoch, is_best=False) # Salva 'last.pth'
+                    self._save_checkpoint(epoch, is_best=False)
                 
                 # Controllo Early Stopping
                 if self.early_stopping_patience > 0 and self.no_improve_epochs >= self.early_stopping_patience:
