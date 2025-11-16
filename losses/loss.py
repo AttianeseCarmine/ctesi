@@ -3,15 +3,85 @@ from torch import nn, Tensor
 import torch.nn.functional as F
 from typing import List, Dict, Optional, Tuple, Union
 
-from .dm_loss import DMLoss
-from .multiscale_mae import MultiscaleMAE
-from .poisson_nll import PoissonNLL
+# Importa le uniche dipendenze necessarie e presenti nel tuo progetto
 from .zero_inflated_poisson_nll import ZIPoissonNLL, ZICrossEntropy
-from .utils import _reshape_density, _bin_count
-
 
 EPS = 1e-8
 
+# --- FUNZIONI HELPER (da .utils mancante) ---
+# Queste funzioni erano in 'losses/utils.py' e causavano un errore.
+# Le ho spostate qui per rimuovere la dipendenza.
+
+def _reshape_density(gt_den_map: Tensor, block_size: int) -> Tensor:
+    """Raggruppa la density map in blocchi."""
+    B, C, H, W = gt_den_map.shape
+    assert H % block_size == 0 and W % block_size == 0, \
+        f"Le dimensioni H e W ({H}x{W}) non sono divisibili per block_size ({block_size})"
+    
+    gt_den_map = gt_den_map.view(
+        B, C, H // block_size, block_size, W // block_size, block_size
+    )
+    gt_den_map = gt_den_map.permute(0, 1, 2, 4, 3, 5).contiguous()
+    gt_den_map = gt_den_map.view(
+        B, C, (H // block_size) * (W // block_size), block_size, block_size
+    )
+    gt_den_map = gt_den_map.sum(dim=(-1, -2))
+    gt_den_map = gt_den_map.view(
+        B, C, H // block_size, W // block_size
+    )
+    return gt_den_map
+def _bin_count(gt_den_map: Tensor, bins: List[Tuple[float, float]]) -> Tensor:
+    """Converte la density map in una mappa di classi (bin)."""
+    
+    # --- MODIFICA: Converti i bin in float PRIMA di usarli ---
+    float_bins = [(float(low), float(high)) for low, high in bins]
+    
+    B, C, H, W = gt_den_map.shape
+    num_bins = len(bins)
+    
+    # Inizializza la mappa delle classi (B, H, W)
+    gt_class_map = torch.full(
+        (B, H, W), fill_value=-1, dtype=torch.long, device=gt_den_map.device # Inizializza con -1 (invalido)
+    )
+    
+    gt_den_map_flat = gt_den_map.squeeze(1) # Rimuovi canale C (B, H, W)
+    
+    # Assegna ogni blocco al bin corretto
+    # NOTA: I bin si sovrappongono (es. [0,0] e [1,1]), usiamo la logica dei bin di EBC
+    # che si basa sui *centri* dei bin.
+    
+    # Crea i bordi dei bin
+    bin_edges = [float_bins[0][0]] # Inizia con 0
+    for i in range(len(float_bins) - 1):
+        # Il bordo è a metà tra i centri
+        center_curr = (float_bins[i][0] + float_bins[i][1]) / 2
+        center_next = (float_bins[i+1][0] + float_bins[i+1][1]) / 2
+        border = (center_curr + center_next) / 2
+        bin_edges.append(border)
+    bin_edges.append(float('inf')) # Bordo finale
+
+    # Esempio: bin_edges = [0.0, 0.5, 1.5, 2.5, ..., 14.5, inf]
+
+    for i in range(num_bins):
+        low = bin_edges[i]
+        high = bin_edges[i+1]
+        
+        if i == 0:
+             # Il primo bin (classe 0) include lo 0
+            mask = (gt_den_map_flat >= low) & (gt_den_map_flat < high)
+        else:
+            mask = (gt_den_map_flat >= low) & (gt_den_map_flat < high)
+            
+        gt_class_map[mask] = i
+
+    # Controlla se qualche valore non è stato assegnato (non dovrebbe succedere)
+    if (gt_class_map == -1).any():
+        print("ATTENZIONE: Alcuni valori di densità non sono stati assegnati a nessun bin.")
+        # Assegna i non assegnati al bin più vicino (o all'ultimo bin)
+        gt_class_map[gt_class_map == -1] = num_bins - 1 
+        
+    return gt_class_map
+# --- CLASSE LOSS PRINCIPALE (Modificata) ---
 
 class QuadLoss(nn.Module):
     def __init__(
@@ -19,186 +89,147 @@ class QuadLoss(nn.Module):
         input_size: int,
         block_size: int,
         bins: List[Tuple[float, float]],
-        reg_loss: str = "zipnll",
-        aux_loss: str = "none",
         weight_cls: float = 1.0,
         weight_reg: float = 1.0,
-        weight_aux: Optional[float] = None,
-        numItermax: Optional[int] = 100,
-        regularization: Optional[int] = 10.0,
-        scales: Optional[List[int]] = [[1, 2, 4]],
-        min_scale_weight: Optional[float] = 0.0,
-        max_scale_weight: Optional[float] = 1.0,
-        alpha: Optional[float] = 0.5,
+        weight_aux: float = 0.0,
+        pi_loss_weight_bce: float = 1.0, # Peso per la BCE della PI-Head
+        pi_mask_threshold: float = 0.5, # Soglia per la maschera
+        # Rimuovi parametri non usati (numItermax, scales, alpha, etc.)
+        **kwargs # Accetta altri argomenti (come reg_loss, aux_loss) ma non li usa
     ) -> None:
         super().__init__()
         assert input_size % block_size == 0, f"Expected input_size to be divisible by block_size, got {input_size} and {block_size}"
-        assert len(bins) >= 2, f"Expected bins to have at least 2 elements, got {len(bins)}"
-        assert all([len(b) == 2 for b in bins]), f"Expected all bins to be of length 2, got {bins}"
-        bins = [(float(low), float(high)) for low, high in bins]
-        assert all([b[0] <= b[1] for b in bins]), f"Expected each bin to have bin[0] <= bin[1], got {bins}"
-        assert reg_loss in ["zipnll", "pnll", "dm", "msmae", "mae", "mse"], f"Expected reg_loss to be one of ['zipnll', 'pnll', 'dm', 'msmae', 'mae', 'mse'], got {reg_loss}"
-        assert aux_loss in ["zipnll", "pnll", "dm", "msmae", "mae", "mse", "none"], f"Expected aux_loss to be one of ['zipnll', 'pnll', 'dm', 'msmae', 'mae', 'mse', 'none'], got {aux_loss}"
-
-        assert weight_cls >= 0, f"Expected weight_cls to be non-negative, got {weight_cls}"
-        assert weight_reg >= 0, f"Expected weight_reg to be non-negative, got {weight_reg}"
-        assert not (weight_cls == 0 and weight_reg == 0), "Expected at least one of weight_cls and weight_reg to be non-zero"
-        weight_aux = 0 if aux_loss == "none" or weight_aux is None else weight_aux
-        assert weight_aux >= 0, f"Expected weight_aux to be non-negative, got {weight_aux}"
-
+        
         self.input_size = input_size
         self.block_size = block_size
         self.bins = bins
-        self.reg_loss = reg_loss
-        self.aux_loss = aux_loss
-        self.weight_cls = weight_cls
-        self.weight_reg = weight_reg
-        self.weight_aux = weight_aux
-
         self.num_bins = len(bins)
         self.num_blocks_h = input_size // block_size
         self.num_blocks_w = input_size // block_size
 
-        if reg_loss == "zipnll":
-            self.cls_loss = "zice"
-            self.cls_loss_fn = ZICrossEntropy(bins=bins, reduction="mean")
-            self.reg_loss_fn = ZIPoissonNLL(reduction="mean")
-        else:
-            self.cls_loss = "ce"
-            self.cls_loss_fn = nn.CrossEntropyLoss(reduction="none")
-            if reg_loss == "pnll":
-                self.reg_loss_fn = PoissonNLL(reduction="mean")
-            elif reg_loss == "dm":
-                assert numItermax is not None and numItermax > 0, f"Expected numItermax to be a positive integer, got {numItermax}"
-                assert regularization is not None and regularization > 0, f"Expected regularization to be a positive float, got {regularization}"
-                self.reg_loss_fn = DMLoss(
-                    input_size=input_size,
-                    block_size=block_size,
-                    numItermax=numItermax,
-                    regularization=regularization,
-                    weight_ot=0.1,
-                    weight_tv=0.01,
-                    weight_cnt=0,  # count loss will be calculated separately in this module.
-                )
-            elif reg_loss == "msmae":
-                assert isinstance(scales, (list, tuple)) and len(scales) > 0 and all(isinstance(s, int) and s > 0 for s in scales), f"Expected scales to be a list of positive integers, got {scales}"
-                assert max_scale_weight >= min_scale_weight >= 0, f"Expected max_scale_weight to be greater than or equal to min_scale_weight, got {min_scale_weight} and {max_scale_weight}"
-                assert 1 > alpha > 0, f"Expected alpha to be between 0 and 1, got {alpha}"
-                self.reg_loss_fn = MultiscaleMAE(
-                    scales=sorted(scales),
-                    min_scale_weight=min_scale_weight,
-                    max_scale_weight=max_scale_weight,
-                    alpha=alpha,
-                )
-            elif reg_loss == "mae":
-                self.reg_loss_fn = nn.L1Loss(reduction="none")
-            elif reg_loss == "mse":
-                self.reg_loss_fn = nn.MSELoss(reduction="none")
-            else:  # reg_loss == "none"
-                self.reg_loss_fn = None
+        # Salva i pesi per i diversi stadi
+        self.weight_cls = weight_cls
+        self.weight_reg = weight_reg
+        self.weight_aux = weight_aux
+        self.pi_loss_weight_bce = pi_loss_weight_bce
+        self.pi_mask_threshold = pi_mask_threshold
 
-        if aux_loss == "zipnll":
-            self.aux_loss_fn = ZIPoissonNLL(reduction="mean")
-        elif aux_loss == "pnll":
-            self.aux_loss_fn = PoissonNLL(reduction="mean")
-        elif aux_loss == "dm":
-            assert numItermax is not None and numItermax > 0, f"Expected numItermax to be a positive integer, got {numItermax}"
-            assert regularization is not None and regularization > 0, f"Expected regularization to be a positive float, got {regularization}"
-            self.aux_loss_fn = DMLoss(
-                input_size=input_size,
-                block_size=block_size,
-                numItermax=numItermax,
-                regularization=regularization,
-                weight_ot=0.1,
-                weight_tv=0.01,
-                weight_cnt=0,  # count loss will be calculated separately in this module.
-            )
-        elif aux_loss == "msmae":
-            assert isinstance(scales, (list, tuple)) and len(scales) > 0 and all(isinstance(s, int) and s > 0 for s in scales), f"Expected scales to be a list of positive integers, got {scales}"
-            assert max_scale_weight >= min_scale_weight >= 0, f"Expected max_scale_weight to be greater than or equal to min_scale_weight, got {min_scale_weight} and {max_scale_weight}"
-            assert 1 > alpha > 0, f"Expected alpha to be between 0 and 1, got {alpha}"
-            self.aux_loss_fn = MultiscaleMAE(
-                scales=sorted(scales),
-                min_scale_weight=min_scale_weight,
-                max_scale_weight=max_scale_weight,
-                alpha=alpha,
-            )
-        elif aux_loss == "mae":
-            self.aux_loss_fn = nn.L1Loss(reduction="none")
-        elif aux_loss == "mse":
-            self.aux_loss_fn = nn.MSELoss(reduction="none")
-        else:  # aux_loss == "none"
-            self.aux_loss_fn = None
-
+        # --- Inizializza le 3 componenti di loss ---
+        
+        # 1. Loss per PI-Head (ZIP) - Componente Regressione (NLL)
+        # Usata in Stage 1 e 3 (controllata da weight_reg)
+        self.pi_loss_nll = ZIPoissonNLL(reduction="mean")
+        
+        # 2. Loss per PI-Head (ZIP) - Componente Classificazione (BCE per 'vuoto')
+        # Usata in Stage 1 e 3 (controllata da weight_reg)
+        self.pi_loss_bce = ZICrossEntropy(reduction="mean")
+        
+        # 3. Loss per LAMBDA-Head (EBC) - Componente Classificazione Bin
+        # Usata in Stage 2 e 3 (controllata da weight_cls)
+        # reduction='none' è FONDAMENTALE per permettere il masking
+        self.lambda_loss_ebc = nn.CrossEntropyLoss(reduction="none")
+        
+        # 4. Loss sul conteggio totale (AUX)
+        # Usata in Stage 3 (controllata da weight_aux)
         self.cnt_loss_fn = nn.L1Loss(reduction="mean")
 
     def forward(
         self,
-        pred_logit_map: Tensor,
-        pred_den_map: Tensor,
-        gt_den_map: Tensor,
+        pred_logit_map: Tensor, # Output EBC/Lambda-Head (B, Num_Bins, H, W)
+        pred_den_map: Tensor,   # Output Densità Finale (B, 1, H, W)
+        gt_den_map: Tensor,     # GT Densità (B, 1, H_full, W_full)
         gt_points: List[Tensor],
-        pred_logit_pi_map: Optional[Tensor] = None,
-        pred_lambda_map: Optional[Tensor] = None,
+        pred_logit_pi_map: Optional[Tensor] = None, # Output PI-Head (B, 2, H, W)
+        pred_lambda_map: Optional[Tensor] = None, # Output PI-Head (B, 1, H, W)
     ) -> Tuple[Tensor, Dict[str, Tensor]]:
+        
         B = pred_den_map.shape[0]
-        assert pred_logit_map.shape[-2:] == (self.num_blocks_h, self.num_blocks_w), f"Expected pred_logit_map to have the spatial dimension of {self.num_blocks_h}x{self.num_blocks_w}, got {pred_logit_map.shape}"
+
+        # Reshapa la GT density map per matchare i blocchi
         if gt_den_map.shape[-2:] != (self.num_blocks_h, self.num_blocks_w):
             assert gt_den_map.shape[-2:] == (self.input_size, self.input_size), f"Expected gt_den_map to have shape {B, 1, self.input_size, self.input_size}, got {gt_den_map.shape}"
-            gt_den_map = _reshape_density(gt_den_map, block_size=self.block_size)
-        assert pred_den_map.shape == gt_den_map.shape == (B, 1, self.num_blocks_h, self.num_blocks_w), f"Expected pred_den_map and gt_den_map to have shape (B, 1, H, W), got {pred_den_map.shape} and {gt_den_map.shape}"
-        assert len(gt_points) == B, f"Expected gt_points to have length B, got {len(gt_points)}"
+            gt_den_map_blocks = _reshape_density(gt_den_map, block_size=self.block_size)
+        else:
+            gt_den_map_blocks = gt_den_map
 
-        if self.reg_loss == "zipnll" or self.aux_loss == "zipnll":
-            assert pred_logit_pi_map is not None and pred_logit_pi_map.shape == (B, 2, self.num_blocks_h, self.num_blocks_w), f"Expected pred_logit_pi_map to have shape {B, 2, self.num_blocks_h, self.num_blocks_w}, got {pred_logit_pi_map.shape}"
-            assert pred_lambda_map is not None and pred_lambda_map.shape == (B, 1, self.num_blocks_h, self.num_blocks_w), f"Expected pred_lambda_map to have shape {B, 1, self.num_blocks_h, self.num_blocks_w}, got {pred_lambda_map.shape}"
-        
         loss_info = {}
-        if self.weight_cls > 0:
-            gt_class_map = _bin_count(gt_den_map, bins=self.bins)
-            if self.cls_loss == "ce":
-                cls_loss = self.cls_loss_fn(pred_logit_map, gt_class_map).sum(dim=(-1, -2)).mean()
-                loss_info["cls_ce_loss"] = cls_loss.detach()
-            else:  # cls_loss == "zice"
-                cls_loss, cls_loss_info = self.cls_loss_fn(pred_logit_map, gt_den_map)
-                loss_info.update(cls_loss_info)
-        else:
-            cls_loss = 0
+        total_loss = 0
         
-        if self.weight_reg > 0:
-            if self.reg_loss == "zipnll":
-                reg_loss, reg_loss_info = self.reg_loss_fn(pred_logit_pi_map, pred_lambda_map, gt_den_map)
-            elif self.reg_loss == "dm":
-                reg_loss, reg_loss_info = self.reg_loss_fn(pred_den_map, gt_den_map, gt_points)
-            elif self.reg_loss in ["pnll", "msmae"]:
-                reg_loss, reg_loss_info = self.reg_loss_fn(pred_den_map, gt_den_map)
-            else:  # reg_loss in ["mae", "mse"]
-                reg_loss = self.reg_loss_fn(pred_den_map, gt_den_map).sum(dim=(-1, -2)).mean()
-                reg_loss_info = {f"{self.reg_loss}": reg_loss.detach()}
-            reg_loss_info = {f"reg_{k}": v for k, v in reg_loss_info.items()}
-            loss_info.update(reg_loss_info)
-        else:
-            reg_loss = 0
-        
-        if self.weight_aux > 0:
-            if self.aux_loss == "zipnll":
-                aux_loss, aux_loss_info = self.aux_loss_fn(pred_logit_pi_map, pred_lambda_map, gt_den_map)
-            elif self.aux_loss in ["pnll", "msmae"]:
-                aux_loss, aux_loss_info = self.aux_loss_fn(pred_den_map, gt_den_map)
-            elif self.aux_loss == "dm":
-                aux_loss, aux_loss_info = self.aux_loss_fn(pred_den_map, gt_den_map, gt_points)
-            else:
-                aux_loss = self.aux_loss_fn(pred_den_map, gt_den_map).sum(dim=(-1, -2)).mean()
-                aux_loss_info = {f"{self.aux_loss}": aux_loss.detach()}
-            aux_loss_info = {f"aux_{k}": v for k, v in aux_loss_info.items()}
-            loss_info.update(aux_loss_info)
-        else:
-            aux_loss = 0
-        
-        gt_cnt = torch.tensor([len(p) for p in gt_points], dtype=torch.float32, device=pred_den_map.device)
-        cnt_loss = self.cnt_loss_fn(pred_den_map.sum(dim=(1, 2, 3)), gt_cnt)
-        loss_info["cnt_loss"] = cnt_loss.detach()
+        pi_loss = torch.tensor(0.0, device=pred_den_map.device)
+        lambda_loss = torch.tensor(0.0, device=pred_den_map.device)
+        cnt_loss = torch.tensor(0.0, device=pred_den_map.device)
 
-        total_loss = self.weight_cls * cls_loss + self.weight_reg * reg_loss + self.weight_aux * aux_loss + cnt_loss
+        # --- 1. Calcolo Loss PI-Head (ZIP) ---
+        # Questa è la 'reg_loss' in train.py (Stage 1 e 3)
+        if self.weight_reg > 0:
+            assert pred_logit_pi_map is not None and pred_lambda_map is not None, \
+                "PI-Head outputs (pred_logit_pi_map, pred_lambda_map) are required when weight_reg > 0"
+            
+            # Loss NLL (solo per blocchi non-zero)
+            pi_loss_n, n_info = self.pi_loss_nll(pred_logit_pi_map, pred_lambda_map, gt_den_map_blocks)
+            # Loss BCE (zero vs non-zero)
+            pi_loss_b, b_info = self.pi_loss_bce(pred_logit_pi_map, gt_den_map_blocks)
+            
+            # Combina le due componenti della loss ZIP
+            pi_loss = pi_loss_n + (pi_loss_b * self.pi_loss_weight_bce)
+            
+            loss_info.update({
+                "pi_nll_loss": n_info['nll'].detach(), 
+                "pi_bce_loss": b_info['bce'].detach()
+            })
+
+        # --- 2. Calcolo Loss LAMBDA-Head (EBC) ---
+        # Questa è la 'cls_loss' in train.py (Stage 2 e 3)
+        if self.weight_cls > 0:
+            assert pred_logit_pi_map is not None, \
+                "PI-Head output (pred_logit_pi_map) is required for masking when weight_cls > 0"
+
+            # Crea la GT per la classificazione EBC
+            gt_class_map = _bin_count(gt_den_map_blocks, bins=self.bins)
+            
+            # Stabilizza l'input per prevenire NaN da logit estremi
+            pred_logit_map = torch.clamp(pred_logit_map, min=-30, max=30)
+
+            # Calcola la loss EBC non ridotta (B, H, W)
+            lambda_loss_unreduced = self.lambda_loss_ebc(pred_logit_map, gt_class_map)
+            
+            # --- APPLICA IL MASKING (come da tua idea) ---
+            # Usa l'output della PI-Head per mascherare la loss EBC
+            with torch.no_grad():
+                # Probabilità che un blocco sia NON-VUOTO (canale 1)
+                pi_prob_nonzero = pred_logit_pi_map.softmax(dim=1)[:, 1, :, :]
+                # Crea la maschera binaria (1.0 se non-vuoto, 0.0 se vuoto)
+                # .detach() è fondamentale per non propagare il gradiente EBC alla PI-Head
+                pi_mask = (pi_prob_nonzero > self.pi_mask_threshold).float()
+
+            # Applica la maschera: la loss è 0 per i blocchi vuoti
+            lambda_loss_masked = lambda_loss_unreduced * pi_mask
+            
+            # Riduci la loss (media sul batch)
+            # Nota: dividiamo per pi_mask.sum() per fare la media solo sui blocchi non-vuoti
+            # Questo evita che la loss scenda artificialmente in immagini molto vuote
+            if pi_mask.sum() > 0:
+                 lambda_loss = lambda_loss_masked.sum() / pi_mask.sum()
+            else:
+                 lambda_loss = lambda_loss_masked.sum() # Sarà 0
+            
+            loss_info["lambda_ebc_loss"] = lambda_loss.detach()
+            loss_info["mask_active_blocks"] = pi_mask.sum().detach() / (B * self.num_blocks_h * self.num_blocks_w)
+
+        # --- 3. Calcolo Loss Conteggio Totale (AUX) ---
+        # Questa è la 'aux_loss' in train.py (Stage 3)
+        if self.weight_aux > 0:
+            gt_cnt_per_image = torch.tensor([len(p) for p in gt_points], dtype=torch.float32, device=pred_den_map.device)
+            pred_cnt_per_image = pred_den_map.sum(dim=(1, 2, 3))
+            
+            cnt_loss = self.cnt_loss_fn(pred_cnt_per_image, gt_cnt_per_image)
+            loss_info["cnt_loss"] = cnt_loss.detach()
+
+        # --- Loss Totale Ponderata ---
+        total_loss = (self.weight_reg * pi_loss) + \
+                     (self.weight_cls * lambda_loss) + \
+                     (self.weight_aux * cnt_loss)
+        
+        loss_info["total_loss"] = total_loss.detach()
+        
         return total_loss, loss_info
-    

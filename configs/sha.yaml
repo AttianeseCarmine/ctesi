@@ -1,33 +1,126 @@
-metadata:
-  name: sha
-  description: Training configuration on the ShanghaiTech A dataset.
+# configs/sha.yaml
+# FILE MODIFICATO PER GENERALIZZAZIONE (CLIP-EBC + LoRA)
+train_base:
+  output_dir: './output/sha'  # Aggiungi un percorso di output di default
+  seed: 42                      # Aggiungi un seed (richiesto da train.py)
+  device: 'cuda:0'
+  eval_freq: 1
+# 1. IMPOSTAZIONI DEL MODELLO
+model:
+  name: '_clip_ebc'
+  model_name: 'ViT-B-16'     # Modello backbone di CLIP
+  weight_name: 'openai'        # Pesi pre-addestrati (es. 'openai', 'laion2b')
+  block_size: 16
+  input_size: 448              # Deve corrispondere a dataset.input_size
+  zero_inflated: True        # Abilita il modulo ZIP
+  num_vpt: 0
+  
 
-input_size: 448
-block_size: 16
-batch_size: 8
-num_crops: 1
+ # === 1.A: GENERALIZZAZIONE (LoRA) ===
+  lora: True
+  lora_rank: 8
+  lora_alpha: 16.
+  lora_dropout: 0.1
+  
+  # === 1.B: NUOVI PARAMETRI DI GATING (per la logica seriale) ===
+  pi_thresh: 0.5             # Soglia per la maschera (usa 0.5)
+  gate_mode: "multiply"      # Metodo di Gating
 
-aug_min_scale: 0.75
-aug_max_scale: 2.0
-aug_brightness: 0.15
-aug_contrast: 0.15
-aug_saturation: 0.1
-aug_hue: 0.0
-aug_blur_prob: 0.0
-aug_saltiness: 0.001
-aug_spiciness: 0.001
+  # === 1.C: BINS E PROMPTS SEMANTICI ===
+  # (Nessuna modifica richiesta qui, la tua configurazione è già corretta)
+  bins: [
+      [0, 0], [1, 1], [2, 2], [3, 3], [4, 4], [5, 5], [6, 6], [7, 7], [8, 8], [9, 9],
+      [10, 10], [11, 12], [13, 14], [15, "inf"]
+    ]
+  bin_centers: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11.5, 13.5, 15] 
 
-lr: 0.0001
-vpt_lr: 0.0001
-adapter_lr: 0.0001
-lora_lr: 0.0001
-backbone_lr: 0.0001
+  text_prompts:
+    pi:
+      - ["a photo of an empty space", "a deserted street", "a sidewalk with no people", "nobody here", "background"]
+      - ["a photo of a person", "an image with people", "a crowd", "someone here", "people present"]
+    lambda:
+      - ["one person"]
+      - ["two people"]
+      - ["three people"]
+      - ["four people"]
+      - ["five people"]
+      - ["six people"]
+      - ["seven people"]
+      - ["eight people"]
+      - ["nine people"]
+      - ["ten people"]
+      - ["a small group of people"]   # Bin [11, 12]
+      - ["a group of people"]         # Bin [13, 14]
+      - ["a large crowd of people"]   # Bin [15, "inf"]
 
-weight_decay: 0.0001
-vpt_weight_decay: 0.0001
-adapter_weight_decay: 0.0001
-lora_weight_decay: 0.0001
-backbone_weight_decay: 0.0001
+# 2. IMPOSTAZIONI DEL DATASET (da sha.yaml originale)
+dataset:
+  data_root: './data'  
+  name: 'SHA'
+  num_classes: 10 # Non più usato da CLIP-EBC, ma innocuo
+  input_size: 448
+  train_split: 'train'
+  eval_split: 'val'
+  aug_config: 'aug_config_1'
+  multi_scale_eval: False
+  eval_input_size: 0
 
-eval_freq: 0.25
-eval_start: 100
+# 3. IMPOSTAZIONI DELLA LOSS (da sha.yaml originale)
+loss:
+  name: 'zip_nll'
+  use_regression: True
+  use_classification: True
+  use_auxiliary: True
+  weight_cls: 0.1  # Parametro da testare (es. 0.1, 0.5, 1.0)
+  weight_reg: 1.0
+  weight_aux: 0.1
+  reg_loss: 'l1'
+  aux_loss: 'l1'
+ 
+# 4. IMPOSTAZIONI DI TRAINING (da sha.yaml originale)
+
+# STADIO 1: Pre-training PI Head (ZIP)
+train_stage1:
+  optimizer: 'sgd'       # <--- MODIFICATO
+  momentum: 0.9          # <--- AGGIUNTO
+  scheduler: 'cosine'
+  lr: 0.0001           # Questo LR (1e-4) sarà per la PI-Head
+  lr_backbone: 0.00001 # <--- AGGIUNGI QUESTA RIGA (1e-5)
+  weight_decay: 0.0001
+  num_epochs: 100 
+  batch_size: 8
+  num_workers: 4
+  clip_grad_norm: 1.0
+
+# STADIO 2: Pre-training LAMBDA Head (EBC)
+train_stage2:
+  optimizer: 'adamw'
+  scheduler: 'cosine'
+  lr: 0.0001
+  weight_decay: 0.0001
+  num_epochs: 150
+  batch_size: 8
+  num_workers: 4
+  early_stopping_patience: 20 # <-- NUOVA RIGA: Interrompi dopo 20 val senza miglioramenti
+
+# STADIO 3: Joint Fine-tuning
+train_stage3:
+  optimizer: 'adamw'
+  scheduler: 'cosine'
+  lr: 0.00001 
+  weight_decay: 0.0001
+  num_epochs: 50 
+  batch_size: 8
+  num_workers: 4
+  early_stopping_patience: 10 # <-- NUOVA RIGA: Interrompi dopo 10 val senza miglioramenti
+
+
+# 5. IMPOSTAZIONI DI VALUTAZIONE (da sha.yaml originale)
+eval:
+  batch_size: 1
+  num_workers: 4
+  sliding_window: True
+  window_size: 512
+  stride: 256
+  max_num_windows: 20
+  max_input_size: 2048

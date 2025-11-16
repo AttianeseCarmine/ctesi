@@ -1,49 +1,47 @@
 #!/bin/bash
+# Questo script esegue tutti e 3 gli stadi di addestramento in sequenza.
+# Ogni stadio viene eseguito in background con 'nohup' e il suo
+# output è reindirizzato a un file di log separato (es. stage1.log).
+# Lo script attende il completamento di uno stadio prima di avviare il successivo.
+#nohup python train.py --config "configs/sha.yaml" --stage 1 > "logs/train/stage1.log" 2>&1 &
 
-# Termina lo script immediatamente se un comando fallisce
-set -e
+CONFIG_FILE="configs/sha.yaml"
+# Legge la output_dir direttamente dal file .yaml per robustezza
+OUTPUT_DIR=$(grep 'output_dir:' $CONFIG_FILE | awk '{print $2}' | tr -d "'")
 
-# --- CONFIGURAZIONE ---
-
-# 1. File di Configurazione:
-#    Usa il primo argomento ($1) come file di config.
-#    Se non viene fornito nessun argomento, usa "configs/sha.yaml" come default.
-CONFIG_FILE=${1:-"configs/sha.yaml"}
-
-# 2. (OPZIONALE) Pesi della Baseline:
-#    Togli il commento (rimuovi #) alla riga seguente e metti il percorso
-#    corretto per riprendere l'addestramento dalla tua baseline.
-RESUME_ARG="--resume pretrained_weights/nome_del_tuo_file.pth"
-# RESUME_ARG="" # Lascia vuoto per iniziare da zero
-
-# --- IMPOSTAZIONE LOG ---
-
-# Modifica: crea la sottocartella logs/train
+# Crea la directory di output e la sottocartella train per i log
 LOG_DIR="logs/train"
-mkdir -p $LOG_DIR
+mkdir -p "$LOG_DIR"
 
-# Estrai il nome base del file di config (es. "sha")
-BASENAME=$(basename $CONFIG_FILE .yaml)
-LOG_FILE="$LOG_DIR/${BASENAME}_$(date +%Y%m%d_%H%M%S).log"
-
-# --- COSTRUZIONE COMANDO ---
-
-# Comando per avviare lo script principale di training
-COMMAND="python3 trainer.py --config $CONFIG_FILE $RESUME_ARG"
-
-# --- ESECUZIONE ---
-
-echo "🚀 Avvio addestramento..."
+echo "🚀 AVVIO SCRIPT DI ADDESTRAMENTO COMPLETO (3 STADI) 🚀"
 echo "Configurazione: $CONFIG_FILE"
-if [ ! -z "$RESUME_ARG" ]; then
-  echo "Riprendendo da: $RESUME_ARG"
-fi
-echo "Log salvati in: $LOG_FILE"
+echo "Directory di Output: $OUTPUT_DIR"
+echo "I log saranno salvati in: $LOG_DIR"
 
-# Avvia il processo in background con nohup
-nohup $COMMAND > $LOG_FILE 2>&1 &
+# --- STADIO 1 ---
+echo "--- Avvio STADIO 1 (Pre-training PI Head)... ---"
+nohup python train.py --config "$CONFIG_FILE" --stage 1 > "$LOG_DIR/stage1.log" 2>&1 &
+pid=$!
+echo "Stadio 1 in esecuzione con PID: $pid. Log in $LOG_DIR/stage1.log"
+wait $pid
+echo "--- ✅ STADIO 1 completato. ---"
 
-# Messaggio di conferma
-echo "✅ Addestramento avviato in background."
-echo "Per monitorare il progresso, esegui:"
-echo "  tail -f $LOG_FILE"
+# --- STADIO 2 ---
+echo "--- Avvio STADIO 2 (Pre-training LAMBDA Head)... ---"
+nohup python train.py --config "$CONFIG_FILE" --stage 2 > "$LOG_DIR/stage2.log" 2>&1 &
+pid=$!
+echo "Stadio 2 in esecuzione con PID: $pid. Log in $LOG_DIR/stage2.log"
+wait $pid
+echo "--- ✅ STADIO 2 completato. ---"
+
+# --- STADIO 3 ---
+echo "--- Avvio STADIO 3 (Joint Fine-tuning)... ---"
+nohup python train.py --config "$CONFIG_FILE" --stage 3 > "$LOG_DIR/stage3.log" 2>&1 &
+pid=$!
+echo "Stadio 3 in esecuzione con PID: $pid. Log in $LOG_DIR/stage3.log"
+wait $pid
+echo "--- ✅ STADIO 3 completato. ---"
+
+echo "🎉 Addestramento completo terminato. 🎉"
+echo "Il modello finale (best_mae.pth) è disponibile in $OUTPUT_DIR"
+echo "I log completi sono disponibili in $LOG_DIR"

@@ -40,6 +40,12 @@ class CLIP_EBC(nn.Module):
         text_prompts: Optional[Dict[str, List[str]]] = None,
         norm: Optional[str] = "none",
         act: Optional[str] = "none",
+        
+        # === INIZIO MODIFICA: Aggiunti parametri di Gating (come P2R-ZIP) ===
+        pi_thresh: float = 0.5,
+        gate_mode: str = "multiply",
+        # === FINE MODIFICA ===
+
     ) -> None:
         super().__init__()
         if "mobileclip" in model_name.lower() or "vit" in model_name.lower():
@@ -51,6 +57,10 @@ class CLIP_EBC(nn.Module):
         assert all(len(b) == 2 for b in bins), f"Expected bins to be a list of tuples of length 2, got {bins}"
         bins = [(float(b[0]), float(b[1])) for b in bins]
         assert all(bin[0] <= p <= bin[1] for bin, p in zip(bins, bin_centers)), f"Expected bin_centers to be within the range of the corresponding bin, got {bins} and {bin_centers}"
+        
+        # === INIZIO MODIFICA: Asserzione per la logica seriale ===
+        assert zero_inflated, "La logica seriale 'ZIP-in-serie-a-EBC' richiede zero_inflated=True per separare pi_head e lambda_head."
+        # === FINE MODIFICA ===
 
         self.model_name = model_name
         self.weight_name = weight_name
@@ -59,6 +69,11 @@ class CLIP_EBC(nn.Module):
         self.register_buffer("bin_centers", torch.tensor(bin_centers, dtype=torch.float32, requires_grad=False).view(1, -1, 1, 1))
         self.zero_inflated = zero_inflated
         self.text_prompts = text_prompts
+        
+        # === INIZIO MODIFICA: Salvataggio parametri di Gating ===
+        self.pi_thresh = pi_thresh
+        self.gate_mode = gate_mode
+        # === FINE MODIFICA ===
 
         # Image encoder
         if model_name in vit_names_and_weights:
@@ -126,51 +141,54 @@ class CLIP_EBC(nn.Module):
         self._build_text_feats()
         self._build_head()
 
-    def _build_text_feats(self) -> None:
-        model_name, weight_name = self.model_name, self.weight_name
-        text_prompts = self.text_prompts
-
-        if text_prompts is None:
-            bins = [b[0] if b[0] == b[1] else b for b in self.bins]  # if the bin is a single value (e.g., [0, 0]), use that value
-            if self.zero_inflated:  # separate 0 from the rest
-                assert bins[0] == 0, f"Expected the first bin to be 0, got {bins[0]}."
-                bins_pi = [0, (1, float("inf"))]
-                bins_lambda = bins[1:]
-                pi_text_prompts = optimize_text_prompts(model_name, weight_name, bins_pi)
-                lambda_text_prompts = optimize_text_prompts(model_name, weight_name, bins_lambda)
-                self.text_prompts = {"pi": pi_text_prompts, "lambda": lambda_text_prompts}
-                pi_text_feats = encode_text(model_name, weight_name, pi_text_prompts)
-                lambda_text_feats = encode_text(model_name, weight_name, lambda_text_prompts)
-                pi_text_feats.requires_grad = False
-                lambda_text_feats.requires_grad = False
-                self.register_buffer("pi_text_feats", pi_text_feats)
-                self.register_buffer("lambda_text_feats", lambda_text_feats)
-
-            else:
-                text_prompts = optimize_text_prompts(model_name, weight_name, bins)
-                self.text_prompts = text_prompts
-                text_feats = encode_text(model_name, weight_name, text_prompts)
-                text_feats.requires_grad = False
-                self.register_buffer("text_feats", text_feats)
+    def _build_text_feats(self):
+        # --- FUNZIONE MODIFICATA PER GESTIRE I GRUPPI DI PROMPT ---
+        import torch
+        from .utils import encode_text # Assicurati che importi la funzione corretta
         
-        else:
-            if self.zero_inflated:
-                assert "pi" in text_prompts and "lambda" in text_prompts, f"Expected text_prompts to have keys 'pi' and 'lambda', got {text_prompts.keys()}."
-                pi_text_prompts = text_prompts["pi"]
-                lambda_text_prompts = text_prompts["lambda"]
-                pi_text_feats = encode_text(model_name, weight_name, pi_text_prompts)
-                lambda_text_feats = encode_text(model_name, weight_name, lambda_text_prompts)
-                pi_text_feats.requires_grad = False
-                lambda_text_feats.requires_grad = False
-                self.register_buffer("pi_text_feats", pi_text_feats)
-                self.register_buffer("lambda_text_feats", lambda_text_feats)
+        model_name = self.model_name
+        weight_name = self.weight_name
+        device = next(self.backbone.parameters()).device
+        
+        # 1. Processa i prompt della PI-Head
+        pi_text_prompts_groups = self.text_prompts["pi"]
+        pi_text_feats_list = []
+        
+        for group in pi_text_prompts_groups:
+            # group è una List[str], es: ["prompt1", "prompt2", ...]
+            # encode_text si aspetta List[str] e ritorna [Num_Prompts, Feature_Dim]
+            group_feats = encode_text(model_name, weight_name, group).to(device)
+            
+            # Calcola la media dei feature vector per questo gruppo
+            avg_feat = group_feats.mean(dim=0)
+            
+            # Ri-normalizza il feature vector medio
+            avg_feat /= avg_feat.norm(dim=-1, keepdim=True)
+            pi_text_feats_list.append(avg_feat)
+        
+        # Registra il buffer finale (es. [2, Feature_Dim])
+        self.register_buffer("pi_text_feats", torch.stack(pi_text_feats_list))
 
-            else:
-                text_feats = encode_text(model_name, weight_name, text_prompts)
-                text_feats.requires_grad = False
-                self.register_buffer("text_feats", text_feats)
+        # 2. Processa i prompt della LAMBDA-Head (EBC)
+        lambda_text_prompts_groups = self.text_prompts["lambda"]
+        lambda_text_feats_list = []
+        
+        for group in lambda_text_prompts_groups:
+            # group è una List[str], es: ["one person"]
+            group_feats = encode_text(model_name, weight_name, group).to(device)
+            
+            # Calcola la media (anche se c'è un solo prompt, è più robusto)
+            avg_feat = group_feats.mean(dim=0)
+            
+            # Ri-normalizza
+            avg_feat /= avg_feat.norm(dim=-1, keepdim=True)
+            lambda_text_feats_list.append(avg_feat)
+        
+        # Registra il buffer finale (es. [13, Feature_Dim])
+        self.register_buffer("lambda_text_feats", torch.stack(lambda_text_feats_list))
 
     def _build_head(self) -> None:
+        # (Questo metodo rimane identico)
         in_channels = self.backbone.in_features
         out_channels = self.backbone.out_features
         if self.zero_inflated:
@@ -184,51 +202,59 @@ class CLIP_EBC(nn.Module):
             self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07), requires_grad=True)
             self.head = conv1x1(in_channels, out_channels, bias=False)
 
+    # ======================================================================
+    # === INIZIO MODIFICA: Metodo forward() seriale (Stile P2R-ZIP) ===
+    # ======================================================================
     def forward(self, image: Tensor):
-        image_feats = self.backbone(image)
-        # image_feats = F.normalize(image_feats.permute(0, 2, 3, 1), p=2, dim=-1)  # shape (B, H, W, C)
+        # 1. Backbone condiviso
+        image_feats = self.backbone(image)  # [B, C_feat, H, W]
         
-        if self.zero_inflated:
-            pi_image_feats, lambda_image_feats = self.pi_head(image_feats), self.lambda_head(image_feats)
-            pi_image_feats = F.normalize(pi_image_feats.permute(0, 2, 3, 1), p=2, dim=-1)  # shape (B, H, W, C)
-            lambda_image_feats = F.normalize(lambda_image_feats.permute(0, 2, 3, 1), p=2, dim=-1)  # shape (B, H, W, C)
+        # --- MODULO A: ZIP (pi_head) ---
+        # 2. Calcola i logits di 'pi' (il modulo ZIP)
+        pi_image_feats_head = self.pi_head(image_feats) # [B, C_out, H, W]
+        pi_image_feats_norm = F.normalize(pi_image_feats_head.permute(0, 2, 3, 1), p=2, dim=-1, eps=1e-8)
+        pi_logit_scale = self.pi_logit_scale.exp()
+        pi_logit_map = pi_logit_scale * pi_image_feats_norm @ self.pi_text_feats.t() # [B, H, W, 2]
+        pi_logit_map = pi_logit_map.permute(0, 3, 1, 2)  # [B, 2, H, W]
 
-            pi_text_feats, lambda_text_feats = self.pi_text_feats, self.lambda_text_feats
-            pi_logit_scale, lambda_logit_scale = self.pi_logit_scale.exp(), self.lambda_logit_scale.exp()
+        # 3. Crea la maschera di gating (logica P2R-ZIP)
+        with torch.no_grad():
+            pi_softmax = pi_logit_map.softmax(dim=1)
+            pi_not_zero_prob = pi_softmax[:, 1:2]  # [B, 1, H, W] (Probabilità di essere NON-vuoto)
+            # Maschera binaria (hard-gating)
+            mask = (pi_not_zero_prob > self.pi_thresh).float()
 
-            pi_logit_map = pi_logit_scale * pi_image_feats @ pi_text_feats.t()  # (B, H, W, 2), logits per image
-            lambda_logit_map = lambda_logit_scale * lambda_image_feats @ lambda_text_feats.t()  # (B, H, W, N - 1), logits per image
+        # 4. Applica il Gating alle feature
+        if self.gate_mode == "multiply":
+            gated_feats = image_feats * mask
+        else: # Fallback
+            gated_feats = image_feats * mask # Default a multiply
 
-            pi_logit_map =  pi_logit_map.permute(0, 3, 1, 2)  # (B, 2, H, W)
-            lambda_logit_map = lambda_logit_map.permute(0, 3, 1, 2)  # (B, N - 1, H, W)
+        # --- MODULO B: CLIP-EBC (lambda_head) ---
+        # 5. Calcola i logits di 'lambda' (il modulo EBC) dalle *feature mascherate*
+        lambda_image_feats_head = self.lambda_head(gated_feats) # [B, C_out, H, W]
+        lambda_image_feats_norm = F.normalize(lambda_image_feats_head.permute(0, 2, 3, 1), p=2, dim=-1, eps=1e-8)
+        lambda_logit_scale = self.lambda_logit_scale.exp()
+        lambda_logit_map = lambda_logit_scale * lambda_image_feats_norm @ self.lambda_text_feats.t() # [B, H, W, N-1]
+        lambda_logit_map = lambda_logit_map.permute(0, 3, 1, 2) # [B, N-1, H, W]
 
-            lambda_map = (lambda_logit_map.softmax(dim=1) * self.bin_centers[:, 1:]).sum(dim=1, keepdim=True)  # (B, 1, H, W)
-            
-            # pi_logit_map.softmax(dim=1)[:, 0] is the probability of zeros
-            den_map = pi_logit_map.softmax(dim=1)[:, 1:] * lambda_map # (B, 1, H, W)
-            
-            if self.training:
-                return pi_logit_map, lambda_logit_map, lambda_map, den_map
-            else:
-                return den_map
+        # 6. Calcola la mappa di densità (basata solo su lambda)
+        lambda_map = (lambda_logit_map.softmax(dim=1) * self.bin_centers[:, 1:]).sum(dim=1, keepdim=True)
         
+        # L'output di lambda_map è già "mascherato" perché ha ricevuto feature azzerate
+        den_map = lambda_map
+        
+        if self.training:
+            # Restituiamo entrambi i set di logits per le loss separate (ZIPNLL + ZICE)
+            return pi_logit_map, lambda_logit_map, lambda_map, den_map
         else:
-            image_feats = self.head(image_feats)
-            image_feats = F.normalize(image_feats.permute(0, 2, 3, 1), p=2, dim=-1)
-
-            text_feats = self.text_feats
-            logit_scale = self.logit_scale.exp()
-
-            logit_map = logit_scale * image_feats @ text_feats.t()  # (B, H, W, N), logits per image
-            logit_map = logit_map.permute(0, 3, 1, 2)  # (B, N, H, W)
-
-            den_map = (logit_map.softmax(dim=1) * self.bin_centers).sum(dim=1, keepdim=True)  # (B, 1, H, W)
-
-            if self.training:
-                return logit_map, den_map
-            else:
-                return den_map
-
+            # In modalità inferenza, applichiamo la maschera binaria
+            # per assicurare che i blocchi vuoti siano *esattamente* zero.
+            return den_map * mask
+    # ======================================================================
+    # === FINE MODIFICA ===
+    # ======================================================================
+        
 
 def _clip_ebc(
     model_name: str,
@@ -249,6 +275,11 @@ def _clip_ebc(
     text_prompts: Optional[List[str]] = None,
     norm: Optional[str] = "none",
     act: Optional[str] = "none",
+    
+    # === INIZIO MODIFICA: Aggiunti argomenti al costruttore helper ===
+    pi_thresh: float = 0.5,
+    gate_mode: str = "multiply",
+    # === FINE MODIFICA ===
 ) -> CLIP_EBC:
     return CLIP_EBC(
         model_name=model_name,
@@ -269,4 +300,9 @@ def _clip_ebc(
         text_prompts=text_prompts,
         norm=norm,
         act=act,
+        
+        # === INIZIO MODIFICA: Passaggio nuovi argomenti ===
+        pi_thresh=pi_thresh,
+        gate_mode=gate_mode,
+        # === FINE MODIFICA ===
     )

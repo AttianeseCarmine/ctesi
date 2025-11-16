@@ -1,33 +1,94 @@
-metadata:
-  name: qnrf
-  description: Training configuration on the UCF-QNRF dataset.
+# configs/qnrf.yaml
+# FILE MODIFICATO PER GENERALIZZAZIONE (CLIP-EBC + LoRA)
 
-input_size: 672
-block_size: 32
-batch_size: 8
-num_crops: 1
+# 1. IMPOSTAZIONI DEL MODELLO
+model:
+  name: '_clip_ebc'
+  model_name: 'ViT-B-16'     # Modello backbone di CLIP
+  weight_name: 'openai'        # Pesi pre-addestrati
+  block_size: 16
+  input_size: 448              # NB: QNRF usa spesso input più grandi, potresti voler cambiare questo
+  zero_inflated: True        # Abilita il modulo ZIP
 
-aug_min_scale: 0.75
-aug_max_scale: 2.0
-aug_brightness: 0.15
-aug_contrast: 0.15
-aug_saturation: 0.1
-aug_hue: 0.0
-aug_blur_prob: 0.0
-aug_saltiness: 0.001
-aug_spiciness: 0.001
+  # === 1.A: GENERALIZZAZIONE (LoRA) ===
+  lora: True
+  lora_rank: 8
+  lora_alpha: 16.
+  lora_dropout: 0.1
 
-lr: 0.0001
-vpt_lr: 0.0001
-adapter_lr: 0.0001
-lora_lr: 0.0001
-backbone_lr: 0.0001
+  # === 1.B: BINS E PROMPTS SEMANTICI ===
+  # Bins da bin_config.json["qnrf"]["16"]
+  bins: [
+      [0, 0], [1, 1], [2, 2], [3, 3], [4, 4], [5, 5], [6, 6], [7, 7], [8, 9], 
+      [10, 11], [12, 14], [15, 17], [18, 20], [21, 24], [25, "inf"]
+    ]
+  bin_centers: [0, 1, 2, 3, 4, 5, 6, 7, 8.5, 10.5, 13, 16, 19, 22.5, 25] # 25 è un placeholder
 
-weight_decay: 0.0001
-vpt_weight_decay: 0.0001
-adapter_weight_decay: 0.0001
-lora_weight_decay: 0.0001
-backbone_weight_decay: 0.0001
+  text_prompts:
+    # Prompts per il modulo ZIP (maschera zero / non-zero)
+    pi:
+      - ["a photo of an empty space", "a deserted street", "a sidewalk with no people", "nobody here", "background"]
+      - ["a photo of a person", "an image with people", "a crowd", "someone here", "people present"]
+    
+    # Prompts per il modulo VLM (conteggio), 14 prompts per 14 bin non-zero
+    lambda:
+      - ["one person"]                  # Bin [1, 1]
+      - ["two people"]                  # Bin [2, 2]
+      - ["three people"]                # Bin [3, 3]
+      - ["four people"]                 # Bin [4, 4]
+      - ["five people"]                 # Bin [5, 5]
+      - ["six people"]                  # Bin [6, 6]
+      - ["seven people"]                # Bin [7, 7]
+      - ["a few people"]                # Bin [8, 9]
+      - ["about ten people"]            # Bin [10, 11]
+      - ["a dozen people"]              # Bin [12, 14]
+      - ["a small group of people"]     # Bin [15, 17]
+      - ["a group of people"]           # Bin [18, 20]
+      - ["a medium-sized crowd"]        # Bin [21, 24]
+      - ["a large crowd of people"]     # Bin [25, "inf"]
 
-eval_freq: 0.5
-eval_start: 150
+# 2. IMPOSTAZIONI DEL DATASET (Adattato da SHA)
+dataset:
+  name: 'QNRF' # Nome dataset cambiato
+  num_classes: 10
+  input_size: 448 # NB: Potresti voler aumentare per QNRF
+  train_split: 'train'
+  eval_split: 'val'
+  aug_config: 'aug_config_1'
+  multi_scale_eval: False
+  eval_input_size: 0
+
+# 3. IMPOSTAZIONI DELLA LOSS (da sha.yaml originale)
+loss:
+  name: 'zip_nll'
+  use_regression: True
+  use_classification: True
+  use_auxiliary: True
+  weight_cls: 0.1
+  weight_reg: 1.0
+  weight_aux: 0.1
+  reg_loss: 'l1'
+  aux_loss: 'l1'
+  # 'count_bins' rimosso
+
+# 4. IMPOSTAZIONI DI TRAINING (da sha.yaml originale)
+train:
+  optimizer: 'adamw'
+  scheduler: 'cosine'
+  lr: 0.0001
+  weight_decay: 0.0001
+  num_epochs: 2000
+  batch_size: 8
+  num_workers: 4
+  eval_freq: 0.25
+  eval_start: 100
+
+# 5. IMPOSTAZIONI DI VALUTAZIONE (da sha.yaml originale)
+eval:
+  batch_size: 1
+  num_workers: 4
+  sliding_window: True
+  window_size: 512
+  stride: 256
+  max_num_windows: 20
+  max_input_size: 2048

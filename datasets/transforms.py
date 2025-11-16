@@ -4,232 +4,294 @@ from torchvision.transforms import ColorJitter as _ColorJitter
 import torchvision.transforms.functional as TF
 import numpy as np
 from typing import Tuple, Union, Optional, Callable
+import torchvision.transforms.functional as F
+from torchvision.transforms import InterpolationMode
+
+#
+# --- DEFINIZIONI DELLE CLASSI DI TRASFORMAZIONE (CORRETTE) ---
+#
+
+class Compose(object):
+    def __init__(self, transforms: Callable[..., Tuple[Tensor, Tensor]]) -> None:
+        self.transforms = transforms
+
+    def __call__(self, image: Tensor, label: Tensor) -> Tuple[Tensor, Tensor]:
+        for transform in self.transforms:
+            image, label = transform(image, label)
+        return image, label
 
 
-def _crop(
-    image: Tensor,
-    label: Tensor,
-    top: int,
-    left: int,
-    height: int,
-    width: int,
-) -> Tuple[Tensor, Tensor]:
-    image = TF.crop(image, top, left, height, width)
-    if len(label) > 0:
-        label[:, 0] -= left
-        label[:, 1] -= top
-        label_mask = (label[:, 0] >= 0) & (label[:, 0] < width) & (label[:, 1] >= 0) & (label[:, 1] < height)
-        label = label[label_mask]
-
-    return image, label
+class ToTensor(object):
+    """Questa classe è usata da 'crowd.py' ma non da 'build_transforms'"""
+    def __call__(self, image: Tensor, label: Tensor) -> Tuple[Tensor, Tensor]:
+        image = TF.to_tensor(image)
+        label = torch.from_numpy(label).to(torch.float32)
+        return image, label
 
 
-def _resize(
-    image: Tensor,
-    label: Tensor,
-    height: int,
-    width: int,
-) -> Tuple[Tensor, Tensor]:
-    image_height, image_width = image.shape[-2:]
-    image = TF.resize(image, (height, width), interpolation=TF.InterpolationMode.BICUBIC, antialias=True) if (image_height != height or image_width != width) else image
-    if len(label) > 0 and (image_height != height or image_width != width):
-        label[:, 0] = label[:, 0] * width / image_width
-        label[:, 1] = label[:, 1] * height / image_height
-        label[:, 0] = label[:, 0].clamp(min=0, max=width - 1)
-        label[:, 1] = label[:, 1].clamp(min=0, max=height - 1)
+class Normalize(object):
+    """Questa classe è usata da 'crowd.py' ma non da 'build_transforms'"""
+    def __init__(self, mean: Tuple[float, float, float], std: Tuple[float, float, float]) -> None:
+        self.mean = mean
+        self.std = std
 
-    return image, label
+    def __call__(self, image: Tensor, label: Tensor) -> Tuple[Tensor, Tensor]:
+        image = TF.normalize(image, self.mean, self.std)
+        return image, label
 
 
 class RandomCrop(object):
-    def __init__(self, size: Tuple[int, int]) -> None:
-        self.size = size
-        assert len(self.size) == 2, f"size should be a tuple (h, w), got {self.size}."
+    def __init__(
+        self,
+        size: Union[int, Tuple[int, int]],
+        pad_if_needed: bool = True,
+        fill: float = 0,
+        padding_mode: str = "constant",
+    ) -> None:
+        self.size = (size, size) if isinstance(size, int) else size
+        self.pad_if_needed = pad_if_needed
+        self.fill = fill
+        self.padding_mode = padding_mode
+
+    @staticmethod
+    def get_params(img_size: Tuple[int, int], output_size: Tuple[int, int]) -> Tuple[int, int, int, int]:
+        h, w = img_size
+        th, tw = output_size
+        if h < th or w < tw:
+            raise ValueError(f"Required crop size {(th, tw)} is larger than input image size {(h, w)}")
+        if w == tw and h == th:
+            return 0, 0, h, w
+        i = torch.randint(0, h - th + 1, size=(1,)).item()
+        j = torch.randint(0, w - tw + 1, size=(1,)).item()
+        return i, j, th, tw
 
     def __call__(self, image: Tensor, label: Tensor) -> Tuple[Tensor, Tensor]:
-        crop_height, crop_width = self.size
-        image_height, image_width = image.shape[-2:]
-        assert crop_height <= image_height and crop_width <= image_width, \
-            f"crop size should be no larger than image size, got crop size {self.size} and image size {image.shape}."
+        img_size = TF.get_image_size(image)
+        # i = top, j = left, h = height, w = width
+        i, j, h, w = self.get_params(img_size, self.size)
         
-        top = torch.randint(0, image_height - crop_height + 1, (1,)).item()
-        left = torch.randint(0, image_width - crop_width + 1, (1,)).item()
-        return _crop(image, label, top, left, crop_height, crop_width)
+        # Crop dell'immagine
+        image = TF.crop(image, i, j, h, w)
+        
+        # --- MODIFICA: Trasformazione dei punti (label) ---
+        if label.numel() > 0:
+            # Filtra i punti che cadono fuori dal crop
+            mask = (label[:, 0] >= j) & (label[:, 0] < j + w) & \
+                   (label[:, 1] >= i) & (label[:, 1] < i + h)
+            label = label[mask]
+            
+            if label.numel() > 0:
+                # Trasla i punti rimasti al nuovo (0,0)
+                label[:, 0] -= j
+                label[:, 1] -= i
+        else:
+            # Gestisce il caso di tensore vuoto
+            label = torch.zeros((0, 2), dtype=label.dtype)
+
+        return image, label
 
 
 class Resize(object):
-    def __init__(self, size: Tuple[int, int]) -> None:
-        self.size = size
-        assert len(self.size) == 2, f"size should be a tuple (h, w), got {self.size}."
-
-    def __call__(self, image: Tensor, label: Tensor) -> Tuple[Tensor, Tensor]:
-        return _resize(image, label, self.size[0], self.size[1])
-
-
-class Resize2Multiple(object):
-    """
-    Resize the image so that it satisfies:
-        img_h = window_h + stride_h * n_h
-        img_w = window_w + stride_w * n_w
-    """
     def __init__(
         self,
-        window_size: Tuple[int, int],
-        stride: Tuple[int, int],
+        size: Union[int, Tuple[int, int]],
+        interpolation: InterpolationMode = InterpolationMode.BILINEAR,
     ) -> None:
-        window_size = (int(window_size), int(window_size)) if isinstance(window_size, (int, float)) else window_size
-        window_size = tuple(window_size)
-        stride = (int(stride), int(stride)) if isinstance(stride, (int, float)) else stride
-        stride = tuple(stride)
-        assert len(window_size) == 2, f"window_size should be a tuple (h, w), got {window_size}."
-        assert len(stride) == 2, f"stride should be a tuple (h, w), got {stride}."
-        assert all(s > 0 for s in window_size), f"window_size should be positive, got {window_size}."
-        assert all(s > 0 for s in stride), f"stride should be positive, got {stride}."
-        assert stride[0] <= window_size[0] and stride[1] <= window_size[1], f"stride should be no larger than window_size, got {stride} and {window_size}."
-        self.window_size = window_size
-        self.stride = stride
+        self.size = (size, size) if isinstance(size, int) else size
+        self.interpolation = interpolation
 
     def __call__(self, image: Tensor, label: Tensor) -> Tuple[Tensor, Tensor]:
-        image_height, image_width = image.shape[-2:]
-        window_height, window_width = self.window_size
-        stride_height, stride_width = self.stride
-        new_height = int(max(round((image_height - window_height) / stride_height), 0) * stride_height + window_height)
-        new_width = int(max(round((image_width - window_width) / stride_width), 0) * stride_width + window_width)
+        img_size = TF.get_image_size(image) # (h, w)
+        original_h, original_w = img_size
+        
+        # Resize dell'immagine
+        image = TF.resize(image, self.size, self.interpolation)
+        
+        # --- MODIFICA: Scaling dei punti (label) ---
+        if label.numel() > 0:
+            # Calcola i rapporti di scaling
+            scale_w = self.size[1] / original_w
+            scale_h = self.size[0] / original_h
+            
+            # Applica lo scaling alle coordinate
+            label[:, 0] *= scale_w  # Scala x
+            label[:, 1] *= scale_h  # Scala y
 
-        if new_height == image_height and new_width == image_width:
-            return image, label
-        else:
-            return _resize(image, label, new_height, new_width)
-
-
-class ZeroPad2Multiple(object):
-    def __init__(
-        self,
-        window_size: Tuple[int, int],
-        stride: Tuple[int, int],
-    ) -> None:
-        window_size = (int(window_size), int(window_size)) if isinstance(window_size, (int, float)) else window_size
-        window_size = tuple(window_size)
-        stride = (int(stride), int(stride)) if isinstance(stride, (int, float)) else stride
-        stride = tuple(stride)
-        assert len(window_size) == 2, f"window_size should be a tuple (h, w), got {window_size}."
-        assert len(stride) == 2, f"stride should be a tuple (h, w), got {stride}."
-        assert all(s > 0 for s in window_size), f"window_size should be positive, got {window_size}."
-        assert all(s > 0 for s in stride), f"stride should be positive, got {stride}."
-        assert stride[0] <= window_size[0] and stride[1] <= window_size[1], f"stride should be no larger than window_size, got {stride} and {window_size}."
-        self.window_size = window_size
-        self.stride = stride
-
-    def __call__(self, image: Tensor, label: Tensor) -> Tuple[Tensor, Tensor]:
-        image_height, image_width = image.shape[-2:]
-        window_height, window_width = self.window_size
-        stride_height, stride_width = self.stride
-        new_height = int(max(np.ceil((image_height - window_height) / stride_height), 0) * stride_height + window_height)
-        new_width = int(max(np.ceil((image_width - window_width) / stride_width), 0) * stride_width + window_width)
-
-        if new_height == image_height and new_width == image_width:
-            return image, label
-        else:
-            assert new_height >= image_height and new_width >= image_width, f"new size should be no less than the original size, got {new_height} and {new_width}."
-            pad_height, pad_width = new_height - image_height, new_width - image_width
-            return TF.pad(image, (0, 0, pad_width, pad_height), fill=0), label  # only pad the right and bottom sides so that the label coordinates are not affected
+        return image, label
 
 
 class RandomResizedCrop(object):
     def __init__(
         self,
-        size: Tuple[int, int],
-        scale: Tuple[float, float] = (0.75, 1.25),
+        size: Union[int, Tuple[int, int]],
+        scale: Tuple[float, float] = (0.08, 1.0),
+        interpolation: InterpolationMode = InterpolationMode.BILINEAR,
     ) -> None:
-        """
-        Randomly crop an image and resize it to a given size. The aspect ratio is preserved during this process.
-        """
-        self.size = size
+        self.size = (size, size) if isinstance(size, int) else size
         self.scale = scale
-        assert len(self.size) == 2, f"size should be a tuple (h, w), got {self.size}."
-        assert 0 < self.scale[0] <= self.scale[1], f"scale should satisfy 0 < scale[0] <= scale[1], got {self.scale}."
+        self.interpolation = interpolation
+
+    @staticmethod
+    def get_params(
+        img_size: Tuple[int, int],
+        scale: Tuple[float, float],
+    ) -> Tuple[int, int, int, int]:
+        h, w = img_size
+        area = h * w
+        # Manteniamo il ratio fisso come nell'originale
+        log_ratio = torch.log(torch.tensor(0.75)) / torch.log(torch.tensor(1.333))
+
+        for _ in range(10):
+            target_area = area * torch.empty(1).uniform_(scale[0], scale[1]).item()
+            aspect_ratio = torch.exp(torch.empty(1).uniform_(log_ratio, -log_ratio)).item()
+            w_ = int(round(torch.sqrt(torch.tensor(target_area * aspect_ratio)).item()))
+            h_ = int(round(torch.sqrt(torch.tensor(target_area / aspect_ratio)).item()))
+            if 0 < w_ <= w and 0 < h_ <= h:
+                i = torch.randint(0, h - h_ + 1, size=(1,)).item()
+                j = torch.randint(0, w - w_ + 1, size=(1,)).item()
+                return i, j, h_, w_
+
+        # Fallback
+        in_ratio = float(w) / float(h)
+        if in_ratio < 0.75:
+            w_ = w
+            h_ = int(round(w / 0.75))
+        elif in_ratio > 1.333:
+            h_ = h
+            w_ = int(round(h * 1.333))
+        else:
+            w_ = w
+            h_ = h
+        i = (h - h_) // 2
+        j = (w - w_) // 2
+        return i, j, h_, w_
 
     def __call__(self, image: Tensor, label: Tensor) -> Tuple[Tensor, Tensor]:
-        out_height, out_width = self.size
-        # out_ratio = out_width / out_height
-
-        scale = torch.empty(1).uniform_(self.scale[0], self.scale[1]).item()  # if scale < 1, then the image will be zoomed in, otherwise zoomed out
-        in_height, in_width = image.shape[-2:]
-
-        # if in_width / in_height < out_ratio:  # Image is too tall
-        #     crop_width = int(in_width * scale)
-        #     crop_height = int(crop_width / out_ratio)
-        # else:  # Image is too wide
-        #     crop_height = int(in_height * scale)
-        #     crop_width = int(crop_height * out_ratio)
-
-        crop_height, crop_width = int(out_height * scale), int(out_width * scale)
-
-        if crop_height <= in_height and crop_width <= in_width:  # directly crop and resize the image
-            top = torch.randint(0, in_height - crop_height + 1, (1,)).item()
-            left = torch.randint(0, in_width - crop_width + 1, (1,)).item()
-
-        else:  # resize the image and then crop
-            ratio = max(crop_height / in_height, crop_width / in_width)  # keep the aspect ratio
-            resize_height, resize_width = int(in_height * ratio) + 1, int(in_width * ratio) + 1  # add 1 to make sure the resized image is no less than the crop size
-            image, label = _resize(image, label, resize_height, resize_width)
-            
-            top = torch.randint(0, resize_height - crop_height + 1, (1,)).item()
-            left = torch.randint(0, resize_width - crop_width + 1, (1,)).item()
-
-        image, label = _crop(image, label, top, left, crop_height, crop_width)
-        return _resize(image, label, out_height, out_width)
+        img_size = TF.get_image_size(image)
+        # i = top, j = left, h = height, w = width
+        i, j, h, w = self.get_params(img_size, self.scale)
         
+        # Resize-crop dell'immagine
+        image = TF.resized_crop(image, i, j, h, w, self.size, self.interpolation)
+        
+        # --- MODIFICA: Trasformazione dei punti (label) ---
+        if label.numel() > 0:
+            # 1. Filtra i punti
+            mask = (label[:, 0] >= j) & (label[:, 0] < j + w) & \
+                   (label[:, 1] >= i) & (label[:, 1] < i + h)
+            label = label[mask]
+            
+            if label.numel() > 0:
+                # 2. Trasla i punti all'origine del crop
+                label[:, 0] -= j
+                label[:, 1] -= i
+                
+                # 3. Scala i punti alla dimensione finale
+                label[:, 0] *= self.size[1] / w  # scale x
+                label[:, 1] *= self.size[0] / h  # scale y
+        else:
+            label = torch.zeros((0, 2), dtype=label.dtype)
+
+        return image, label
+
 
 class RandomHorizontalFlip(object):
     def __init__(self, p: float = 0.5) -> None:
         self.p = p
-        assert 0 <= self.p <= 1, f"p should be in range [0, 1], got {self.p}."
 
     def __call__(self, image: Tensor, label: Tensor) -> Tuple[Tensor, Tensor]:
+        img_size = TF.get_image_size(image)
+        original_w = img_size[1] # Larghezza originale
+        
         if torch.rand(1) < self.p:
+            # Flip dell'immagine
             image = TF.hflip(image)
-
-            if len(label) > 0:
-                label[:, 0] = image.shape[-1] - 1 - label[:, 0]  # if width is 256, then 0 -> 255, 1 -> 254, 2 -> 253, etc.
-                label[:, 0] = label[:, 0].clamp(min=0, max=image.shape[-1] - 1)
-
+            
+            # --- MODIFICA: Flip dei punti (label) ---
+            if label.numel() > 0:
+                # Inverti la coordinata x
+                label[:, 0] = original_w - label[:, 0]
+                
         return image, label
-    
 
-class ColorJitter(object):
+
+class Resize2Multiple(object):
     def __init__(
         self,
-        brightness: Union[float, Tuple[float, float]] = 0.4,
-        contrast: Union[float, Tuple[float, float]] = 0.4,
-        saturation: Union[float, Tuple[float, float]] = 0.4,
-        hue: Union[float, Tuple[float, float]] = 0.2,
+        multiple: int,
+        interpolation: InterpolationMode = InterpolationMode.BILINEAR,
     ) -> None:
-        self.color_jitter = _ColorJitter(brightness=brightness, contrast=contrast, saturation=saturation, hue=hue)
-    
+        self.multiple = multiple
+        self.interpolation = interpolation
+
     def __call__(self, image: Tensor, label: Tensor) -> Tuple[Tensor, Tensor]:
-        return self.color_jitter(image), label
-    
+        img_size = TF.get_image_size(image)
+        h, w = img_size
+        h_ = int(np.ceil(h / self.multiple) * self.multiple)
+        w_ = int(np.ceil(w / self.multiple) * self.multiple)
+        
+        image = TF.resize(image, (h_, w_), self.interpolation)
+        
+        # --- MODIFICA: Scaling dei punti (label) ---
+        if label.numel() > 0:
+            scale_w = w_ / w
+            scale_h = h_ / h
+            label[:, 0] *= scale_w
+            label[:, 1] *= scale_h
+
+        return image, label
+
+
+class ZeroPad2Multiple(object):
+    def __init__(self, multiple: int, fill: float = 0, padding_mode: str = "constant") -> None:
+        self.multiple = multiple
+        self.fill = fill
+        self.padding_mode = padding_mode
+
+    def __call__(self, image: Tensor, label: Tensor) -> Tuple[Tensor, Tensor]:
+        img_size = TF.get_image_size(image)
+        h, w = img_size
+        h_ = int(np.ceil(h / self.multiple) * self.multiple)
+        w_ = int(np.ceil(w / self.multiple) * self.multiple)
+        padding = (0, 0, w_ - w, h_ - h) # (left, top, right, bottom)
+        
+        image = TF.pad(image, padding, self.fill, self.padding_mode)
+        
+        # --- MODIFICA: Non c'è bisogno di modificare i punti ---
+        # Il padding (left=0, top=0) non sposta l'origine (0,0)
+        # I punti esistenti mantengono le loro coordinate
+        
+        return image, label
+
+
+# --- Trasformazioni che modificano solo l'immagine ---
+
+class ColorJitter(_ColorJitter):
+    def __call__(self, image: Tensor, label: Tensor) -> Tuple[Tensor, Tensor]:
+        image = super().__call__(image)
+        return image, label
+
 
 class RandomGrayscale(object):
     def __init__(self, p: float = 0.1) -> None:
         self.p = p
-        assert 0 <= self.p <= 1, f"p should be in range [0, 1], got {self.p}."
 
     def __call__(self, image: Tensor, label: Tensor) -> Tuple[Tensor, Tensor]:
         if torch.rand(1) < self.p:
             image = TF.rgb_to_grayscale(image, num_output_channels=3)
-
         return image, label
-    
+
 
 class GaussianBlur(object):
-    def __init__(self, kernel_size: int, sigma: Tuple[float, float] = (0.1, 2.0)) -> None:
+    def __init__(self, kernel_size: int, sigma: Optional[Tuple[float, float]] = None, p: float = 0.5) -> None:
         self.kernel_size = kernel_size
         self.sigma = sigma
+        self.p = p
 
     def __call__(self, image: Tensor, label: Tensor) -> Tuple[Tensor, Tensor]:
-        return TF.gaussian_blur(image, self.kernel_size, self.sigma), label
+        if torch.rand(1) < self.p:
+            image = TF.gaussian_blur(image, self.kernel_size, self.sigma)
+        return image, label
 
 
 class RandomApply(object):
@@ -244,7 +306,6 @@ class RandomApply(object):
         for transform, p in zip(self.transforms, self.p):
             if torch.rand(1) < p:
                 image, label = transform(image, label)
-
         return image, label
 
 
@@ -256,7 +317,54 @@ class PepperSaltNoise(object):
         assert 0 <= self.spiciness <= 1, f"spiciness should be in range [0, 1], got {self.spiciness}."
 
     def __call__(self, image: Tensor, label: Tensor) -> Tuple[Tensor, Tensor]:
-        noise = torch.rand_like(image)
-        image = torch.where(noise < self.saltiness, 1., image)  # Salt
-        image = torch.where(noise > 1 - self.spiciness, 0., image)    # Pepper
+        if torch.rand(1) < 0.5:
+            salt = torch.rand(image.shape[-2:]) < self.saltiness
+            image[..., salt] = 1.0
+        if torch.rand(1) < 0.5:
+            pepper = torch.rand(image.shape[-2:]) < self.spiciness
+            image[..., pepper] = 0.0
         return image, label
+
+#
+# --- FUNZIONE BUILDER MODIFICATA ---
+#
+
+def build_transforms(input_size: int, aug_config: str, is_train: bool = True):
+    """
+    Costruisce la pipeline di trasformazioni in base alla configurazione.
+    """
+    
+    # NOTA: ToTensor() e Normalize() sono state RIMOSSE da questa pipeline
+    # perché 'crowd.py' le applica manualmente.
+    
+    if is_train:
+        if aug_config == 'aug_config_1':
+            transforms_list = [
+                RandomResizedCrop(
+                    size=(input_size, input_size),
+                    scale=(0.8, 1.0),
+                    interpolation=InterpolationMode.BICUBIC
+                ),
+                RandomHorizontalFlip(p=0.5),
+                ColorJitter(
+                    brightness=0.3,
+                    contrast=0.3,
+                    saturation=0.3,
+                    hue=0.1
+                ),
+                RandomGrayscale(p=0.1),
+                GaussianBlur(kernel_size=3, p=0.3),
+            ]
+        else:
+            raise ValueError(f"Configurazione di augmentation '{aug_config}' non riconosciuta.")
+            
+    else:
+        # Pipeline per Validazione/Test
+        transforms_list = [
+            Resize(
+                size=(input_size, input_size),
+                interpolation=InterpolationMode.BICUBIC
+            ),
+        ]
+
+    return Compose(transforms_list)
