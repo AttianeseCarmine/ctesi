@@ -1,43 +1,74 @@
-# ====================================================================
-# Definizione del Modello (IBRIDO: ConvZIP + CLIP-EBC)
-# ====================================================================
+# === 1. IMPOSTAZIONI DI BASE ===
+train_base:
+  output_dir: './output/sha'
+  seed: 42
+  device: 'cuda:0'
+  eval_freq: 1
+
+# === 2. IMPOSTAZIONI DEL DATASET ===
+dataset:
+  # === INIZIO MODIFICA ===
+  # Il percorso era './data', ma i tuoi file sono in './ctesi-add-CLIP-EBC/data'
+  # Aggiornalo al percorso corretto relativo a dove esegui train.py
+  data_root: './data'  
+  # === FINE MODIFICA ===
+  name: 'SHA'
+  input_size: 448
+  train_split: 'train'
+  eval_split: 'val'
+  aug_config: 'aug_config_1'
+  multi_scale_eval: False
+  eval_input_size: 0
+  
+  # Valori di default per CLIP (usati dal dataloader)
+  mean: [0.48145466, 0.4578275, 0.40821073] # Corretto typo da crowd.py
+  std: [0.26862954, 0.26130258, 0.27577711]
+
+# === 3. IMPOSTAZIONI DEL MODELLO ===
 model:
-  # Backbone
   name: 'ViT-B-16'
   weight_name: 'openai'
   block_size: 16
   input_size: 448
   
-  # LoRA (Opzionale)
-  lora: False
+  # --- Generalizzazione (LoRA) ---
+  lora: True
   lora_rank: 8
-  lora_alpha: 16.0
+  lora_alpha: 16.
   lora_dropout: 0.1
 
-  # Gating
+  # --- Gating (per la tua architettura) ---
   pi_thresh: 0.5
   gate_mode: "multiply"
   
-  # --- 1. Parametri per ConvZIPHead (NUOVI) ---
-  # Bin usati dalla testa ZIP (l'intera lista, incluso lo zero)
+  # --- BINS (CORRETTI E COMPLETI) ---
+  
+  # Chiave 'bins' richiesta da losses/__init__.py (14 bin totali)
+  bins: [
+      [0, 0], [1, 1], [2, 2], [3, 3], [4, 4], [5, 5], [6, 6], [7, 7], [8, 8], [9, 9],
+      [10, 10], [11, 12], [13, 14], [15, "inf"]
+    ]
+
+  # Chiave 'zip_bins' richiesta da train.py (14 bin totali)
   zip_bins: [
       [0, 0], [1, 1], [2, 2], [3, 3], [4, 4], [5, 5], [6, 6], [7, 7], [8, 8], [9, 9],
       [10, 10], [11, 12], [13, 14], [15, "inf"]
     ]
   zip_bin_centers: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11.5, 13.5, 15]
-  zip_lambda_max: 8.0 # Valore di default
+  zip_lambda_max: 8.0
 
-  # --- 2. Parametri per ClipEBHead (EBC) ---
-  # Bin usati dalla testa EBC (SOLO i bin NON-ZERO)
+  # Chiave 'ebc_bins' richiesta da train.py (13 bin non-zero)
   ebc_bins: [
       [1, 1], [2, 2], [3, 3], [4, 4], [5, 5], [6, 6], [7, 7], [8, 8], [9, 9],
       [10, 10], [11, 12], [13, 14], [15, "inf"]
     ]
-  ebc_bin_centers: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11.5, 13.5, 15] 
+  ebc_bin_centers: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11.5, 13.5, 15]
 
-  # Prompt di testo (SOLO per EBC)
+  # --- PROMPTS ---
   text_prompts:
-    # 'pi:' è stato RIMOSSO
+    pi:
+      - ["a photo of an empty space", "a deserted street", "a sidewalk with no people", "nobody here", "background"]
+      - ["a photo of a person", "an image with people", "a crowd", "someone here", "people present"]
     lambda:
       - ["one person"]
       - ["two people"]
@@ -49,14 +80,68 @@ model:
       - ["eight people"]
       - ["nine people"]
       - ["ten people"]
-      - ["a small group of people"]   # Bin [11, 12]
-      - ["a group of people"]         # Bin [13, 14]
-      - ["a large crowd of people"]   # Bin [15, "inf"]
-
-  # Parametri opzionali (VPT, etc.)
+      - ["a small group of people"]
+      - ["a group of people"]
+      - ["a large crowd of people"]
+  
   num_vpt: 0
   vpt_drop: null
   adapter: false
   adapter_reduction: null
   norm: "none"
   act: "none"
+
+# === 4. IMPOSTAZIONI DELLA LOSS ===
+loss:
+  weight_cls: 1.0
+  weight_reg: 1.0
+  weight_aux: 0.1
+  pi_loss_weight_bce: 0.5
+  pi_mask_threshold: 0.5
+
+# === 5. IMPOSTAZIONI DEGLI STADI DI TRAINING ===
+
+# STADIO 1: Pre-training PI Head (ZIP)
+train_stage1:
+  optimizer: 'sgd'
+  momentum: 0.9
+  scheduler: 'cosine'
+  lr: 0.0001
+  lr_backbone: 0.00001
+  weight_decay: 0.0001
+  num_epochs: 100 
+  batch_size: 8
+  num_workers: 4
+  clip_grad_norm: 1.0
+
+# STADIO 2: Pre-training LAMBDA Head (EBC)
+train_stage2:
+  optimizer: 'adamw'
+  scheduler: 'cosine'
+  lr: 0.0001
+  weight_decay: 0.0001
+  num_epochs: 150
+  batch_size: 8
+  num_workers: 4
+  early_stopping_patience: 20
+
+# STADIO 3: Joint Fine-tuning
+train_stage3:
+  optimizer: 'adamw'
+  scheduler: 'cosine'
+  lr: 0.00001 
+  weight_decay: 0.0001
+  num_epochs: 50 
+  batch_size: 8
+  num_workers: 4
+  early_stopping_patience: 10
+
+# === 6. IMPOSTAZIONI DI VALUTAZIONE ===
+eval:
+  batch_size: 1
+  num_workers: 4
+  sliding_window: True
+  window_size: 512
+  stride: 256
+  max_num_windows: 20
+  max_input_size: 2048

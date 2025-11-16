@@ -172,8 +172,8 @@ class ZIP_CLIP_EBC_Model(nn.Module):
         
         # --- MODULO A: Conv-ZIP (zip_head) ---
         zip_outputs = self.zip_head(image_feats.float()) # Forza float32 per stabilità BNorm
-        pi_logit_map = zip_outputs["pred_logit_pi_map"]   # [B, 2, H, W]
-        lambda_map_zip = zip_outputs["pred_lambda_map"] # [B, 1, H, W]
+        pi_logit_map = zip_outputs["logit_pi_maps"]   # [B, 2, H, W]
+        lambda_map_zip = zip_outputs["lambda_maps"] # [B, 1, H, W]
 
         # 3. Crea la maschera di gating
         with torch.no_grad():
