@@ -228,7 +228,7 @@ class Trainer:
                 pred_den_map = self.model(images)
                 
                 try:
-                    mae, rmse = evaluate_mae_rmse(pred_den_map, gt_points, sliding_window, **eval_cfg)
+                    mae, rmse = evaluate_mae_rmse(pred_den_map, gt_points, **eval_cfg)
                     
                     if mae is not None:
                         mae_meter.update(mae)
