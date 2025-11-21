@@ -1,6 +1,5 @@
 #!/bin/bash
 # Questo script esegue tutti e 3 gli stadi di addestramento in sequenza.
-
 # === INIZIO MODIFICA ===
 # Termina lo script immediatamente se un comando fallisce (es. train.py crasha)
 set -e 
@@ -24,20 +23,18 @@ echo "---"
 
 # --- STADIO 1 ---
 echo "--- Avvio STADIO 1 (Pre-training PI Head)... ---"
-# Esegue in primo piano e salva il log con 'tee' (mostra output e salva)
-python train.py --config "$CONFIG_FILE" --stage 1 | tee "$LOG_DIR/stage1.log"
+# Esegue con nohup in background e salva il log
+nohup python train.py --config "$CONFIG_FILE" --stage 1 > "$LOG_DIR/stage1.log" 2>&1
 echo "--- ✅ STADIO 1 completato. ---"
-
 
 # --- STADIO 2 ---
 echo "--- Avvio STADIO 2 (Pre-training LAMBDA Head)... ---"
-python train.py --config "$CONFIG_FILE" --stage 2 | tee "$LOG_DIR/stage2.log"
+nohup python train.py --config "$CONFIG_FILE" --stage 2 > "$LOG_DIR/stage2.log" 2>&1
 echo "--- ✅ STADIO 2 completato. ---"
-
 
 # --- STADIO 3 ---
 echo "--- Avvio STADIO 3 (Joint Fine-tuning)... ---"
-python train.py --config "$CONFIG_FILE" --stage 3 | tee "$LOG_DIR/stage3.log"
+nohup python train.py --config "$CONFIG_FILE" --stage 3 > "$LOG_DIR/stage3.log" 2>&1
 echo "--- ✅ STADIO 3 completato. ---"
 
 echo "🏁 Addestramento completato! 🏁"

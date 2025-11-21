@@ -1,8 +1,0 @@
-2025-11-16 19:47:24,497 - INFO - Inizio addestramento da epoch 1 a 100
-2025-11-16 19:48:04,114 - INFO - ✅ Early Stopping ATTIVO con pazienza=20 epoche.
-2025-11-16 19:48:04,114 - INFO - Inizio addestramento da epoch 1 a 150
-2025-11-16 19:48:47,841 - INFO - ✅ Early Stopping ATTIVO con pazienza=10 epoche.
-2025-11-16 19:48:47,841 - INFO - Inizio addestramento da epoch 1 a 50
-2025-11-16 19:54:32,083 - INFO - Inizio addestramento da epoch 1 a 100
-2025-11-16 19:55:13,444 - INFO - ✅ Early Stopping ATTIVO con pazienza=20 epoche.
-2025-11-16 19:55:13,444 - INFO - Inizio addestramento da epoch 1 a 150

@@ -1,147 +1,109 @@
-# === 1. IMPOSTAZIONI DI BASE ===
-train_base:
-  output_dir: './output/sha'
-  seed: 42
-  device: 'cuda:0'
-  eval_freq: 1
+# config.yaml - Struttura ORIGINALE, Valori CHRI
 
-# === 2. IMPOSTAZIONI DEL DATASET ===
+# === Configurazione Dataset (Struttura compatibile con il tuo codice) ===
 dataset:
-  # === INIZIO MODIFICA ===
-  # Il percorso era './data', ma i tuoi file sono in './ctesi-add-CLIP-EBC/data'
-  # Aggiornalo al percorso corretto relativo a dove esegui train.py
-  data_root: './data'  
-  # === FINE MODIFICA ===
-  name: 'SHA'
-  input_size: 448
-  train_split: 'train'
-  eval_split: 'val'
-  aug_config: 'aug_config_1'
-  multi_scale_eval: False
-  eval_input_size: 0
-  
-  # Valori di default per CLIP (usati dal dataloader)
-  mean: [0.48145466, 0.4578275, 0.40821073] # Corretto typo da crowd.py
+  name: "sha"
+  train_split: "train"   # Il tuo codice cerca questa chiave
+  eval_split: "val"      # Il tuo codice cerca questa chiave
+  input_size: 224        # Il tuo codice cerca questa chiave
+  aug_config: "aug_config_1"
+  mean: [0.48145466, 0.4578275, 0.40821073]
   std: [0.26862954, 0.26130258, 0.27577711]
 
-# === 3. IMPOSTAZIONI DEL MODELLO ===
+# === Configurazione Modello ===
 model:
-  name: 'ViT-B-16'
-  weight_name: 'openai'
-  block_size: 16
-  input_size: 448
+  name: "ViT-B-16"
+  weight_name: "openai"
   
-  # --- Generalizzazione (LoRA) ---
-  lora: True
-  lora_rank: 8
-  lora_alpha: 16.
-  lora_dropout: 0.1
-
-  # --- Gating (per la tua architettura) ---
-  pi_thresh: 0.5
+  # Parametri Backbone
+  input_size: 224
+  block_size: 16
+  num_vpt: 0
+  vpt_drop: 0.0
+  
+  # Parametri ZIP (Valori aggiornati da Chri)
+  zip_lambda_max: 3.0    # Chri usa 3.0
+  pi_thresh: 0.15        # Chri usa 0.15 (più permissivo del tuo 0.5)
   gate_mode: "multiply"
   
-  # --- BINS (CORRETTI E COMPLETI) ---
+  # BIN: Il tuo codice in losses/__init__.py cerca 'bins'.
+  # Qui definiamo 'zip_bins' (con lo zero) e 'ebc_bins' (senza zero)
+  # E passiamo 'zip_bins' come 'bins' generico per compatibilità.
   
-  # Chiave 'bins' richiesta da losses/__init__.py (14 bin totali)
-  bins: [
-      [0, 0], [1, 1], [2, 2], [3, 3], [4, 4], [5, 5], [6, 6], [7, 7], [8, 8], [9, 9],
-      [10, 10], [11, 12], [13, 14], [15, "inf"]
-    ]
-
-  # Chiave 'zip_bins' richiesta da train.py (14 bin totali)
-  zip_bins: [
-      [0, 0], [1, 1], [2, 2], [3, 3], [4, 4], [5, 5], [6, 6], [7, 7], [8, 8], [9, 9],
-      [10, 10], [11, 12], [13, 14], [15, "inf"]
-    ]
-  zip_bin_centers: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11.5, 13.5, 15]
-  zip_lambda_max: 8.0
-
-  # Chiave 'ebc_bins' richiesta da train.py (13 bin non-zero)
-  ebc_bins: [
-      [1, 1], [2, 2], [3, 3], [4, 4], [5, 5], [6, 6], [7, 7], [8, 8], [9, 9],
-      [10, 10], [11, 12], [13, 14], [15, "inf"]
-    ]
-  ebc_bin_centers: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11.5, 13.5, 15]
-
-  # --- PROMPTS ---
-  text_prompts:
-    pi:
-      - ["a photo of an empty space", "a deserted street", "a sidewalk with no people", "nobody here", "background"]
-      - ["a photo of a person", "an image with people", "a crowd", "someone here", "people present"]
-    lambda:
-      - ["one person"]
-      - ["two people"]
-      - ["three people"]
-      - ["four people"]
-      - ["five people"]
-      - ["six people"]
-      - ["seven people"]
-      - ["eight people"]
-      - ["nine people"]
-      - ["ten people"]
-      - ["a small group of people"]
-      - ["a group of people"]
-      - ["a large crowd of people"]
+  bins: [[0, 0], [1, 1], [2, 2], [3, 3], [4, 4], [5, 5], [6, 6], [7, 7], [8, 8], [9, 9], [10, 10], [11, 12], [13, 14], [15, 9999]]
   
-  num_vpt: 0
-  vpt_drop: null
-  adapter: false
-  adapter_reduction: null
-  norm: "none"
-  act: "none"
+  zip_bins: [[0, 0], [1, 1], [2, 2], [3, 3], [4, 4], [5, 5], [6, 6], [7, 7], [8, 8], [9, 9], [10, 10], [11, 12], [13, 14], [15, 9999]]
+  zip_bin_centers: [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.38, 13.38, 16.26]
+  
+  ebc_bins: [[1, 1], [2, 2], [3, 3], [4, 4], [5, 5], [6, 6], [7, 7], [8, 8], [9, 9], [10, 10], [11, 12], [13, 14], [15, 9999]]
+  ebc_bin_centers: [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.38, 13.38, 16.26]
+  
+  # 13 Prompt per EBC (necessari per len(ebc_bins) == 13)
+  text_prompts: 
+    lambda: [
+      "one person", "two people", "three people", "four people", "five people", 
+      "six people", "seven people", "eight people", "nine people", "ten people", 
+      "about twelve people", "about fourteen people", "a dense crowd of people"
+    ]
 
-# === 4. IMPOSTAZIONI DELLA LOSS ===
+# === Configurazione Loss (Pesi di Chri) ===
 loss:
-  weight_cls: 1.0
-  weight_reg: 1.0
-  weight_aux: 0.1
-  pi_loss_weight_bce: 0.5
-  pi_mask_threshold: 0.5
+  name: "quad_loss"
+  reg_loss: "zipnll"
+  
+  # Pesi ottimizzati (Chri: CE=3.0, NLL=1.0, COUNT=0.25)
+  weight_cls: 3.0  # EBC / Classification
+  weight_reg: 1.0  # ZIP / Regression
+  weight_aux: 0.25 # Count L1
+  
+  pi_loss_weight_bce: 1.0 
 
-# === 5. IMPOSTAZIONI DEGLI STADI DI TRAINING ===
+# === Configurazione Base Training ===
+train_base:
+  seed: 2025
+  device: "cuda"
+  output_dir: "./output/sha_final"
+  eval_freq: 5
 
-# STADIO 1: Pre-training PI Head (ZIP)
-train_stage1:
-  optimizer: 'sgd'
-  momentum: 0.9
-  scheduler: 'cosine'
-  lr: 0.0001
-  lr_backbone: 0.00001
-  weight_decay: 0.0001
-  num_epochs: 100 
-  batch_size: 8
-  num_workers: 4
-  clip_grad_norm: 1.0
-
-# STADIO 2: Pre-training LAMBDA Head (EBC)
-train_stage2:
-  optimizer: 'adamw'
-  scheduler: 'cosine'
-  lr: 0.0001
-  weight_decay: 0.0001
-  num_epochs: 150
-  batch_size: 8
-  num_workers: 4
-  early_stopping_patience: 20
-
-# STADIO 3: Joint Fine-tuning
-train_stage3:
-  optimizer: 'adamw'
-  scheduler: 'cosine'
-  lr: 0.00001 
-  weight_decay: 0.0001
-  num_epochs: 50 
-  batch_size: 8
-  num_workers: 4
-  early_stopping_patience: 10
-
-# === 6. IMPOSTAZIONI DI VALUTAZIONE ===
+# === Configurazione Valutazione Globale ===
 eval:
-  batch_size: 1
+  batch_size: 8
   num_workers: 4
-  sliding_window: True
-  window_size: 512
-  stride: 256
-  max_num_windows: 20
-  max_input_size: 2048
+  sliding_window: false
+
+# === STAGE 1: ZIP TRAINING (Valori Chri) ===
+train_stage1:
+  batch_size: 8         # Chri: 8
+  num_workers: 4
+  num_epochs: 200       # Chri ne mette di più, iniziamo con 200
+  lr: 1.0e-4            # Chri: 1e-4
+  lr_backbone: 1.0e-5   # Chri: 1e-5
+  optimizer: "adamw"
+  weight_decay: 1.0e-4
+  scheduler: "cosine"
+  early_stopping_patience: 50
+
+# === STAGE 2: EBC TRAINING (Valori Chri) ===
+train_stage2:
+  batch_size: 16        # Chri: 16
+  num_workers: 4
+  num_epochs: 200
+  lr: 5.0e-5            # Chri: 5e-5
+  lr_backbone: 1.0e-5   # Chri: 1e-5
+  optimizer: "adamw"
+  weight_decay: 1.0e-4
+  scheduler: "cosine"
+  early_stopping_patience: 50
+
+# === STAGE 3: JOINT TRAINING (Valori Chri) ===
+train_stage3:
+  batch_size: 8
+  num_workers: 4
+  num_epochs: 100
+  lr: 1.5e-4            # Chri: 1.5e-4
+  lr_backbone: 1.5e-5   # Chri: 1.5e-5
+  optimizer: "adamw"
+  weight_decay: 1.0e-4
+  scheduler: "cosine"
+  early_stopping_patience: 20
+  clip_grad_norm: 1.0

@@ -1,7 +1,6 @@
-# trainer.py (VERSIONE CORRETTA PER DIZIONARI)
-
 import torch
 import torch.nn as nn
+import torch.nn.functional as F  # <--- AGGIUNTO per l'interpolazione
 from torch.utils.data import DataLoader
 from typing import Optional, Dict, List, Tuple
 import torch.optim as optim
@@ -59,7 +58,6 @@ class Trainer:
         if self.early_stopping_patience > 0:
             self.logger.info(f"✅ Early Stopping ATTIVO con pazienza={self.early_stopping_patience} epoche.")
 
-        # Carica checkpoint se 'last.pth' esiste (per resume)
         self._load_last_checkpoint()
 
     def _load_last_checkpoint(self):
@@ -104,6 +102,7 @@ class Trainer:
         torch.save(state, last_ckpt_path)
 
         if is_best:
+            # Salva nel percorso specifico definito nel main (es. stage1_best.pth)
             torch.save(state, self.best_ckpt_path)
             self.logger.info(f"💾 Nuovo best checkpoint salvato: {self.best_ckpt_path} (Epoch {epoch}, MAE {self.best_mae:.2f})")
 
@@ -111,33 +110,85 @@ class Trainer:
         self.model.train()
         loss_meter = AverageMeter()
         
-        pbar = tqdm(self.train_loader, desc=f"Epoch {self.current_epoch}/{self.num_epochs} [Train]")
+        # Pbar con enumerate per debug
+        pbar = tqdm(enumerate(self.train_loader), total=len(self.train_loader), desc=f"Epoch {self.current_epoch}/{self.num_epochs} [Train]")
         
-        for batch_data in pbar:
-            # === CORREZIONE: Il dataloader restituisce un dizionario ===
+        for batch_idx, batch_data in pbar:
+            # 1. Caricamento Dati
             if isinstance(batch_data, dict):
                 images = batch_data['image'].to(self.device)
                 gt_density_map = batch_data['density_map'].to(self.device)
-                gt_points = batch_data['points']  # Rimane sulla CPU
+                gt_points = batch_data['points']
             else:
-                # Fallback per compatibilità con tuple
-                images, gt_density_map, gt_points = batch_data
+                images, gt_points, gt_density_map = batch_data
                 images = images.to(self.device)
                 gt_density_map = gt_density_map.to(self.device)
 
             self.optimizer.zero_grad()
 
-            # Il modello ora restituisce un DIZIONARIO
+            # 2. Forward Pass
             outputs_dict = self.model(images)
-            
-            loss, loss_info = self.criterion(
-                pred_logit_map=outputs_dict["pred_logit_map"],
-                pred_den_map=outputs_dict["pred_den_map"],
-                gt_den_map=gt_density_map, 
-                gt_points=gt_points,
-                pred_logit_pi_map=outputs_dict["pred_logit_pi_map"],
-                pred_lambda_map=outputs_dict["pred_lambda_map"]
-            )
+
+            # === GESTIONE DIMENSIONI (Input vs Ground Truth) ===
+            input_h, input_w = images.shape[2], images.shape[3]
+            target_h, target_w = input_h // 16, input_w // 16
+
+            # A. Pulizia Punti (Fondamentale per evitare crash se punti escono dal crop)
+            cleaned_points = []
+            for pts in gt_points:
+                if pts.numel() > 0:
+                    if pts.device != self.device: pts = pts.to(self.device)
+                    # Filtra punti fuori dall'immagine corrente
+                    mask_inside = (pts[:, 0] >= 0) & (pts[:, 0] < input_w) & \
+                                  (pts[:, 1] >= 0) & (pts[:, 1] < input_h)
+                    cleaned_points.append(pts[mask_inside])
+                else:
+                    cleaned_points.append(pts)
+            gt_points = cleaned_points
+
+            # B. Resize Predizioni del Modello (Feature Maps)
+            # Helper function
+            def safe_resize(tensor_val, t_h, t_w):
+                if tensor_val is None: return None
+                if tensor_val.shape[2] != t_h or tensor_val.shape[3] != t_w:
+                    return F.interpolate(tensor_val, size=(t_h, t_w), mode='bilinear', align_corners=False)
+                return tensor_val
+
+            pred_pi = safe_resize(outputs_dict.get("pred_logit_pi_map"), target_h, target_w)
+            pred_lam = safe_resize(outputs_dict.get("pred_lambda_map"), target_h, target_w)
+            pred_den = safe_resize(outputs_dict.get("pred_den_map"), target_h, target_w)
+
+            # C. Resize GROUND TRUTH MAP (IL PEZZO MANCANTE)
+            # Forza la mappa di verità ad avere le stesse dimensioni spaziali dell'immagine di input.
+            # Questo garantisce che la Loss generi una maschera della dimensione corretta.
+            if gt_density_map.shape[2] != input_h or gt_density_map.shape[3] != input_w:
+                if batch_idx == 0:
+                    print(f"[FIX] Resizing GT Map {gt_density_map.shape} -> ({input_h}, {input_w})")
+                gt_density_map = F.interpolate(
+                    gt_density_map, 
+                    size=(input_h, input_w), 
+                    mode='bilinear', 
+                    align_corners=False
+                ) 
+                # (Opzionale: moltiplicare per il fattore di scala per mantenere il count esatto, 
+                # ma per risolvere il crash basta l'interpolate)
+
+            # 3. Calcolo Loss
+            try:
+                loss, loss_info = self.criterion(
+                    pred_logit_map=outputs_dict.get("pred_logit_map"),
+                    pred_den_map=pred_den,
+                    gt_den_map=gt_density_map,   # <--- Ora è sincronizzata 224x224
+                    gt_points=gt_points,
+                    pred_logit_pi_map=pred_pi,
+                    pred_lambda_map=pred_lam
+                )
+            except IndexError as e:
+                print(f"\n❌ ERRORE CRITICO DIMENSIONI:")
+                print(f"Image Input: {input_h}x{input_w}")
+                print(f"GT Map Final: {gt_density_map.shape}")
+                print(f"Pred Shape: {pred_pi.shape if pred_pi is not None else 'None'}")
+                raise e
 
             if torch.isnan(loss):
                 self.logger.warning(f"Rilevata loss NaN. Iterazione saltata.")
@@ -167,19 +218,15 @@ class Trainer:
         
         with torch.no_grad():
             for batch_data in pbar:
-                # === CORREZIONE: Il dataloader restituisce un dizionario ===
                 if isinstance(batch_data, dict):
                     images = batch_data['image'].to(self.device)
-                    gt_points = batch_data['points']  # Rimane sulla CPU
+                    gt_points = batch_data['points']
                 else:
-                    # Fallback per compatibilità con tuple
                     images, gt_density_map, gt_points = batch_data
                     images = images.to(self.device)
                 
-                # Il modello in modalità .eval() restituisce solo la mappa di densità
                 pred_den_map = self.model(images)
                 
-                # Calcola MAE/RMSE
                 try:
                     mae, rmse = evaluate_mae_rmse(pred_den_map, gt_points, sliding_window, **eval_cfg)
                     
@@ -211,7 +258,6 @@ class Trainer:
             
             epoch_time = time.time() - start_time
             
-            # Log e Validazione
             if epoch % self.eval_freq == 0 or epoch == self.num_epochs:
                 val_start_time = time.time()
                 val_mae, val_rmse = self._validate_one_epoch()
@@ -223,7 +269,6 @@ class Trainer:
                     f"Epoch Time: {epoch_time:.1f}s | Val Time: {val_time:.1f}s"
                 )
                 
-                # Controllo Best Model
                 is_best = val_mae < self.best_mae
                 if is_best:
                     self.best_mae = val_mae
@@ -235,7 +280,6 @@ class Trainer:
                     self.no_improve_epochs += self.eval_freq
                     self._save_checkpoint(epoch, is_best=False)
                 
-                # Controllo Early Stopping
                 if self.early_stopping_patience > 0 and self.no_improve_epochs >= self.early_stopping_patience:
                     self.logger.info(
                         f"⛔ Early Stopping! Nessun miglioramento del MAE per {self.no_improve_epochs} epoche. "
@@ -243,7 +287,6 @@ class Trainer:
                     )
                     break
             else:
-                # Log solo training
                 self.logger.info(
                     f"Epoch {epoch}/{self.num_epochs}: Train Loss: {train_loss:.4f} | "
                     f"Valutazione saltata | Epoch Time: {epoch_time:.1f}s"

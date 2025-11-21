@@ -29,22 +29,22 @@ def generate_density_map(label: Tensor, height: int, width: int, sigma: Optional
     return density_map
 
 def collate_fn(batch):
-    # --- MODIFICA INIZIO ---
-    
     # 1. Decomprimi i 3 valori restituiti da Crowd.__getitem__
-    #    (Il 'filenames' è stato rimosso perché non viene restituito)
+    #    Ogni elemento è (image_crops, label_crops, density_crops)
+    #    image_crops shape: [num_crops, 3, H, W]
     images, labels, density_maps = zip(*batch)
     
-    # 2. Raggruppa le immagini e le mappe di densità in un tensore batch
+    # 2. Usa torch.cat invece di torch.stack.
+    #    torch.cat concatena lungo la dimensione 0, fondendo la dimensione del batch
+    #    con quella dei crop.
+    #    Da lista di [num_crops, 3, H, W] -> Tensore [Batch*num_crops, 3, H, W]
     images = torch.cat(images, 0)
     density_maps = torch.cat(density_maps, 0)
     
-    # 'labels' è una tupla di tensori (uno per immagine, con N punti)
-    # Lo lasciamo così, perché la loss (QuadLoss) si aspetta una List[Tensor]
+    # 3. Appiattisci la lista dei punti.
+    #    'labels' è una tupla di liste (una lista di tensori per ogni immagine nel batch).
+    #    Dobbiamo ottenere una singola lista lunga quanto il batch effettivo (Batch * num_crops).
+    points = [p for sublist in labels for p in sublist]
     
-    # 3. Restituisci un DIZIONARIO (dict) come si aspetta il trainer
-    return {
-        'image': images,
-        'points': labels,  # <-- Rinominato in 'points'
-        'density_map': density_maps
-    }
+    # 4. Restituisci la tupla nell'ordine corretto per il Trainer
+    return images, points, density_maps
