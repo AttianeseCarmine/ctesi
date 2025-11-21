@@ -18,11 +18,13 @@ def _reshape_density(gt_den_map: Tensor, block_size: int) -> Tensor:
     gt_den_map = gt_den_map.view(
         B, C, H // block_size, block_size, W // block_size, block_size
     )
+    # Permute porta a: (B, C, H_grid, W_grid, H_block, W_block)
     gt_den_map = gt_den_map.permute(0, 1, 2, 4, 3, 5).contiguous()
-    gt_den_map = gt_den_map.sum(dim=(-1, -3)) # Somma sui blocchi (H_block, W_block)
+    
+    # CORREZIONE QUI: Somma su H_block (-2) e W_block (-1)
+    gt_den_map = gt_den_map.sum(dim=(-1, -2)) 
     
     return gt_den_map
-
 def _bin_count(gt_den_map: Tensor, bins: List[Tuple[float, float]]) -> Tensor:
     """Converte density map in classi bin."""
     float_bins = [(float(low), float(high)) for low, high in bins]

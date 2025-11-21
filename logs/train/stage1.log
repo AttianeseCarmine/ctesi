@@ -1,55 +1,21 @@
 nohup: ignoring input
 /user/cattianese/miniconda3/envs/ctesi/lib/python3.12/site-packages/open_clip/factory.py:450: UserWarning: QuickGELU mismatch between final model config (quick_gelu=False) and pretrained tag 'openai' (quick_gelu=True).
   warnings.warn(
-2025-11-21 17:48:11,179 - INFO - ✅ Early Stopping ATTIVO con pazienza=50 epoche.
-2025-11-21 17:48:11,179 - INFO - Inizio addestramento da epoch 1 a 200
-/user/cattianese/miniconda3/envs/ctesi/lib/python3.12/site-packages/torch/utils/data/dataloader.py:665: UserWarning: 'pin_memory' argument is set as true but no accelerator is found, then device pinned memory won't be used.
-  warnings.warn(warn_msg)
 🚀 AVVIO DELLO STADIO 1 🚀
 Costruzione del modello IBRIDO (ConvZIP + CLIP-EBC)...
---- Configurazione STADIO 1: Pre-training PI Head (ConvZIP) + Backbone ---
-Pesi loss sovrascritti: CLS=0.0, REG=1.0, AUX=0.0
-Congelamento: ebc_head
-Split 'train' caricato: sha/train, 300 campioni.
-Split 'eval' caricato: sha/val, 182 campioni.
-Numero di parametri da addestrare in questo stadio: 11950672
-Separazione parametri: LR testine=0.0001, LR backbone ('backbone')=1e-05
-Checkpoint per 'best_mae' sarà salvato in: ./output/sha_final/stage1_best.pth
-Epoch 1/200 [Train]:   0%|          | 0/38 [00:00<?, ?it/s]Epoch 1/200 [Train]:   0%|          | 0/38 [00:01<?, ?it/s]
-
-❌ ERRORE CRITICO DIMENSIONI:
-Image Input: 224x224
-GT Map Final: torch.Size([8, 1, 224, 224])
-Pred Shape: torch.Size([8, 2, 14, 14])
 Traceback (most recent call last):
   File "/user/cattianese/ctesi/train.py", line 259, in <module>
     main(args, cfg)
-  File "/user/cattianese/ctesi/train.py", line 227, in main
-    trainer.train()
-  File "/user/cattianese/ctesi/trainer.py", line 254, in train
-    train_loss = self._train_one_epoch()
-                 ^^^^^^^^^^^^^^^^^^^^^^^
-  File "/user/cattianese/ctesi/trainer.py", line 191, in _train_one_epoch
-    raise e
-  File "/user/cattianese/ctesi/trainer.py", line 178, in _train_one_epoch
-    loss, loss_info = self.criterion(
-                      ^^^^^^^^^^^^^^^
-  File "/user/cattianese/miniconda3/envs/ctesi/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
-    return self._call_impl(*args, **kwargs)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/user/cattianese/miniconda3/envs/ctesi/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
-    return forward_call(*args, **kwargs)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/user/cattianese/ctesi/losses/loss.py", line 109, in forward
-    pi_loss_n, n_info = self.pi_loss_nll(pi_logits_stable, lambda_map_stable, gt_den_map_blocks)
-                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/user/cattianese/miniconda3/envs/ctesi/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
-    return self._call_impl(*args, **kwargs)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/user/cattianese/miniconda3/envs/ctesi/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
-    return forward_call(*args, **kwargs)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/user/cattianese/ctesi/losses/zero_inflated_poisson_nll.py", line 55, in forward
-    loss_zero = nll_zero[zero_mask]
-                ~~~~~~~~^^^^^^^^^^^
-IndexError: The shape of the mask [8, 14, 16] at index 2 does not match the shape of the indexed tensor [8, 14, 14] at index 2
+  File "/user/cattianese/ctesi/train.py", line 54, in main
+    model = ZIP_CLIP_EBC_Model(
+            ^^^^^^^^^^^^^^^^^^^
+  File "/user/cattianese/ctesi/models/zip_clip_ebc_model.py", line 112, in __init__
+    self.backbone = _vit(
+                    ^^^^^
+  File "/user/cattianese/ctesi/models/clip_ebc/vit.py", line 343, in _vit
+    model = ViT(
+            ^^^^
+  File "/user/cattianese/ctesi/models/clip_ebc/vit.py", line 144, in __init__
+    assert block_size in [8, 16, 32], f"Patch size is 32, but got block size {block_size}."
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Patch size is 32, but got block size 14.
