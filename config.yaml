@@ -1,11 +1,11 @@
 # config.yaml - Struttura ORIGINALE, Valori CHRI
 
-# === Configurazione Dataset (Struttura compatibile con il tuo codice) ===
+# === Configurazione Dataset ===
 dataset:
   name: "sha"
-  train_split: "train"   # Il tuo codice cerca questa chiave
-  eval_split: "val"      # Il tuo codice cerca questa chiave
-  input_size: 224        # Il tuo codice cerca questa chiave
+  train_split: "train"
+  eval_split: "val"
+  input_size: 224        # ← Assicurati che sia 224
   aug_config: "aug_config_1"
   mean: [0.48145466, 0.4578275, 0.40821073]
   std: [0.26862954, 0.26130258, 0.27577711]
@@ -16,8 +16,8 @@ model:
   weight_name: "openai"
   
   # Parametri Backbone
-  input_size: 224
-  block_size: 16
+  input_size: 224        # ← Deve matchare dataset.input_size
+  block_size: 14         # ← CRITICO: 224÷16=14
   num_vpt: 0
   vpt_drop: 0.0
   

@@ -88,6 +88,15 @@ class QuadLoss(nn.Module):
         
         B = pred_den_map.shape[0]
 
+        # === DEBUG: STAMPA DIMENSIONI ===
+        print(f"🔍 self.block_size: {self.block_size}")
+        print(f"🔍 self.num_blocks_h: {self.num_blocks_h}")
+        print(f"🔍 self.num_blocks_w: {self.num_blocks_w}")
+        print(f"🔍 gt_den_map.shape BEFORE reshape: {gt_den_map.shape}")
+        print(f"🔍 pred_logit_pi_map.shape: {pred_logit_pi_map.shape if pred_logit_pi_map is not None else 'None'}")
+        # === FINE DEBUG ===
+
+
         # Reshape GT in blocchi se necessario
         if gt_den_map.shape[-2:] != (self.num_blocks_h, self.num_blocks_w):
             gt_den_map_blocks = _reshape_density(gt_den_map, block_size=self.block_size)
@@ -162,7 +171,6 @@ class QuadLoss(nn.Module):
             print("💀 ERRORE: Loss NaN rilevata! Tentativo di salvataggio con clamp...")
             # Clampiamo la loss a un valore alto ma finito per non rompere l'optimizer
             total_loss = torch.tensor(100.0, device=total_loss.device, requires_grad=True)
-
         loss_info["total_loss"] = total_loss.detach()
         
         return total_loss, loss_info
