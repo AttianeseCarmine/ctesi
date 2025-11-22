@@ -4,13 +4,11 @@ import torch
 from torch import Tensor, nn
 import torch.nn.functional as F
 import numpy as np
-from typing import Dict, Tuple, Union, List # Aggiunto List
+from typing import Dict, Tuple, Union, List
 
 # ==================================================================
-# === INIZIO MODIFICA: CLASSE 'AverageMeter' MANCANTE ===
+# === CLASSE AverageMeter ===
 # ==================================================================
-# Aggiungi questa classe, richiesta da trainer.py
-
 class AverageMeter:
     """
     Calcola e memorizza la media e il valore corrente.
@@ -29,19 +27,16 @@ class AverageMeter:
         self.sum += val * n
         self.count += n
         self.avg = self.sum / self.count if self.count != 0 else 0
-# ==================================================================
-# === FINE MODIFICA ===
-# ==================================================================
 
-
-# --- Il tuo codice originale (eval_utils.py) inizia qui ---
+# ==================================================================
+# === FUNZIONI DI VALUTAZIONE ===
+# ==================================================================
 
 def calculate_errors(pred_counts: np.ndarray, gt_counts: np.ndarray) -> Dict[str, float]:
     assert isinstance(pred_counts, np.ndarray), f"Expected numpy.ndarray, got {type(pred_counts)}"
     assert isinstance(gt_counts, np.ndarray), f"Expected numpy.ndarray, got {type(gt_counts)}"
     assert len(pred_counts) == len(gt_counts), f"Length of predictions and ground truths should be equal, but got {len(pred_counts)} and {len(gt_counts)}"
     
-    # Filtra per evitare divisioni per zero in NAE
     indices = gt_counts > 0
     
     errors = {
@@ -49,7 +44,6 @@ def calculate_errors(pred_counts: np.ndarray, gt_counts: np.ndarray) -> Dict[str
         "rmse": np.sqrt(np.mean((pred_counts - gt_counts) ** 2)),
     }
     
-    # Calcola NAE solo se ci sono campioni > 0
     if np.any(indices):
         errors["nae"] = np.mean(np.abs(pred_counts[indices] - gt_counts[indices]) / gt_counts[indices])
     else:
@@ -59,18 +53,10 @@ def calculate_errors(pred_counts: np.ndarray, gt_counts: np.ndarray) -> Dict[str
 
 
 def resize_density_map(x: Tensor, size: Tuple[int, int]) -> Tensor:
-    # Calcola la somma originale per preservare il conteggio
     x_sum = torch.sum(x, dim=(-1, -2), keepdim=True)
-    
-    # Interpola
     x = F.interpolate(x, size=size, mode="bilinear", align_corners=False)
-    
-    # Riscala per mantenere il conteggio originale
     current_sum = torch.sum(x, dim=(-1, -2), keepdim=True).float()
-    
-    # Evita divisione per zero
     scale_factor = torch.nan_to_num(x_sum.float() / (current_sum + 1e-8), nan=0.0, posinf=0.0, neginf=0.0)
-    
     return x * scale_factor
 
 
@@ -93,22 +79,17 @@ def sliding_window_predict(
     stride_height = stride
     stride_width = stride
     
-    # Calcola il padding necessario
     pad_h = (stride_height - (image_height - window_height) % stride_height) % stride_height
     pad_w = (stride_width - (image_width - window_width) % stride_width) % stride_width
 
     padded_image = F.pad(image, (0, pad_w, 0, pad_h), mode='constant', value=0)
-    padded_height = padded_image.shape[2]
-    padded_width = padded_image.shape[3]
-
-    # Estrai le patch
+    
     windows = padded_image.unfold(2, window_height, stride_height).unfold(3, window_width, stride_width)
     num_rows = windows.shape[2]
     num_cols = windows.shape[3]
     
     windows = windows.permute(0, 2, 3, 1, 4, 5).reshape(-1, C, window_height, window_width)
     
-    # Esegui l'inferenza in batch
     preds = []
     for i in range(0, len(windows), max_num_windows):
         with torch.no_grad():
@@ -117,7 +98,6 @@ def sliding_window_predict(
         
     preds = np.concatenate(preds, axis=0)
     
-    # Dimensioni della mappa di output
     out_h = image_height // block_size
     out_w = image_width // block_size
     
@@ -146,24 +126,46 @@ def sliding_window_predict(
             idx += 1
 
     pred_map /= (count_map + 1e-8)
-    
     return pred_map
 
 
 def evaluate_mae_rmse(
     pred_den_map: torch.Tensor,
-    gt_points: List[torch.Tensor],
+    gt_points: Union[List[torch.Tensor], torch.Tensor],
     sliding_window: bool = False,
     **kwargs
 ) -> Tuple[float, float]:
     
-    pred_cnt = pred_den_map.float().sum().item()
+    # 1. Calcola i conteggi predetti per OGNI immagine nel batch separatamente
+    # pred_den_map: [B, 1, H, W] -> Sum spatial dims -> [B, 1] -> flatten -> [B]
+    pred_counts = pred_den_map.detach().cpu().flatten(start_dim=1).sum(dim=1)
     
-    gt_cnt = 0
-    if gt_points and gt_points[0] is not None:
-        gt_cnt = len(gt_points[0])
+    batch_mae = 0.0
+    batch_mse = 0.0
+    batch_size = pred_counts.shape[0]
+    
+    # 2. Itera sul batch per confrontare predizione[i] con target[i]
+    for i in range(batch_size):
+        pred_c = pred_counts[i].item()
+        gt_c = 0.0
+        
+        curr_gt = None
+        
+        # Gestione input flessibile: gt_points può essere lista o tensore
+        if isinstance(gt_points, list):
+            if i < len(gt_points):
+                curr_gt = gt_points[i]
+        elif isinstance(gt_points, torch.Tensor):
+            # Se è un tensore [B, N, 2], prendiamo l'elemento i-esimo
+            curr_gt = gt_points[i]
+            
+        # Calcola il conteggio reale
+        if curr_gt is not None:
+            # len() su un tensore [N, 2] restituisce N (numero di punti)
+            gt_c = len(curr_gt)
 
-    mae = abs(pred_cnt - gt_cnt)
-    rmse = (pred_cnt - gt_cnt)**2
+        batch_mae += abs(pred_c - gt_c)
+        batch_mse += (pred_c - gt_c) ** 2
     
-    return mae, rmse
+    # Restituisce la media dell'errore sul batch
+    return batch_mae / batch_size, batch_mse / batch_size
