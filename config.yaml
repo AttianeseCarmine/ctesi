@@ -17,7 +17,7 @@ model:
   
   # Parametri Backbone
   input_size: 224        # ← Deve matchare dataset.input_size
-  block_size: 14         # ← CRITICO: 224÷16=14
+  block_size: 16
   num_vpt: 0
   vpt_drop: 0.0
   
