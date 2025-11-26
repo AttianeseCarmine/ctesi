@@ -1,5 +1,5 @@
 # =========================================================
-# CONFIGURAZIONE VI MIGLIORATA (ZIP + EBC su ViT-B/16)
+# CONFIGURAZIONE VI MIGLIORATA (ZIP + EBC)
 # =========================================================
 dataset:
   name: "sha"
@@ -27,10 +27,10 @@ dataset:
 
 
 # =========================================================
-# MODELLO → ViT-B/16 + ZIP + EBC
+# MODELLO → ZIP + EBC
 # =========================================================
 model:
-  name: "vgg16_bn"
+  name: "ViT-B-16"
 
   input_size: 256
   block_size: 16
