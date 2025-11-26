@@ -1,109 +1,176 @@
-# config.yaml - Struttura ORIGINALE, Valori CHRI
-
-# === Configurazione Dataset ===
+# =========================================================
+# CONFIGURAZIONE VI MIGLIORATA (ZIP + EBC su ViT-B/16)
+# =========================================================
 dataset:
   name: "sha"
   train_split: "train"
   eval_split: "val"
-  input_size: 224        # ← Assicurati che sia 224
-  aug_config: "aug_config_1"
+
+  # === DATA AUGMENTATION MIGLIORATA ===
+  input_size: 256
+  random_crop: true
+  random_resize: true
+  crop_scale: [0.75, 1.4]
+  flip_prob: 0.5
+  color_jitter: true
+
+  # Normalizzazione CLIP
   mean: [0.48145466, 0.4578275, 0.40821073]
   std: [0.26862954, 0.26130258, 0.27577711]
 
-# === Configurazione Modello ===
+  # === COUNT-AWARE SAMPLER ===
+  count_sampler:
+    enable: true
+    base_weight: 1.0
+    power: 1.25
+    log_offset: 1.0
+
+
+# =========================================================
+# MODELLO → ViT-B/16 + ZIP + EBC
+# =========================================================
 model:
-  name: "ViT-B-16"
-  weight_name: "openai"
-  
-  # Parametri Backbone
-  input_size: 224        # ← Deve matchare dataset.input_size
+  name: "vgg16_bn"
+
+  input_size: 256
   block_size: 16
   num_vpt: 0
   vpt_drop: 0.0
-  
-  # Parametri ZIP (Valori aggiornati da Chri)
-  zip_lambda_max: 3.0    # Chri usa 3.0
-  pi_thresh: 0.15        # Chri usa 0.15 (più permissivo del tuo 0.5)
+
+  # === PARAMETRI ZIP MIGLIORATI (DERIVATI DA CONFIG A) ===
+  zip_lambda_max: 3.0
   gate_mode: "multiply"
-  
-  # BIN: Il tuo codice in losses/__init__.py cerca 'bins'.
-  # Qui definiamo 'zip_bins' (con lo zero) e 'ebc_bins' (senza zero)
-  # E passiamo 'zip_bins' come 'bins' generico per compatibilità.
-  
-  bins: [[0, 0], [1, 1], [2, 2], [3, 3], [4, 4], [5, 5], [6, 6], [7, 7], [8, 8], [9, 9], [10, 10], [11, 12], [13, 14], [15, 9999]]
-  
-  zip_bins: [[0, 0], [1, 1], [2, 2], [3, 3], [4, 4], [5, 5], [6, 6], [7, 7], [8, 8], [9, 9], [10, 10], [11, 12], [13, 14], [15, 9999]]
-  zip_bin_centers: [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.38, 13.38, 16.26]
-  
-  ebc_bins: [[1, 1], [2, 2], [3, 3], [4, 4], [5, 5], [6, 6], [7, 7], [8, 8], [9, 9], [10, 10], [11, 12], [13, 14], [15, 9999]]
-  ebc_bin_centers: [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.38, 13.38, 16.26]
-  
-  # 13 Prompt per EBC (necessari per len(ebc_bins) == 13)
-  text_prompts: 
+
+  # Soft π
+  pi_thresh: 0.12
+  pi_soft: true
+  pi_soft_min: 0.05
+  pi_soft_power: 1.0
+
+  # λ regularization
+  lambda_target: 1.0
+  lambda_weight: 1.8e-3
+
+  # === BIN (ZIP + EBC) ===
+  bins: [[0, 0], [1, 1], [2, 2], [3, 3], [4, 4], [5, 5],
+         [6, 6], [7, 7], [8, 8], [9, 9], [10, 10],
+         [11, 12], [13, 14], [15, 9999]]
+
+  zip_bins: [[0, 0], [1, 1], [2, 2], [3, 3], [4, 4], [5, 5],
+             [6, 6], [7, 7], [8, 8], [9, 9], [10, 10],
+             [11, 12], [13, 14], [15, 9999]]
+
+  zip_bin_centers: [0.0, 1.0, 2.0, 3.0, 4.0, 5.0,
+                    6.0, 7.0, 8.0, 9.0, 10.0,
+                    11.38, 13.38, 16.26]
+
+  ebc_bins: [[1, 1], [2, 2], [3, 3], [4, 4], [5, 5],
+             [6, 6], [7, 7], [8, 8], [9, 9], [10, 10],
+             [11, 12], [13, 14], [15, 9999]]
+
+  ebc_bin_centers: [1.0, 2.0, 3.0, 4.0, 5.0,
+                    6.0, 7.0, 8.0, 9.0, 10.0,
+                    11.38, 13.38, 16.26]
+
+  text_prompts:
     lambda: [
-      "one person", "two people", "three people", "four people", "five people", 
-      "six people", "seven people", "eight people", "nine people", "ten people", 
+      "one person", "two people", "three people", "four people", "five people",
+      "six people", "seven people", "eight people", "nine people", "ten people",
       "about twelve people", "about fourteen people", "a dense crowd of people"
     ]
 
-# === Configurazione Loss (Pesi di Chri) ===
+
+# =========================================================
+# LOSS MIGLIORATA
+# =========================================================
 loss:
   name: "quad_loss"
   reg_loss: "zipnll"
-  
-  # Pesi ottimizzati (Chri: CE=3.0, NLL=1.0, COUNT=0.25)
-  weight_cls: 3.0  # EBC / Classification
-  weight_reg: 1.0  # ZIP / Regression
-  weight_aux: 0.25 # Count L1
-  
-  pi_loss_weight_bce: 1.0 
 
-# === Configurazione Base Training ===
+  # nuovi pesi bilanciati (versione migliorata)
+  weight_cls: 2.0      # EBC classification
+  weight_reg: 2.0      # ZIP regression
+  weight_aux: 0.35     # Count L1
+
+  # BCE PI loss
+  pi_loss_weight_bce: 1.0
+
+  # Count-Consistency Loss (derivata da P2R)
+  count_consistency:
+    enable: true
+    weight: 0.15
+
+
+# =========================================================
+# TRAIN GLOBAL
+# =========================================================
 train_base:
   seed: 2025
   device: "cuda"
-  output_dir: "./output/sha_final"
+  output_dir: "./output_final"
   eval_freq: 5
 
-# === Configurazione Valutazione Globale ===
+
 eval:
   batch_size: 8
   num_workers: 4
   sliding_window: false
 
-# === STAGE 1: ZIP TRAINING (Valori Chri) ===
+
+# =========================================================
+# STAGE 1 (ZIP)
+# =========================================================
 train_stage1:
-  batch_size: 8         # Chri: 8
+  batch_size: 8
   num_workers: 4
-  num_epochs: 200       # Chri ne mette di più, iniziamo con 200
-  lr: 1.0e-4            # Chri: 1e-4
-  lr_backbone: 1.0e-5   # Chri: 1e-5
-  optimizer: "adamw"
-  weight_decay: 1.0e-4
-  scheduler: "cosine"
-  early_stopping_patience: 50
+  num_epochs: 300
 
-# === STAGE 2: EBC TRAINING (Valori Chri) ===
+  lr: 1.0e-4
+  lr_backbone: 1.0e-5
+  weight_decay: 1.0e-4
+  optimizer: "adamw"
+
+  scheduler: "cosine"
+  warmup_epochs: 10
+  early_stopping_patience: 120
+  clip_grad_norm: 1.0
+
+
+# =========================================================
+# STAGE 2 (EBC)
+# =========================================================
 train_stage2:
-  batch_size: 16        # Chri: 16
+  batch_size: 16
   num_workers: 4
-  num_epochs: 200
-  lr: 5.0e-5            # Chri: 5e-5
-  lr_backbone: 1.0e-5   # Chri: 1e-5
+  num_epochs: 250
+
+  lr: 5.0e-5
+  lr_backbone: 1.0e-5
   optimizer: "adamw"
+
   weight_decay: 1.0e-4
   scheduler: "cosine"
-  early_stopping_patience: 50
+  warmup_epochs: 5
 
-# === STAGE 3: JOINT TRAINING (Valori Chri) ===
+  early_stopping_patience: 120
+  clip_grad_norm: 1.0
+
+
+# =========================================================
+# STAGE 3 (JOINT)
+# =========================================================
 train_stage3:
   batch_size: 8
   num_workers: 4
-  num_epochs: 100
-  lr: 1.5e-4            # Chri: 1.5e-4
-  lr_backbone: 1.5e-5   # Chri: 1.5e-5
+  num_epochs: 150
+
+  lr: 1.5e-4
+  lr_backbone: 1.5e-5
   optimizer: "adamw"
+
   weight_decay: 1.0e-4
   scheduler: "cosine"
-  early_stopping_patience: 20
+  warmup_epochs: 10
+
+  early_stopping_patience: 120
   clip_grad_norm: 1.0
