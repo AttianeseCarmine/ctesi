@@ -43,7 +43,11 @@ class Trainer:
         self.current_stage = self.cfg.get('stage', 3)
 
         self.output_dir = self.cfg['train_base']['output_dir']
-        self.logger = get_logger(os.path.join(self.output_dir, 'train.log'))
+        self.log_dir = os.path.join(self.output_dir, 'logs')
+        os.makedirs(self.log_dir, exist_ok=True)
+        
+        # Ora salva il log dentro la cartella logs
+        self.logger = get_logger(os.path.join(self.log_dir, 'train.log'))
 
         self.start_epoch = 1
         self.num_epochs = self.stage_cfg.get('num_epochs', 100)
@@ -66,7 +70,7 @@ class Trainer:
         if os.path.exists(last_ckpt_path):
             self.logger.info(f"Caricamento checkpoint 'last.pth'...")
             try:
-                checkpoint = torch.load(last_ckpt_path, map_location=self.device)
+                checkpoint = torch.load(last_ckpt_path, map_location=self.device, weights_only=False)
                 self.model.load_state_dict(checkpoint['model_state_dict'])
                 self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
                 if self.scheduler and checkpoint.get('scheduler_state_dict'):

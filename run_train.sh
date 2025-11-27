@@ -26,12 +26,12 @@ echo "--- Avvio STADIO 1 (Pre-training PI Head)... ---"
 # Esegue con nohup in background e salva il log
 nohup python train.py --config "$CONFIG_FILE" --stage 1 > "$LOG_DIR/stage1.log" 2>&1
 echo "--- ✅ STADIO 1 completato. ---"
-
+mv "$OUTPUT_DIR/last.pth" "$OUTPUT_DIR/last_stage1.pth" 2>/dev/null || true
 # --- STADIO 2 ---
 echo "--- Avvio STADIO 2 (Pre-training LAMBDA Head)... ---"
 nohup python train.py --config "$CONFIG_FILE" --stage 2 > "$LOG_DIR/stage2.log" 2>&1
 echo "--- ✅ STADIO 2 completato. ---"
-
+mv "$OUTPUT_DIR/last.pth" "$OUTPUT_DIR/last_stage2.pth" 2>/dev/null || true
 # --- STADIO 3 ---
 echo "--- Avvio STADIO 3 (Joint Fine-tuning)... ---"
 nohup python train.py --config "$CONFIG_FILE" --stage 3 > "$LOG_DIR/stage3.log" 2>&1

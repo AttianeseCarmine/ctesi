@@ -32,6 +32,8 @@ dataset:
 model:
   name: "ViT-B-16"
   weight_name: "openai"
+  pi_soft: true       # Assicurati sia true
+  pi_soft_min: 0.1    # Alza questo valore (es. da 0.05 a 0.1 o 0.2)
   input_size: 256
   block_size: 16
   num_vpt: 0
@@ -124,7 +126,7 @@ eval:
 train_stage1:
   batch_size: 16  # 8
   num_workers: 8 # 4
-  num_epochs: 300
+  num_epochs: 30
 
   lr: 5.0e-5
   lr_backbone: 1.0e-6
@@ -143,7 +145,7 @@ train_stage1:
 train_stage2:
   batch_size: 16
   num_workers: 4
-  num_epochs: 250
+  num_epochs: 30
 
   lr: 5.0e-5
   lr_backbone: 1.0e-5
@@ -163,7 +165,7 @@ train_stage2:
 train_stage3:
   batch_size: 8
   num_workers: 4
-  num_epochs: 150
+  num_epochs: 30
 
   lr: 1.5e-4
   lr_backbone: 1.5e-5

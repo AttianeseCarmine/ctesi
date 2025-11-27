@@ -112,7 +112,7 @@ def main(args, cfg: Dict):
         if load_path is None: load_path = stage1_ckpt_path
         if os.path.exists(load_path):
             print(f"✅ Caricamento checkpoint Stage 1 da: {load_path}")
-            state_dict = torch.load(load_path, map_location=device)
+            state_dict = torch.load(load_path, map_location=device, weights_only=False)
             if 'model' in state_dict: state_dict = state_dict['model']
             model.load_state_dict(state_dict, strict=False)
         else:
@@ -141,7 +141,7 @@ def main(args, cfg: Dict):
         if load_path is None: load_path = stage2_ckpt_path
         if os.path.exists(load_path):
             print(f"✅ Caricamento checkpoint Stage 2 da: {load_path}")
-            state_dict = torch.load(load_path, map_location=device)
+            state_dict = torch.load(load_path, map_location=device, weights_only=False)
             if 'model' in state_dict: state_dict = state_dict['model']
             model.load_state_dict(state_dict, strict=False)
         else:

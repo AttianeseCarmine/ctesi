@@ -50,8 +50,9 @@ class ConvZIPHead(nn.Module):
         # Inizializzazione bias per 'pi' (opzionale, ma aiuta)
         if self.pi_head.bias is not None:
             with torch.no_grad():
-                self.pi_head.bias[0] = 1.5 # Tende a predire 'zero'
-                self.pi_head.bias[1] = -1.5 # Tende a non predire 'non-zero'
+                # Inizializzazione NEUTRA: Il modello non avrà pregiudizi
+                self.pi_head.bias[0] = -2.0 
+                self.pi_head.bias[1] = 2.0
 
     def forward(self, feat: torch.Tensor):
         h = self.shared(feat) # [B, C_inter, H, W]

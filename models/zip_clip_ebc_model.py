@@ -185,7 +185,7 @@ class ZIP_CLIP_EBC_Model(nn.Module):
         if self.gate_mode == "multiply":
             gated_feats = image_feats * mask
         else:
-            gated_feats = image_feats * mask
+            gated_feats = image_feats
 
         # --- MODULO B: CLIP-EBC (ebc_head) ---
         if image.device != self.lambda_text_feats.device:
