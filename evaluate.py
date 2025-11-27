@@ -1,84 +1,102 @@
 import torch
-from torch.amp import autocast
 import torch.nn.functional as F
-import torch.distributed as dist
-from torch import nn, Tensor
+from torch import nn
 from torch.utils.data import DataLoader
-from typing import Tuple, Optional
+from typing import Tuple
 from tqdm import tqdm
 import numpy as np
+import logging
 
-from utils import sliding_window_predict, barrier, calculate_errors
+logger = logging.getLogger(__name__)
 
+def pad_to_multiple(x: torch.Tensor, k: int = 16):
+    """Padding per ViT (multipli di 16)."""
+    h, w = x.shape[-2:]
+    h_pad = (k - h % k) % k
+    w_pad = (k - w % k) % k
+    if h_pad > 0 or w_pad > 0:
+        x = F.pad(x, (0, w_pad, 0, h_pad))
+    return x, h, w
+
+def calculate_errors(pred_counts, gt_counts):
+    pred_counts = np.array(pred_counts)
+    gt_counts = np.array(gt_counts)
+    
+    # Filtra NaN e Inf
+    valid_mask = np.isfinite(pred_counts) & np.isfinite(gt_counts)
+    if not valid_mask.all():
+        # logger.warning(f"⚠️ Ignorati {len(pred_counts) - valid_mask.sum()} campioni NaN/Inf.")
+        pred_counts = pred_counts[valid_mask]
+        gt_counts = gt_counts[valid_mask]
+
+    if len(pred_counts) == 0:
+        return 0.0, 0.0
+
+    mae = np.mean(np.abs(pred_counts - gt_counts))
+    rmse = np.sqrt(np.mean((pred_counts - gt_counts) ** 2))
+    return mae, rmse
 
 def evaluate(
     model: nn.Module,
     data_loader: DataLoader,
-    sliding_window: bool,
-    max_input_size: int = 4096,
-    window_size: int = 224,
-    stride: int = 224,
-    max_num_windows: int = 64,
-    device: torch.device = torch.device("cuda"),
-    amp: bool = False,
-    local_rank: int = 0,
-    nprocs: int = 1,
-    progress_bar: bool = True,
-) -> Tuple[Tensor, Tensor]:
-    ddp = nprocs > 1
-    model = model.to(device)
-    model.eval()
-    pred_counts, gt_counts = [], []
-    data_iter = tqdm(data_loader) if (local_rank == 0 and progress_bar) else data_loader
-
-    for image, gt_points, _ in data_iter:
-        image = image.to(device)
-        image_height, image_width = image.shape[-2:]
-        gt_counts.extend([len(p) for p in gt_points])
-
-        # Resize image if it's smaller than the window size
-        aspect_ratio = image_width / image_height
-        if image_height < window_size:
-            new_height = window_size
-            new_width = int(new_height * aspect_ratio)
-            image = F.interpolate(image, size=(new_height, new_width), mode="bicubic", align_corners=False)
-            image_height, image_width = new_height, new_width
-        if image_width < window_size:
-            new_width = window_size
-            new_height = int(new_width / aspect_ratio)
-            image = F.interpolate(image, size=(new_height, new_width), mode="bicubic", align_corners=False)
-            image_height, image_width = new_height, new_width
-
-        with torch.set_grad_enabled(False), autocast(device_type="cuda", enabled=amp):
-            if sliding_window or (image_height * image_width) > max_input_size ** 2:
-                pred_den_maps = sliding_window_predict(model, image, window_size, stride, max_num_windows)
-            else:
-                pred_den_maps = model(image)
-
-            pred_counts.extend(pred_den_maps.sum(dim=(-1, -2, -3)).cpu().numpy().tolist())
+    device: torch.device,
+    stage: int = 3,
+    desc: str = "Evaluating"
+) -> Tuple[float, float]:
     
-    barrier(ddp)
-    assert len(pred_counts) == len(gt_counts), f"Length of predictions and ground truths should be equal, but got {len(pred_counts)} and {len(gt_counts)}"
+    model.eval()
+    pred_counts = []
+    gt_counts = []
+    
+    # Usa tqdm solo se non è disabilitato
+    pbar = tqdm(data_loader, desc=desc, leave=False)
+    
+    with torch.no_grad():
+        for batch in pbar:
+            # Gestione flessibile del batch (dict o tupla)
+            if isinstance(batch, dict):
+                images = batch['image'].to(device)
+                gt_points = batch['points']
+            else:
+                # Fallback per dataset standard (img, points, density)
+                images, gt_points_raw, _ = batch
+                images = images.to(device)
+                gt_points = gt_points_raw
 
-    if ddp:
-        pred_counts, gt_counts = torch.tensor(pred_counts, device=device), torch.tensor(gt_counts, device=device)
-        # Pad `pred_counts` and `gt_counts` to the same length across all processes.
-        local_length = torch.tensor([len(pred_counts)], device=device)
-        lengths = [torch.zeros_like(local_length) for _ in range(nprocs)]
-        dist.all_gather(lengths, local_length)
-        max_length = max([l.item() for l in lengths])
-        padded_pred_counts, padded_gt_counts = torch.full((max_length,), float("nan"), device=device), torch.full((max_length,), float("nan"), device=device)
-        padded_pred_counts[:len(pred_counts)], padded_gt_counts[:len(gt_counts)] = pred_counts, gt_counts
-        gathered_pred_counts, gathered_gt_counts = [torch.zeros_like(padded_pred_counts) for _ in range(nprocs)], [torch.zeros_like(padded_gt_counts) for _ in range(nprocs)]
-        dist.all_gather(gathered_pred_counts, padded_pred_counts)
-        dist.all_gather(gathered_gt_counts, padded_gt_counts)
-        # Concatenate predictions and ground truths from all processes and remove padding (nan values).
-        pred_counts, gt_counts = torch.cat(gathered_pred_counts).cpu(), torch.cat(gathered_gt_counts).cpu()
-        pred_counts, gt_counts = pred_counts[~torch.isnan(pred_counts)], gt_counts[~torch.isnan(gt_counts)]
-        pred_counts, gt_counts = pred_counts.numpy(), gt_counts.numpy()
+            # Calcola Ground Truth dai punti
+            batch_gt = [len(p) for p in gt_points]
+            gt_counts.extend(batch_gt)
 
-    else:
-        pred_counts, gt_counts = np.array(pred_counts), np.array(gt_counts)
+            # Padding per ViT
+            images, _, _ = pad_to_multiple(images, k=16)
 
-    torch.cuda.empty_cache()
-    return calculate_errors(pred_counts, gt_counts)
+            # --- LOGICA DI PREDIZIONE PER STADIO ---
+            if stage == 1:
+                # STAGE 1: Valuta solo ZIP (Backbone + ConvZIPHead)
+                # 1. Estrai features
+                features = model.backbone(images)
+                # 2. Passa alla zip_head
+                zip_out = model.zip_head(features.float())
+                
+                # 3. Calcola densità: pi * lambda
+                pi_logits = zip_out["logit_pi_maps"] # [B, 2, H, W]
+                lambda_map = zip_out["lambda_maps"]  # [B, 1, H, W]
+                
+                pi_prob = F.softmax(pi_logits, dim=1)[:, 1:2, :, :] # Probabilità classe "non-vuoto"
+                
+                # Predizione = probabilità * intensità
+                pred_map = pi_prob * lambda_map
+                
+            else:
+                # STAGE 2/3: Valuta output completo (EBC filtrato da ZIP)
+                pred_map = model(images)
+
+            # Somma per ottenere il conteggio
+            batch_preds = pred_map.sum(dim=(1, 2, 3)).cpu().numpy()
+            
+            # Sostituisci eventuali NaN residui con 0 per non rompere il training
+            batch_preds = np.nan_to_num(batch_preds, nan=0.0, posinf=0.0, neginf=0.0)
+            pred_counts.extend(batch_preds)
+
+    mae, rmse = calculate_errors(pred_counts, gt_counts)
+    return mae, rmse

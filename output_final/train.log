@@ -1,0 +1,163 @@
+2025-11-26 17:24:26,498 - INFO - ✅ Early Stopping ATTIVO con pazienza=120 epoche.
+2025-11-26 17:24:26,498 - INFO - Inizio addestramento da epoch 1 a 300
+2025-11-26 17:24:30,664 - INFO - Epoch 1/300: Train Loss: 106.2898 | Valutazione saltata | Epoch Time: 4.2s
+2025-11-26 17:24:39,752 - INFO - Epoch 2/300: Train Loss: 106.1997 | Valutazione saltata | Epoch Time: 3.4s
+2025-11-26 17:24:49,040 - INFO - Epoch 3/300: Train Loss: 105.0684 | Valutazione saltata | Epoch Time: 3.2s
+2025-11-26 17:24:58,301 - INFO - Epoch 4/300: Train Loss: 105.7136 | Valutazione saltata | Epoch Time: 3.2s
+2025-11-26 17:25:09,169 - INFO - Epoch 5/300: Train Loss: 105.5825 | Val MAE: nan | Val RMSE: nan | Epoch Time: 3.1s | Val Time: 1.7s
+2025-11-26 17:25:18,291 - INFO - Epoch 6/300: Train Loss: 106.8896 | Valutazione saltata | Epoch Time: 3.2s
+2025-11-26 17:25:27,585 - INFO - Epoch 7/300: Train Loss: 106.2483 | Valutazione saltata | Epoch Time: 3.3s
+2025-11-26 17:25:36,908 - INFO - Epoch 8/300: Train Loss: 104.0806 | Valutazione saltata | Epoch Time: 3.4s
+2025-11-26 17:25:45,891 - INFO - Epoch 9/300: Train Loss: 105.3900 | Valutazione saltata | Epoch Time: 3.4s
+2025-11-26 17:25:56,286 - INFO - Epoch 10/300: Train Loss: 107.7197 | Val MAE: nan | Val RMSE: nan | Epoch Time: 3.2s | Val Time: 1.5s
+2025-11-26 17:26:05,335 - INFO - Epoch 11/300: Train Loss: 102.8313 | Valutazione saltata | Epoch Time: 3.3s
+2025-11-26 17:26:14,339 - INFO - Epoch 12/300: Train Loss: 108.3373 | Valutazione saltata | Epoch Time: 3.3s
+2025-11-26 17:26:23,591 - INFO - Epoch 13/300: Train Loss: 106.7231 | Valutazione saltata | Epoch Time: 3.2s
+2025-11-26 17:26:33,003 - INFO - Epoch 14/300: Train Loss: 106.4623 | Valutazione saltata | Epoch Time: 3.4s
+2025-11-26 17:26:44,327 - INFO - Epoch 15/300: Train Loss: 110.4631 | Val MAE: nan | Val RMSE: nan | Epoch Time: 3.4s | Val Time: 1.6s
+2025-11-26 17:26:53,174 - INFO - Epoch 16/300: Train Loss: 107.7248 | Valutazione saltata | Epoch Time: 3.3s
+2025-11-26 17:27:02,541 - INFO - Epoch 17/300: Train Loss: 105.8270 | Valutazione saltata | Epoch Time: 3.3s
+2025-11-26 17:27:11,656 - INFO - Epoch 18/300: Train Loss: 105.1788 | Valutazione saltata | Epoch Time: 3.4s
+2025-11-26 17:27:20,567 - INFO - Epoch 19/300: Train Loss: 105.3134 | Valutazione saltata | Epoch Time: 3.2s
+2025-11-26 17:27:30,762 - INFO - Epoch 20/300: Train Loss: 108.7283 | Val MAE: nan | Val RMSE: nan | Epoch Time: 3.1s | Val Time: 1.6s
+2025-11-26 17:27:39,934 - INFO - Epoch 21/300: Train Loss: 106.2806 | Valutazione saltata | Epoch Time: 3.3s
+2025-11-26 17:27:49,238 - INFO - Epoch 22/300: Train Loss: 105.6748 | Valutazione saltata | Epoch Time: 3.3s
+2025-11-26 17:27:58,548 - INFO - Epoch 23/300: Train Loss: 107.0587 | Valutazione saltata | Epoch Time: 3.3s
+2025-11-26 17:28:07,571 - INFO - Epoch 24/300: Train Loss: 106.0092 | Valutazione saltata | Epoch Time: 3.3s
+2025-11-26 17:28:20,893 - INFO - Epoch 25/300: Train Loss: 107.4329 | Val MAE: nan | Val RMSE: nan | Epoch Time: 3.3s | Val Time: 1.5s
+2025-11-26 17:28:29,886 - INFO - Epoch 26/300: Train Loss: 105.1025 | Valutazione saltata | Epoch Time: 3.3s
+2025-11-26 17:28:39,020 - INFO - Epoch 27/300: Train Loss: 106.2416 | Valutazione saltata | Epoch Time: 3.3s
+2025-11-26 17:28:48,403 - INFO - Epoch 28/300: Train Loss: 103.9498 | Valutazione saltata | Epoch Time: 3.5s
+2025-11-26 17:28:57,841 - INFO - Epoch 29/300: Train Loss: 106.5671 | Valutazione saltata | Epoch Time: 3.4s
+2025-11-26 17:29:08,637 - INFO - Epoch 30/300: Train Loss: 105.9966 | Val MAE: nan | Val RMSE: nan | Epoch Time: 3.4s | Val Time: 1.7s
+2025-11-26 17:29:17,190 - INFO - Epoch 31/300: Train Loss: 104.6727 | Valutazione saltata | Epoch Time: 3.3s
+2025-11-26 17:29:26,162 - INFO - Epoch 32/300: Train Loss: 105.8095 | Valutazione saltata | Epoch Time: 3.2s
+2025-11-26 17:29:35,810 - INFO - Epoch 33/300: Train Loss: 107.7972 | Valutazione saltata | Epoch Time: 3.3s
+2025-11-26 17:29:44,878 - INFO - Epoch 34/300: Train Loss: 108.4497 | Valutazione saltata | Epoch Time: 3.3s
+2025-11-26 17:29:55,333 - INFO - Epoch 35/300: Train Loss: 106.4693 | Val MAE: nan | Val RMSE: nan | Epoch Time: 3.3s | Val Time: 1.4s
+2025-11-26 17:30:04,599 - INFO - Epoch 36/300: Train Loss: 107.1673 | Valutazione saltata | Epoch Time: 3.2s
+2025-11-26 17:30:13,815 - INFO - Epoch 37/300: Train Loss: 106.0019 | Valutazione saltata | Epoch Time: 3.2s
+2025-11-26 17:30:22,815 - INFO - Epoch 38/300: Train Loss: 107.8516 | Valutazione saltata | Epoch Time: 3.4s
+2025-11-26 17:30:32,010 - INFO - Epoch 39/300: Train Loss: 105.2431 | Valutazione saltata | Epoch Time: 3.4s
+2025-11-26 17:30:43,480 - INFO - Epoch 40/300: Train Loss: 105.8754 | Val MAE: nan | Val RMSE: nan | Epoch Time: 3.4s | Val Time: 1.7s
+2025-11-26 17:30:52,819 - INFO - Epoch 41/300: Train Loss: 105.9512 | Valutazione saltata | Epoch Time: 3.6s
+2025-11-26 17:31:01,665 - INFO - Epoch 42/300: Train Loss: 105.5810 | Valutazione saltata | Epoch Time: 3.3s
+2025-11-26 17:31:11,007 - INFO - Epoch 43/300: Train Loss: 105.1684 | Valutazione saltata | Epoch Time: 3.4s
+2025-11-26 17:31:20,462 - INFO - Epoch 44/300: Train Loss: 104.8511 | Valutazione saltata | Epoch Time: 3.2s
+2025-11-26 17:31:30,841 - INFO - Epoch 45/300: Train Loss: 106.2049 | Val MAE: nan | Val RMSE: nan | Epoch Time: 3.3s | Val Time: 1.6s
+2025-11-26 17:31:39,964 - INFO - Epoch 46/300: Train Loss: 107.9065 | Valutazione saltata | Epoch Time: 3.1s
+2025-11-26 17:31:49,276 - INFO - Epoch 47/300: Train Loss: 107.9115 | Valutazione saltata | Epoch Time: 3.4s
+2025-11-26 17:31:58,389 - INFO - Epoch 48/300: Train Loss: 105.7661 | Valutazione saltata | Epoch Time: 3.3s
+2025-11-26 17:32:07,519 - INFO - Epoch 49/300: Train Loss: 106.1321 | Valutazione saltata | Epoch Time: 3.4s
+2025-11-26 17:32:17,619 - INFO - Epoch 50/300: Train Loss: 106.3617 | Val MAE: nan | Val RMSE: nan | Epoch Time: 3.2s | Val Time: 1.5s
+2025-11-26 17:32:26,856 - INFO - Epoch 51/300: Train Loss: 105.1669 | Valutazione saltata | Epoch Time: 3.3s
+2025-11-26 17:32:36,053 - INFO - Epoch 52/300: Train Loss: 108.8014 | Valutazione saltata | Epoch Time: 3.3s
+2025-11-26 17:32:45,160 - INFO - Epoch 53/300: Train Loss: 107.3683 | Valutazione saltata | Epoch Time: 3.4s
+2025-11-26 17:32:54,367 - INFO - Epoch 54/300: Train Loss: 106.3362 | Valutazione saltata | Epoch Time: 3.5s
+2025-11-26 17:33:05,080 - INFO - Epoch 55/300: Train Loss: 106.7740 | Val MAE: nan | Val RMSE: nan | Epoch Time: 3.4s | Val Time: 1.6s
+2025-11-26 17:33:14,003 - INFO - Epoch 56/300: Train Loss: 105.6531 | Valutazione saltata | Epoch Time: 3.2s
+2025-11-26 17:33:22,829 - INFO - Epoch 57/300: Train Loss: 106.6719 | Valutazione saltata | Epoch Time: 3.3s
+2025-11-26 17:33:35,005 - INFO - Epoch 58/300: Train Loss: 105.6416 | Valutazione saltata | Epoch Time: 3.4s
+2025-11-26 17:33:45,171 - INFO - Epoch 59/300: Train Loss: 106.2951 | Valutazione saltata | Epoch Time: 3.3s
+2025-11-26 17:33:56,017 - INFO - Epoch 60/300: Train Loss: 105.9481 | Val MAE: nan | Val RMSE: nan | Epoch Time: 3.5s | Val Time: 1.5s
+2025-11-26 17:34:05,060 - INFO - Epoch 61/300: Train Loss: 106.9334 | Valutazione saltata | Epoch Time: 3.1s
+2025-11-26 17:34:14,052 - INFO - Epoch 62/300: Train Loss: 104.6948 | Valutazione saltata | Epoch Time: 3.2s
+2025-11-26 17:34:23,554 - INFO - Epoch 63/300: Train Loss: 108.1656 | Valutazione saltata | Epoch Time: 3.4s
+2025-11-26 17:34:33,077 - INFO - Epoch 64/300: Train Loss: 105.1530 | Valutazione saltata | Epoch Time: 3.4s
+2025-11-26 17:34:44,218 - INFO - Epoch 65/300: Train Loss: 106.7585 | Val MAE: nan | Val RMSE: nan | Epoch Time: 3.6s | Val Time: 1.5s
+2025-11-26 17:34:53,587 - INFO - Epoch 66/300: Train Loss: 107.5282 | Valutazione saltata | Epoch Time: 3.4s
+2025-11-26 17:35:03,158 - INFO - Epoch 67/300: Train Loss: 104.0657 | Valutazione saltata | Epoch Time: 3.4s
+2025-11-26 17:35:12,475 - INFO - Epoch 68/300: Train Loss: 105.8657 | Valutazione saltata | Epoch Time: 3.4s
+2025-11-26 17:35:21,844 - INFO - Epoch 69/300: Train Loss: 105.9417 | Valutazione saltata | Epoch Time: 3.3s
+2025-11-26 17:35:32,645 - INFO - Epoch 70/300: Train Loss: 107.5174 | Val MAE: nan | Val RMSE: nan | Epoch Time: 3.3s | Val Time: 1.7s
+2025-11-26 17:35:42,096 - INFO - Epoch 71/300: Train Loss: 106.0922 | Valutazione saltata | Epoch Time: 3.3s
+2025-11-26 17:35:51,341 - INFO - Epoch 72/300: Train Loss: 105.9358 | Valutazione saltata | Epoch Time: 3.4s
+2025-11-26 17:36:00,843 - INFO - Epoch 73/300: Train Loss: 106.0516 | Valutazione saltata | Epoch Time: 3.3s
+2025-11-26 17:36:10,632 - INFO - Epoch 74/300: Train Loss: 105.6918 | Valutazione saltata | Epoch Time: 3.5s
+2025-11-26 17:36:21,651 - INFO - Epoch 75/300: Train Loss: 106.8885 | Val MAE: nan | Val RMSE: nan | Epoch Time: 3.5s | Val Time: 1.6s
+2025-11-26 17:36:31,133 - INFO - Epoch 76/300: Train Loss: 107.0231 | Valutazione saltata | Epoch Time: 3.3s
+2025-11-26 17:36:40,432 - INFO - Epoch 77/300: Train Loss: 107.4677 | Valutazione saltata | Epoch Time: 3.4s
+2025-11-26 17:36:50,150 - INFO - Epoch 78/300: Train Loss: 105.1257 | Valutazione saltata | Epoch Time: 3.4s
+2025-11-26 17:36:59,124 - INFO - Epoch 79/300: Train Loss: 109.9538 | Valutazione saltata | Epoch Time: 3.3s
+2025-11-26 17:37:09,808 - INFO - Epoch 80/300: Train Loss: 105.9290 | Val MAE: nan | Val RMSE: nan | Epoch Time: 3.4s | Val Time: 1.6s
+2025-11-26 17:37:19,449 - INFO - Epoch 81/300: Train Loss: 107.0790 | Valutazione saltata | Epoch Time: 3.4s
+2025-11-26 17:37:28,821 - INFO - Epoch 82/300: Train Loss: 105.5734 | Valutazione saltata | Epoch Time: 3.3s
+2025-11-26 17:37:37,915 - INFO - Epoch 83/300: Train Loss: 104.8940 | Valutazione saltata | Epoch Time: 3.4s
+2025-11-26 17:37:47,213 - INFO - Epoch 84/300: Train Loss: 108.7435 | Valutazione saltata | Epoch Time: 3.4s
+2025-11-26 17:37:57,993 - INFO - Epoch 85/300: Train Loss: 107.6109 | Val MAE: nan | Val RMSE: nan | Epoch Time: 3.4s | Val Time: 1.5s
+2025-11-26 17:38:07,080 - INFO - Epoch 86/300: Train Loss: 108.7217 | Valutazione saltata | Epoch Time: 3.3s
+2025-11-26 17:38:16,489 - INFO - Epoch 87/300: Train Loss: 106.9879 | Valutazione saltata | Epoch Time: 3.4s
+2025-11-26 17:38:26,150 - INFO - Epoch 88/300: Train Loss: 104.7535 | Valutazione saltata | Epoch Time: 3.8s
+2025-11-26 17:38:35,903 - INFO - Epoch 89/300: Train Loss: 108.1018 | Valutazione saltata | Epoch Time: 3.5s
+2025-11-26 17:38:46,740 - INFO - Epoch 90/300: Train Loss: 104.5697 | Val MAE: nan | Val RMSE: nan | Epoch Time: 3.4s | Val Time: 1.5s
+2025-11-26 17:38:56,581 - INFO - Epoch 91/300: Train Loss: 104.6489 | Valutazione saltata | Epoch Time: 3.4s
+2025-11-26 17:39:05,784 - INFO - Epoch 92/300: Train Loss: 106.9825 | Valutazione saltata | Epoch Time: 3.4s
+2025-11-26 17:39:14,736 - INFO - Epoch 93/300: Train Loss: 105.7982 | Valutazione saltata | Epoch Time: 3.4s
+2025-11-26 17:39:24,442 - INFO - Epoch 94/300: Train Loss: 105.8778 | Valutazione saltata | Epoch Time: 3.4s
+2025-11-26 17:39:35,486 - INFO - Epoch 95/300: Train Loss: 105.5204 | Val MAE: nan | Val RMSE: nan | Epoch Time: 3.3s | Val Time: 1.6s
+2025-11-26 17:39:44,729 - INFO - Epoch 96/300: Train Loss: 108.3240 | Valutazione saltata | Epoch Time: 3.4s
+2025-11-26 17:39:53,947 - INFO - Epoch 97/300: Train Loss: 107.2180 | Valutazione saltata | Epoch Time: 3.3s
+2025-11-26 17:40:02,960 - INFO - Epoch 98/300: Train Loss: 104.3541 | Valutazione saltata | Epoch Time: 3.4s
+2025-11-26 17:40:12,638 - INFO - Epoch 99/300: Train Loss: 107.5342 | Valutazione saltata | Epoch Time: 3.4s
+2025-11-26 17:40:23,175 - INFO - Epoch 100/300: Train Loss: 106.3925 | Val MAE: nan | Val RMSE: nan | Epoch Time: 3.2s | Val Time: 1.6s
+2025-11-26 17:40:32,554 - INFO - Epoch 101/300: Train Loss: 106.0057 | Valutazione saltata | Epoch Time: 3.5s
+2025-11-26 17:40:41,681 - INFO - Epoch 102/300: Train Loss: 106.7820 | Valutazione saltata | Epoch Time: 3.1s
+2025-11-26 17:40:50,998 - INFO - Epoch 103/300: Train Loss: 106.4600 | Valutazione saltata | Epoch Time: 3.2s
+2025-11-26 17:41:00,032 - INFO - Epoch 104/300: Train Loss: 107.0656 | Valutazione saltata | Epoch Time: 3.2s
+2025-11-26 17:41:10,664 - INFO - Epoch 105/300: Train Loss: 107.3126 | Val MAE: nan | Val RMSE: nan | Epoch Time: 3.1s | Val Time: 1.5s
+2025-11-26 17:41:19,692 - INFO - Epoch 106/300: Train Loss: 105.5832 | Valutazione saltata | Epoch Time: 3.1s
+2025-11-26 17:41:28,522 - INFO - Epoch 107/300: Train Loss: 106.8493 | Valutazione saltata | Epoch Time: 3.2s
+2025-11-26 17:41:38,080 - INFO - Epoch 108/300: Train Loss: 109.2202 | Valutazione saltata | Epoch Time: 3.3s
+2025-11-26 17:41:47,118 - INFO - Epoch 109/300: Train Loss: 106.6386 | Valutazione saltata | Epoch Time: 3.2s
+2025-11-26 17:41:58,287 - INFO - Epoch 110/300: Train Loss: 106.1979 | Val MAE: nan | Val RMSE: nan | Epoch Time: 3.3s | Val Time: 1.6s
+2025-11-26 17:42:07,394 - INFO - Epoch 111/300: Train Loss: 105.8606 | Valutazione saltata | Epoch Time: 3.2s
+2025-11-26 17:42:16,935 - INFO - Epoch 112/300: Train Loss: 107.9431 | Valutazione saltata | Epoch Time: 3.3s
+2025-11-26 17:42:26,683 - INFO - Epoch 113/300: Train Loss: 104.6572 | Valutazione saltata | Epoch Time: 3.5s
+2025-11-26 17:42:36,287 - INFO - Epoch 114/300: Train Loss: 106.5278 | Valutazione saltata | Epoch Time: 3.4s
+2025-11-26 17:42:47,850 - INFO - Epoch 115/300: Train Loss: 106.0313 | Val MAE: nan | Val RMSE: nan | Epoch Time: 3.4s | Val Time: 1.5s
+2025-11-26 17:42:57,328 - INFO - Epoch 116/300: Train Loss: 105.3646 | Valutazione saltata | Epoch Time: 3.4s
+2025-11-26 17:43:06,444 - INFO - Epoch 117/300: Train Loss: 106.9005 | Valutazione saltata | Epoch Time: 3.5s
+2025-11-26 17:43:15,890 - INFO - Epoch 118/300: Train Loss: 105.2354 | Valutazione saltata | Epoch Time: 3.3s
+2025-11-26 17:43:25,061 - INFO - Epoch 119/300: Train Loss: 106.3671 | Valutazione saltata | Epoch Time: 3.2s
+2025-11-26 17:43:36,103 - INFO - Epoch 120/300: Train Loss: 109.5616 | Val MAE: nan | Val RMSE: nan | Epoch Time: 3.4s | Val Time: 1.6s
+2025-11-26 17:43:42,624 - INFO - ⛔ Early Stopping! Nessun miglioramento del MAE per 120 epoche. Best MAE: inf (Epoch 0)
+2025-11-26 17:43:42,624 - INFO - Addestramento completato. Best MAE: inf (Epoch 0)
+2025-11-26 17:44:23,562 - INFO - ✅ Early Stopping ATTIVO con pazienza=120 epoche.
+2025-11-26 17:44:23,563 - INFO - Caricamento checkpoint 'last.pth' da: ./output_final/last.pth
+2025-11-26 17:44:29,533 - WARNING - Errore nel caricamento di 'last.pth', si riparte da zero. Errore: loaded state dict contains a parameter group that doesn't match the size of optimizer's group
+2025-11-26 17:44:29,533 - INFO - Inizio addestramento da epoch 1 a 250
+2025-11-26 17:44:33,629 - INFO - Epoch 1/250: Train Loss: 2.5649 | Valutazione saltata | Epoch Time: 4.1s
+2025-11-26 17:44:41,950 - INFO - Epoch 2/250: Train Loss: 2.5649 | Valutazione saltata | Epoch Time: 3.1s
+2025-11-26 17:44:49,600 - INFO - Epoch 3/250: Train Loss: 2.5649 | Valutazione saltata | Epoch Time: 3.1s
+2025-11-26 17:44:57,224 - INFO - Epoch 4/250: Train Loss: 2.5649 | Valutazione saltata | Epoch Time: 3.1s
+2025-11-26 18:03:49,479 - INFO - ✅ Early Stopping ATTIVO (pazienza=120, stage=3)
+2025-11-26 18:03:49,480 - INFO - Caricamento checkpoint 'last.pth'...
+2025-11-26 18:03:53,407 - WARNING - Errore caricamento last.pth: loaded state dict contains a parameter group that doesn't match the size of optimizer's group
+2025-11-26 18:03:53,408 - INFO - Start training Stage 3 from 1 to 300
+2025-11-26 18:04:45,291 - INFO - Epoch 5: Train Loss 105.5825 | Val MAE 433.31 RMSE 559.19 | Time: Train 3.6s Val 2.3s
+2025-11-26 18:04:58,084 - INFO - 💾 Best checkpoint salvato: ./output_final/stage1_best.pth (MAE 433.31)
+2025-11-26 18:05:45,827 - INFO - Epoch 10: Train Loss 107.7197 | Val MAE 433.31 RMSE 559.19 | Time: Train 3.8s Val 1.7s
+2025-11-26 18:06:39,150 - INFO - Epoch 15: Train Loss 110.4631 | Val MAE 433.31 RMSE 559.19 | Time: Train 4.4s Val 1.4s
+2025-11-26 18:07:30,613 - INFO - Epoch 20: Train Loss 108.7283 | Val MAE 433.31 RMSE 559.19 | Time: Train 4.4s Val 1.4s
+2025-11-26 18:08:23,977 - INFO - Epoch 25: Train Loss 107.4329 | Val MAE 433.31 RMSE 559.19 | Time: Train 4.7s Val 1.7s
+2025-11-26 18:09:16,362 - INFO - Epoch 30: Train Loss 105.9966 | Val MAE 433.31 RMSE 559.19 | Time: Train 4.1s Val 1.5s
+2025-11-26 18:10:08,560 - INFO - Epoch 35: Train Loss 106.4693 | Val MAE 433.31 RMSE 559.19 | Time: Train 4.3s Val 1.3s
+2025-11-26 18:11:02,007 - INFO - Epoch 40: Train Loss 105.8754 | Val MAE 433.31 RMSE 559.19 | Time: Train 4.4s Val 1.5s
+2025-11-26 18:11:53,899 - INFO - Epoch 45: Train Loss 106.2049 | Val MAE 433.31 RMSE 559.19 | Time: Train 3.9s Val 1.8s
+2025-11-26 18:12:47,647 - INFO - Epoch 50: Train Loss 106.3617 | Val MAE 433.31 RMSE 559.19 | Time: Train 3.6s Val 2.1s
+2025-11-26 18:13:41,881 - INFO - Epoch 55: Train Loss 106.7740 | Val MAE 433.31 RMSE 559.19 | Time: Train 4.6s Val 1.3s
+2025-11-26 18:14:35,118 - INFO - Epoch 60: Train Loss 105.9481 | Val MAE 433.31 RMSE 559.19 | Time: Train 4.7s Val 1.7s
+2025-11-26 18:15:28,127 - INFO - Epoch 65: Train Loss 106.7585 | Val MAE 433.31 RMSE 559.19 | Time: Train 4.3s Val 1.5s
+2025-11-26 18:16:19,054 - INFO - Epoch 70: Train Loss 107.5174 | Val MAE 433.31 RMSE 559.19 | Time: Train 3.2s Val 2.5s
+2025-11-26 18:17:12,703 - INFO - Epoch 75: Train Loss 106.8885 | Val MAE 433.31 RMSE 559.19 | Time: Train 3.5s Val 2.7s
+2025-11-26 18:18:06,145 - INFO - Epoch 80: Train Loss 105.9290 | Val MAE 433.31 RMSE 559.19 | Time: Train 3.4s Val 3.2s
+2025-11-26 18:18:59,770 - INFO - Epoch 85: Train Loss 107.6109 | Val MAE 433.31 RMSE 559.19 | Time: Train 3.2s Val 2.5s
+2025-11-26 18:19:51,948 - INFO - Epoch 90: Train Loss 104.5697 | Val MAE 433.31 RMSE 559.19 | Time: Train 3.2s Val 2.3s
+2025-11-26 18:20:46,157 - INFO - Epoch 95: Train Loss 105.5204 | Val MAE 433.31 RMSE 559.19 | Time: Train 3.5s Val 2.9s
+2025-11-26 18:21:39,555 - INFO - Epoch 100: Train Loss 106.3925 | Val MAE 433.31 RMSE 559.19 | Time: Train 3.3s Val 2.9s
+2025-11-26 18:22:29,439 - INFO - Epoch 105: Train Loss 107.3126 | Val MAE 433.31 RMSE 559.19 | Time: Train 4.5s Val 1.4s
+2025-11-26 18:23:19,866 - INFO - Epoch 110: Train Loss 106.1979 | Val MAE 433.31 RMSE 559.19 | Time: Train 3.7s Val 1.7s
+2025-11-26 18:24:13,713 - INFO - Epoch 115: Train Loss 106.0313 | Val MAE 433.31 RMSE 559.19 | Time: Train 3.7s Val 1.4s
+2025-11-26 18:25:07,741 - INFO - Epoch 120: Train Loss 109.5616 | Val MAE 433.31 RMSE 559.19 | Time: Train 4.7s Val 1.7s
+2025-11-26 18:25:57,137 - INFO - Epoch 125: Train Loss 104.1412 | Val MAE 433.31 RMSE 559.19 | Time: Train 3.6s Val 1.6s
+2025-11-26 18:26:03,099 - INFO - ⛔ Early Stopping dopo 120 epoche.
