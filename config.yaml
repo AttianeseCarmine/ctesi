@@ -113,8 +113,8 @@ train_base:
 
 
 eval:
-  batch_size: 8
-  num_workers: 4
+  batch_size: 16    # 8
+  num_workers: 8    # 4
   sliding_window: false
 
 
@@ -122,8 +122,8 @@ eval:
 # STAGE 1 (ZIP)
 # =========================================================
 train_stage1:
-  batch_size: 8
-  num_workers: 4
+  batch_size: 16  # 8
+  num_workers: 8 # 4
   num_epochs: 300
 
   lr: 5.0e-5
