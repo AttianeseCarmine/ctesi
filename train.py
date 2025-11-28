@@ -70,6 +70,7 @@ def main(args, cfg: Dict):
         
         # Parametri di Gating
         pi_thresh=cfg['model'].get('pi_thresh', 0.5),
+        pi_soft_min=cfg['model'].get('pi_soft_min', 0.0),
         gate_mode=cfg['model'].get('gate_mode', 'multiply'),
         
         # Parametri LoRA/VPT

@@ -56,6 +56,7 @@ class ZIP_CLIP_EBC_Model(nn.Module):
 
         # Parametri di Gating
         pi_thresh: float = 0.5,
+        pi_soft_min: float = 0.0,
         gate_mode: str = "multiply",
 
         # Parametri Backbone (ViT, LoRA, etc)
@@ -95,6 +96,7 @@ class ZIP_CLIP_EBC_Model(nn.Module):
         self.weight_name = weight_name
         self.text_prompts = text_prompts
         self.pi_thresh = pi_thresh
+        self.pi_soft_min = pi_soft_min
         self.gate_mode = gate_mode
 
         # Registra i bin EBC (per il calcolo della densità finale)
@@ -182,7 +184,7 @@ class ZIP_CLIP_EBC_Model(nn.Module):
 
         if self.training:
             # SOFT GATING: Usa la probabilità come peso (differenziabile)
-            mask = pi_not_zero_prob
+            mask = (1.0 - self.pi_soft_min) * pi_not_zero_prob + self.pi_soft_min
         else:
             # HARD GATING: Usa la soglia netta solo per validazione/test
             mask = (pi_not_zero_prob > self.pi_thresh).float()
