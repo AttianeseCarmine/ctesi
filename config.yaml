@@ -1,12 +1,12 @@
 # =========================================================
-# CONFIGURAZIONE VI MIGLIORATA (ZIP + EBC)
+# CONFIGURAZIONE VI MIGLIORATA (ZIP + EBC) - FIX STABILITY
 # =========================================================
 dataset:
   name: "sha"
   train_split: "train"
   eval_split: "val"
 
-  # === DATA AUGMENTATION MIGLIORATA ===
+  # === DATA AUGMENTATION ===
   input_size: 256
   random_crop: true
   random_resize: true
@@ -32,29 +32,30 @@ dataset:
 model:
   name: "ViT-B-16"
   weight_name: "openai"
-  pi_soft: true       # Assicurati sia true
-  pi_soft_min: 0.1    # Alza questo valore (es. da 0.05 a 0.1 o 0.2)
+  
+  # === FIX GATING ===
+  pi_soft: true       
+  pi_soft_min: 0.2    # AUMENTATO (era 0.1): Impedisce alla maschera di andare a zero assoluto in training
+  
   input_size: 256
   block_size: 16
   num_vpt: 0
   vpt_drop: 0.0
   quick_gelu: true
   
-  # === PARAMETRI ZIP MIGLIORATI (DERIVATI DA CONFIG A) ===
-  zip_lambda_max: 3.0
+  # === PARAMETRI ZIP ===
+  zip_lambda_max: 5.0 # AUMENTATO (era 3.0): Dà più "respiro" alla regressione di Poisson
   gate_mode: "multiply"
 
-  # Soft π
-  pi_thresh: 0.12
-  pi_soft: true
-  pi_soft_min: 0.05
+  # Soft π Thresholding
+  pi_thresh: 0.5      # AUMENTATO (era 0.12): In validazione, siamo più severi nel dire "è vuoto" solo se siamo sicuri.
   pi_soft_power: 1.0
 
   # λ regularization
   lambda_target: 1.0
-  lambda_weight: 1.8e-3
+  lambda_weight: 1.0e-3 # LEGGERMENTE RIDOTTO (era 1.8e-3)
 
-  # === BIN (ZIP + EBC) ===
+  # === BIN (ZIP + EBC) - INVARIATI ===
   bins: [[0, 0], [1, 1], [2, 2], [3, 3], [4, 4], [5, 5],
          [6, 6], [7, 7], [8, 8], [9, 9], [10, 10],
          [11, 12], [13, 14], [15, 9999]]
@@ -90,18 +91,18 @@ loss:
   name: "quad_loss"
   reg_loss: "zipnll"
 
-  # nuovi pesi bilanciati (versione migliorata)
-  weight_cls: 2.0      # EBC classification
-  weight_reg: 2.0      # ZIP regression
-  weight_aux: 0.35     # Count L1
+  # === BILANCIAMENTO LOSS ===
+  weight_cls: 1.0      # RIDOTTO (era 2.0): Per non sopraffare la ZIP loss all'inizio
+  weight_reg: 1.0      # RIDOTTO (era 2.0): Per stabilità numerica (evita NaN)
+  weight_aux: 0.1      # RIDOTTO (era 0.35): Aux loss meno aggressiva
 
   # BCE PI loss
   pi_loss_weight_bce: 1.0
 
-  # Count-Consistency Loss (derivata da P2R)
+  # Count-Consistency Loss
   count_consistency:
     enable: true
-    weight: 0.15
+    weight: 0.1
 
 
 # =========================================================
@@ -115,29 +116,30 @@ train_base:
 
 
 eval:
-  batch_size: 16    # 8
-  num_workers: 8    # 4
+  batch_size: 16
+  num_workers: 8
   sliding_window: false
 
 
 # =========================================================
-# STAGE 1 (ZIP)
+# STAGE 1 (ZIP) - CRITICO PER IL FIX
 # =========================================================
 train_stage1:
-  batch_size: 16  # 8
-  num_workers: 8 # 4
-  num_epochs: 30
+  batch_size: 16
+  num_workers: 8
+  num_epochs: 1300      # AUMENTATO: Dai più tempo per convergere col LR basso
 
-  lr: 5.0e-5
-  lr_backbone: 1.0e-6
+  # === FIX INSTABILITÀ ===
+  lr: 1.0e-5          # Basso e stabile
+  lr_backbone: 1.0e-6 # Molto basso per il backbone
   weight_decay: 1.0e-4
   optimizer: "adamw"
 
   scheduler: "cosine"
-  warmup_epochs: 10
-  early_stopping_patience: 120
-  clip_grad_norm: 0.5
-
+  warmup_epochs: 5
+  early_stopping_patience: 1000
+  
+  clip_grad_norm: 2.0 # AUMENTATO DRASICAMENTE (era 0.5/1.0).
 
 # =========================================================
 # STAGE 2 (EBC)
@@ -145,10 +147,10 @@ train_stage1:
 train_stage2:
   batch_size: 16
   num_workers: 4
-  num_epochs: 30
+  num_epochs: 1300
 
-  lr: 5.0e-5
-  lr_backbone: 1.0e-5
+  lr: 2.0e-5          # RIDOTTO (era 5.0e-5)
+  lr_backbone: 1.0e-6 # RIDOTTO
   optimizer: "adamw"
 
   weight_decay: 1.0e-4
@@ -165,15 +167,15 @@ train_stage2:
 train_stage3:
   batch_size: 8
   num_workers: 4
-  num_epochs: 30
+  num_epochs: 1300
 
-  lr: 1.5e-4
-  lr_backbone: 1.5e-5
+  lr: 1.0e-5          # RIDOTTO (era 1.5e-4): 1.5e-4 era ENORME per il fine-tuning!
+  lr_backbone: 1.0e-6
   optimizer: "adamw"
 
   weight_decay: 1.0e-4
   scheduler: "cosine"
-  warmup_epochs: 10
+  warmup_epochs: 5
 
   early_stopping_patience: 120
   clip_grad_norm: 1.0

@@ -168,20 +168,26 @@ class ZIP_CLIP_EBC_Model(nn.Module):
 
     def forward(self, image: Tensor):
         # 1. Backbone condiviso
-        image_feats = self.backbone(image)  # [B, C_feat=768, H, W]
+        image_feats = self.backbone(image)
         
         # --- MODULO A: Conv-ZIP (zip_head) ---
-        zip_outputs = self.zip_head(image_feats.float()) # Forza float32 per stabilità BNorm
-        pi_logit_map = zip_outputs["logit_pi_maps"]   # [B, 2, H, W]
-        lambda_map_zip = zip_outputs["lambda_maps"] # [B, 1, H, W]
+        zip_outputs = self.zip_head(image_feats.float())
+        pi_logit_map = zip_outputs["logit_pi_maps"]
+        lambda_map_zip = zip_outputs["lambda_maps"]
 
-        # 3. Crea la maschera di gating
-        with torch.no_grad():
-            pi_softmax = pi_logit_map.softmax(dim=1)
-            pi_not_zero_prob = pi_softmax[:, 1:2]
+        # 3. Gating Logica Corretta (Soft in Train, Hard in Eval)
+        # Rimuovi torch.no_grad() per permettere il flusso dei gradienti!
+        pi_softmax = pi_logit_map.softmax(dim=1)
+        pi_not_zero_prob = pi_softmax[:, 1:2]  # Probabilità che NON sia vuoto
+
+        if self.training:
+            # SOFT GATING: Usa la probabilità come peso (differenziabile)
+            mask = pi_not_zero_prob
+        else:
+            # HARD GATING: Usa la soglia netta solo per validazione/test
             mask = (pi_not_zero_prob > self.pi_thresh).float()
 
-        # 4. Applica il Gating alle feature
+        # 4. Applica il Gating
         if self.gate_mode == "multiply":
             gated_feats = image_feats * mask
         else:
