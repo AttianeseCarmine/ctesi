@@ -127,19 +127,19 @@ eval:
 train_stage1:
   batch_size: 16
   num_workers: 8
-  num_epochs: 1300      # AUMENTATO: Dai più tempo per convergere col LR basso
+  num_epochs: 1300
 
-  # === FIX INSTABILITÀ ===
-  lr: 1.0e-5          # Basso e stabile
-  lr_backbone: 1.0e-6 # Molto basso per il backbone
+  # ✅ FIX: LR ancora più bassi per stabilità iniziale
+  lr: 5.0e-6          # Era 1e-5, dimezzato
+  lr_backbone: 1.0e-7 # Era 1e-6, diviso per 10
+  
   weight_decay: 1.0e-4
   optimizer: "adamw"
-
   scheduler: "cosine"
-  warmup_epochs: 5
-  early_stopping_patience: 1000
+  warmup_epochs: 10    # ✅ Aumenta warmup
   
-  clip_grad_norm: 2.0 # AUMENTATO DRASICAMENTE (era 0.5/1.0).
+  early_stopping_patience: 1000
+  clip_grad_norm: 1.0  # ✅ Abbassa (era 2.0)
 
 # =========================================================
 # STAGE 2 (EBC)

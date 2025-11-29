@@ -48,53 +48,41 @@ def evaluate(
     pred_counts = []
     gt_counts = []
     
-    # Usa tqdm solo se non è disabilitato
     pbar = tqdm(data_loader, desc=desc, leave=False)
     
     with torch.no_grad():
         for batch in pbar:
-            # Gestione flessibile del batch (dict o tupla)
             if isinstance(batch, dict):
                 images = batch['image'].to(device)
                 gt_points = batch['points']
             else:
-                # Fallback per dataset standard (img, points, density)
                 images, gt_points_raw, _ = batch
                 images = images.to(device)
                 gt_points = gt_points_raw
 
-            # Calcola Ground Truth dai punti
             batch_gt = [len(p) for p in gt_points]
             gt_counts.extend(batch_gt)
 
-            # Padding per ViT
+            # Padding
             images, _, _ = pad_to_multiple(images, k=16)
 
-            # --- LOGICA DI PREDIZIONE PER STADIO ---
+            # ✅ FIX: Gestisci il dizionario correttamente
             if stage == 1:
-                # STAGE 1: Valuta solo ZIP (Backbone + ConvZIPHead)
-                # 1. Estrai features
-                features = model.backbone(images)
-                # 2. Passa alla zip_head
-                zip_out = model.zip_head(features.float())
+                # STAGE 1: Solo ZIP
+                outputs = model(images)
+                pi_logits = outputs["pred_logit_pi_map"]
+                lambda_map = outputs["pred_lambda_map"]
                 
-                # 3. Calcola densità: pi * lambda
-                pi_logits = zip_out["logit_pi_maps"] # [B, 2, H, W]
-                lambda_map = zip_out["lambda_maps"]  # [B, 1, H, W]
-                
-                pi_prob = F.softmax(pi_logits, dim=1)[:, 1:2, :, :] # Probabilità classe "non-vuoto"
-                
-                # Predizione = probabilità * intensità
+                pi_prob = F.softmax(pi_logits, dim=1)[:, 1:2, :, :]
                 pred_map = pi_prob * lambda_map
                 
             else:
-                # STAGE 2/3: Valuta output completo (EBC filtrato da ZIP)
-                pred_map = model(images)
+                # STAGE 2/3: Output completo
+                outputs = model(images)
+                pred_map = outputs["pred_den_map"]  # ✅ Accedi al dizionario
 
-            # Somma per ottenere il conteggio
+            # Somma per il conteggio
             batch_preds = pred_map.sum(dim=(1, 2, 3)).cpu().numpy()
-            
-            # Sostituisci eventuali NaN residui con 0 per non rompere il training
             batch_preds = np.nan_to_num(batch_preds, nan=0.0, posinf=0.0, neginf=0.0)
             pred_counts.extend(batch_preds)
 

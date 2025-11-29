@@ -89,17 +89,21 @@ class QuadLoss(nn.Module):
 
     def forward(
         self,
-        pred_logit_map: Tensor, # EBC Logits
-        pred_den_map: Tensor,   # EBC Density
-        gt_den_map: Tensor,     # GT Density (Full Res)
+        pred_logit_map: Tensor,
+        pred_den_map: Tensor,
+        gt_den_map: Tensor,
         gt_points: List[Tensor],
-        pred_logit_pi_map: Optional[Tensor] = None, # ZIP Logits
-        pred_lambda_map: Optional[Tensor] = None,   # ZIP Lambda
+        pred_logit_pi_map: Optional[Tensor] = None,
+        pred_lambda_map: Optional[Tensor] = None,
     ) -> Tuple[Tensor, Dict[str, Tensor]]:
         
-        # --- 0. SANITIZZAZIONE GT ---
-        # L'interpolazione bilineare puﾃｲ creare valori negativi (es. -1e-5).
-        # Clampiamo a 0 per evitare errori in lgamma() o log().
+        # ✅ DEBUG 1: Stampa PRIMA di tutto
+        print(f"🔍 DEBUG LOSS - INPUT:")
+        print(f"  gt_den_map shape: {gt_den_map.shape}")
+        print(f"  pred_lambda_map shape: {pred_lambda_map.shape if pred_lambda_map is not None else 'None'}")
+        print(f"  pred_den_map shape: {pred_den_map.shape}")
+        
+        # 0. Sanitizzazione GT
         gt_den_map = torch.clamp(gt_den_map, min=0.0)
 
         # Reshape GT in blocchi
@@ -113,16 +117,24 @@ class QuadLoss(nn.Module):
         lambda_loss = torch.tensor(0.0, device=pred_den_map.device)
         cnt_loss = torch.tensor(0.0, device=pred_den_map.device)
 
-        # --- 1. LOSS ZIP (PI-Head + Lambda-Head) ---
+        # --- 1. LOSS ZIP ---
         if self.weight_reg > 0 and pred_logit_pi_map is not None and pred_lambda_map is not None:
             
-            # A. RIMOZIONE NAN/INF (Fondamentale per non crashare)
+            # ✅ DEBUG 2: Stampa DOPO il reshape
+            print(f"🔍 DEBUG LOSS - DOPO RESHAPE:")
+            print(f"  gt_den_map_blocks shape: {gt_den_map_blocks.shape}")
+            print(f"  pred_logit_pi_map: min={pred_logit_pi_map.min():.4f}, max={pred_logit_pi_map.max():.4f}, has_nan={torch.isnan(pred_logit_pi_map).any()}")
+            print(f"  pred_lambda_map: min={pred_lambda_map.min():.4f}, max={pred_lambda_map.max():.4f}, has_nan={torch.isnan(pred_lambda_map).any()}")
+            print(f"  gt_den_map_blocks: min={gt_den_map_blocks.min():.4f}, max={gt_den_map_blocks.max():.4f}, has_nan={torch.isnan(gt_den_map_blocks).any()}")
+            
+            # A. RIMOZIONE NAN/INF
             if torch.isnan(pred_logit_pi_map).any() or torch.isinf(pred_logit_pi_map).any():
+                print("⚠️ pred_logit_pi_map ha NaN/Inf! Sostituisco con 0.")
                 pred_logit_pi_map = torch.nan_to_num(pred_logit_pi_map, nan=0.0, posinf=10.0, neginf=-10.0)
             
             if torch.isnan(pred_lambda_map).any() or torch.isinf(pred_lambda_map).any():
-                # Lambda NaN -> 1.0 (valore neutro)
-                pred_lambda_map = torch.nan_to_num(pred_lambda_map, nan=1.0, posinf=100.0, neginf=0.0)
+                print("⚠️ pred_lambda_map ha NaN/Inf! Sostituisco con 1.0.")
+                pred_lambda_map = torch.nan_to_num(pred_lambda_map, nan=1.0, posinf=100.0, neginf=0.1)
 
             # B. CLAMPING DI SICUREZZA
             pi_logits_stable = torch.clamp(pred_logit_pi_map.float(), -10, 10)

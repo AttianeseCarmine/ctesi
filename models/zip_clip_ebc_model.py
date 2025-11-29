@@ -169,53 +169,60 @@ class ZIP_CLIP_EBC_Model(nn.Module):
 
 
     def forward(self, image: Tensor):
-        # 1. Backbone condiviso
+        """Forward pass del modello ibrido."""
+        
+        # ✅ DEBUG 1: Input
+        if torch.isnan(image).any():
+            print("💀 INPUT IMAGE ha NaN!")
+            image = torch.nan_to_num(image, nan=0.0)
+        
+        # 1. Backbone
         image_feats = self.backbone(image)
         
-        # --- MODULO A: Conv-ZIP (zip_head) ---
+        # ✅ DEBUG 2: Backbone output
+        if torch.isnan(image_feats).any() or torch.isinf(image_feats).any():
+            print("💀 BACKBONE OUTPUT ha NaN/Inf!")
+            print(f"  image_feats: min={image_feats.min()}, max={image_feats.max()}")
+            image_feats = torch.nan_to_num(image_feats, nan=0.0, posinf=10.0, neginf=-10.0)
+        
+        # 2. ZIP Head
         zip_outputs = self.zip_head(image_feats.float())
         pi_logit_map = zip_outputs["logit_pi_maps"]
         lambda_map_zip = zip_outputs["lambda_maps"]
 
-        # 3. Gating Logica Corretta (Soft in Train, Hard in Eval)
-        # Rimuovi torch.no_grad() per permettere il flusso dei gradienti!
+        # 3. Gating
         pi_softmax = pi_logit_map.softmax(dim=1)
-        pi_not_zero_prob = pi_softmax[:, 1:2]  # Probabilità che NON sia vuoto
+        pi_not_zero_prob = pi_softmax[:, 1:2]
 
         if self.training:
-            # SOFT GATING: Usa la probabilità come peso (differenziabile)
             mask = (1.0 - self.pi_soft_min) * pi_not_zero_prob + self.pi_soft_min
         else:
-            # HARD GATING: Usa la soglia netta solo per validazione/test
             mask = (pi_not_zero_prob > self.pi_thresh).float()
 
-        # 4. Applica il Gating
+        # 4. Applica Gating
         if self.gate_mode == "multiply":
             gated_feats = image_feats * mask
         else:
             gated_feats = image_feats
 
-        # --- MODULO B: CLIP-EBC (ebc_head) ---
+        # --- MODULO B: CLIP-EBC ---
         if image.device != self.lambda_text_feats.device:
-             self.lambda_text_feats = self.lambda_text_feats.to(image.device)
-             
-        lambda_logit_map_ebc = self.ebc_head(gated_feats, self.lambda_text_feats) # [B, 13, H, W]
+            self.lambda_text_feats = self.lambda_text_feats.to(image.device)
+            
+        lambda_logit_map_ebc = self.ebc_head(gated_feats, self.lambda_text_feats)
 
-        # 6. Calcola la mappa di densità (basata solo su EBC)
+        # 6. Calcola density map
         if self.ebc_bin_centers.device != lambda_logit_map_ebc.device:
             self.ebc_bin_centers = self.ebc_bin_centers.to(lambda_logit_map_ebc.device)
             
         lambda_map_ebc = (lambda_logit_map_ebc.float().softmax(dim=1) * self.ebc_bin_centers).sum(dim=1, keepdim=True)
         
-        den_map = lambda_map_ebc
+        den_map = lambda_map_ebc * mask  # ✅ Applica mask SEMPRE
         
-        if self.training:
-            # Restituiamo tutto ciò che serve alla QuadLoss
-            return {
-                "pred_logit_map": lambda_logit_map_ebc, # Per EBC loss (cls)
-                "pred_den_map": den_map,               # Per Conteggio (aux)
-                "pred_logit_pi_map": pi_logit_map,     # Per ZIP loss (reg)
-                "pred_lambda_map": lambda_map_zip      # Per ZIP loss (reg)
-            }
-        else:
-            return den_map * mask
+        # ✅ FIX: Ritorna SEMPRE un dizionario
+        return {
+            "pred_logit_map": lambda_logit_map_ebc,
+            "pred_den_map": den_map,
+            "pred_logit_pi_map": pi_logit_map,
+            "pred_lambda_map": lambda_map_zip
+        }

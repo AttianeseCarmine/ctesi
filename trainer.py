@@ -118,27 +118,38 @@ class Trainer:
                 images = images.to(self.device)
                 gt_map = gt_map.to(self.device)
 
+            # ✅ VERIFICA BATCH
+            if torch.isnan(images).any():
+                self.logger.warning("💀 BATCH con immagini NaN! Skipping.")
+                continue
+            if torch.isnan(gt_map).any():
+                self.logger.warning("💀 BATCH con GT NaN! Skipping.")
+                continue
             self.optimizer.zero_grad()
-            outputs = self.model(images)
+            outputs = self.model(images)  # ✅ Ora ritorna sempre un dizionario
 
-            # Fix dimensioni: Le predizioni sono H/16, W/16.
-            # La loss di solito gestisce il downsampling interno o l'upsampling.
-            # Assicuriamoci che le mappe per la loss siano allineate.
-            
+            # ✅ FIX: Accedi agli elementi del dizionario
             loss, _ = self.criterion(
-                pred_logit_map=outputs.get("pred_logit_map"),
-                pred_den_map=outputs.get("pred_den_map"),
+                pred_logit_map=outputs["pred_logit_map"],      # ✅
+                pred_den_map=outputs["pred_den_map"],          # ✅
                 gt_den_map=gt_map, 
                 gt_points=gt_points,
-                pred_logit_pi_map=outputs.get("pred_logit_pi_map"),
-                pred_lambda_map=outputs.get("pred_lambda_map")
+                pred_logit_pi_map=outputs["pred_logit_pi_map"], # ✅
+                pred_lambda_map=outputs["pred_lambda_map"]      # ✅
             )
+
 
             if torch.isnan(loss):
                 self.logger.warning("Loss NaN! Skipping batch.")
                 continue
 
             loss.backward()
+            total_norm = 0
+            for p in self.model.parameters():
+                if p.grad is not None:
+                    total_norm += p.grad.data.norm(2).item() ** 2
+            total_norm = total_norm ** 0.5
+            print(f"  Gradient norm: {total_norm:.4f}")
             if self.clip_grad_norm:
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.clip_grad_norm)
             self.optimizer.step()
