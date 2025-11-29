@@ -117,7 +117,19 @@ class Trainer:
                 images, gt_points, gt_map = batch
                 images = images.to(self.device)
                 gt_map = gt_map.to(self.device)
-
+            # Il modello predice 16x16 blocchi. Il GT è 256x256.
+            # Dobbiamo sommare la densità in ogni blocco 16x16 per ottenere il conteggio per blocco.
+            # Kernel size 16, Stride 16. divisor_override=1 fa la somma invece della media.
+            with torch.no_grad():
+                # Assumiamo input_size=256 e patch_size=16 -> fattore di riduzione 16
+                # Se la gt_map è [B, 1, 256, 256], il risultato sarà [B, 1, 16, 16]
+                kernel_size = 16 
+                gt_den_map_blocks = F.avg_pool2d(
+                    gt_map, 
+                    kernel_size=kernel_size, 
+                    stride=kernel_size, 
+                    divisor_override=1
+                )
             # ✅ VERIFICA BATCH
             if torch.isnan(images).any():
                 self.logger.warning("💀 BATCH con immagini NaN! Skipping.")
@@ -130,12 +142,12 @@ class Trainer:
 
             # ✅ FIX: Accedi agli elementi del dizionario
             loss, _ = self.criterion(
-                pred_logit_map=outputs["pred_logit_map"],      # ✅
-                pred_den_map=outputs["pred_den_map"],          # ✅
-                gt_den_map=gt_map, 
+                pred_logit_map=outputs["pred_logit_map"],
+                pred_den_map=outputs["pred_den_map"],
+                gt_den_map=gt_den_map_blocks,            # <--- CORRETTO: Usa la mappa ridotta
                 gt_points=gt_points,
-                pred_logit_pi_map=outputs["pred_logit_pi_map"], # ✅
-                pred_lambda_map=outputs["pred_lambda_map"]      # ✅
+                pred_logit_pi_map=outputs["pred_logit_pi_map"],
+                pred_lambda_map=outputs["pred_lambda_map"]
             )
 
 

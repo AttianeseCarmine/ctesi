@@ -129,14 +129,13 @@ train_stage1:
   num_workers: 8
   num_epochs: 1300
 
-  # ✅ FIX: LR ancora più bassi per stabilità iniziale
-  lr: 5.0e-6          # Era 1e-5, dimezzato
-  lr_backbone: 1.0e-7 # Era 1e-6, diviso per 10
+  lr: 1.0e-4          # Aumenta a 0.0001 (standard per training from scratch)
+  lr_backbone: 1.0e-6 # Aumenta leggermente anche questo
   
   weight_decay: 1.0e-4
   optimizer: "adamw"
   scheduler: "cosine"
-  warmup_epochs: 10    # ✅ Aumenta warmup
+  warmup_epochs: 5    # ✅ Aumenta warmup
   
   early_stopping_patience: 1000
   clip_grad_norm: 1.0  # ✅ Abbassa (era 2.0)
