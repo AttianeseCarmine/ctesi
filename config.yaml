@@ -35,7 +35,7 @@ model:
   
   # === FIX GATING ===
   pi_soft: true       
-  pi_soft_min: 0.2    # AUMENTATO (era 0.1): Impedisce alla maschera di andare a zero assoluto in training
+  pi_soft_min: 0.02    # AUMENTATO (era 0.1): Impedisce alla maschera di andare a zero assoluto in training
   
   input_size: 256
   block_size: 16
@@ -44,7 +44,7 @@ model:
   quick_gelu: true
   
   # === PARAMETRI ZIP ===
-  zip_lambda_max: 150.0 # Numero massimo di persone presenti in un blocco
+  zip_lambda_max: 13 # Numero massimo di persone presenti in un blocco
   gate_mode: "multiply"
 
   # Soft π Thresholding
@@ -116,7 +116,7 @@ train_base:
 
 
 eval:
-  batch_size: 16
+  batch_size: 1
   num_workers: 8
   sliding_window: false
 
@@ -129,7 +129,7 @@ train_stage1:
   num_workers: 8
   num_epochs: 1300
 
-  lr: 1.0e-4          # Aumenta a 0.0001 (standard per training from scratch)
+  lr: 5.0e-5          # Aumenta a 0.0001 (standard per training from scratch)
   lr_backbone: 1.0e-6 # Aumenta leggermente anche questo
   
   weight_decay: 1.0e-4
