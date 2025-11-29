@@ -44,11 +44,11 @@ model:
   quick_gelu: true
   
   # === PARAMETRI ZIP ===
-  zip_lambda_max: 5.0 # AUMENTATO (era 3.0): Dà più "respiro" alla regressione di Poisson
+  zip_lambda_max: 150.0 # Numero massimo di persone presenti in un blocco
   gate_mode: "multiply"
 
   # Soft π Thresholding
-  pi_thresh: 0.5      # AUMENTATO (era 0.12): In validazione, siamo più severi nel dire "è vuoto" solo se siamo sicuri.
+  pi_thresh: 0.4     # AUMENTATO (era 0.12): In validazione, siamo più severi nel dire "è vuoto" solo se siamo sicuri.
   pi_soft_power: 1.0
 
   # λ regularization

@@ -14,3 +14,6 @@ output/sha/*.pth
 *.pth
 *.pth
 output/sha/*.pth
+logs/train/stage1.log
+logs/train/stage2.log
+output_final/logs/train.log
