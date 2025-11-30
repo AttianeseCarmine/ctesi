@@ -6492,3 +6492,296 @@ Checkpoint per 'best_mae' sarà salvato in: ./output_final/stage1_best.pth
 2025-11-29 21:32:02,899 - WARNING - 💀 BATCH con immagini NaN! Skipping.
 Epoch 68/1300 [Train]:  63%|██████▎   | 12/19 [00:02<00:00,  7.46it/s, loss=68.3656, lr=9.9e-07]Epoch 68/1300 [Train]:  84%|████████▍ | 16/19 [00:02<00:00, 11.75it/s, loss=68.3656, lr=9.9e-07]Epoch 68/1300 [Train]:  84%|████████▍ | 16/19 [00:02<00:00, 11.75it/s, loss=73.0972, lr=9.9e-07]2025-11-29 21:32:03,207 - WARNING - 💀 BATCH con immagini NaN! Skipping.
 Epoch 68/1300 [Train]:  95%|█████████▍| 18/19 [00:02<00:00, 11.52it/s, loss=73.0972, lr=9.9e-07]Epoch 68/1300 [Train]:  95%|█████████▍| 18/19 [00:02<00:00, 11.52it/s, loss=69.0004, lr=9.9e-07]Epoch 68/1300 [Train]: 100%|██████████| 19/19 [00:02<00:00,  6.58it/s, loss=69.0004, lr=9.9e-07]
+🔍 DEBUG LOSS - INPUT:
+  gt_den_map shape: torch.Size([16, 1, 16, 16])
+  pred_lambda_map shape: torch.Size([16, 1, 16, 16])
+  pred_den_map shape: torch.Size([16, 1, 16, 16])
+🔍 DEBUG LOSS - DOPO RESHAPE:
+  gt_den_map_blocks shape: torch.Size([16, 1, 16, 16])
+  pred_logit_pi_map: min=-2.9836, max=2.9857, has_nan=False
+  pred_lambda_map: min=0.1593, max=6.5879, has_nan=False
+  gt_den_map_blocks: min=0.0000, max=71.0000, has_nan=False
+  Gradient norm: 415.1272
+🔍 DEBUG LOSS - INPUT:
+  gt_den_map shape: torch.Size([16, 1, 16, 16])
+  pred_lambda_map shape: torch.Size([16, 1, 16, 16])
+  pred_den_map shape: torch.Size([16, 1, 16, 16])
+🔍 DEBUG LOSS - DOPO RESHAPE:
+  gt_den_map_blocks shape: torch.Size([16, 1, 16, 16])
+  pred_logit_pi_map: min=-2.6871, max=2.6955, has_nan=False
+  pred_lambda_map: min=0.2736, max=4.7499, has_nan=False
+  gt_den_map_blocks: min=0.0000, max=47.0000, has_nan=False
+  Gradient norm: 450.8468
+🔍 DEBUG LOSS - INPUT:
+  gt_den_map shape: torch.Size([16, 1, 16, 16])
+  pred_lambda_map shape: torch.Size([16, 1, 16, 16])
+  pred_den_map shape: torch.Size([16, 1, 16, 16])
+🔍 DEBUG LOSS - DOPO RESHAPE:
+  gt_den_map_blocks shape: torch.Size([16, 1, 16, 16])
+  pred_logit_pi_map: min=-2.7665, max=2.7728, has_nan=False
+  pred_lambda_map: min=0.2093, max=6.5753, has_nan=False
+  gt_den_map_blocks: min=0.0000, max=121.0000, has_nan=False
+  Gradient norm: 505.5996
+🔍 DEBUG LOSS - INPUT:
+  gt_den_map shape: torch.Size([16, 1, 16, 16])
+  pred_lambda_map shape: torch.Size([16, 1, 16, 16])
+  pred_den_map shape: torch.Size([16, 1, 16, 16])
+🔍 DEBUG LOSS - DOPO RESHAPE:
+  gt_den_map_blocks shape: torch.Size([16, 1, 16, 16])
+  pred_logit_pi_map: min=-2.4713, max=2.4627, has_nan=False
+  pred_lambda_map: min=0.2584, max=5.7180, has_nan=False
+  gt_den_map_blocks: min=0.0000, max=21.0000, has_nan=False
+  Gradient norm: 480.6858
+🔍 DEBUG LOSS - INPUT:
+  gt_den_map shape: torch.Size([16, 1, 16, 16])
+  pred_lambda_map shape: torch.Size([16, 1, 16, 16])
+  pred_den_map shape: torch.Size([16, 1, 16, 16])
+🔍 DEBUG LOSS - DOPO RESHAPE:
+  gt_den_map_blocks shape: torch.Size([16, 1, 16, 16])
+  pred_logit_pi_map: min=-3.0015, max=3.0146, has_nan=False
+  pred_lambda_map: min=0.2398, max=6.0086, has_nan=False
+  gt_den_map_blocks: min=0.0000, max=42.0000, has_nan=False
+  Gradient norm: 551.8725
+🔍 DEBUG LOSS - INPUT:
+  gt_den_map shape: torch.Size([16, 1, 16, 16])
+  pred_lambda_map shape: torch.Size([16, 1, 16, 16])
+  pred_den_map shape: torch.Size([16, 1, 16, 16])
+🔍 DEBUG LOSS - DOPO RESHAPE:
+  gt_den_map_blocks shape: torch.Size([16, 1, 16, 16])
+  pred_logit_pi_map: min=-2.7492, max=2.7641, has_nan=False
+  pred_lambda_map: min=0.2195, max=4.5700, has_nan=False
+  gt_den_map_blocks: min=0.0000, max=61.0000, has_nan=False
+  Gradient norm: 527.3896
+🔍 DEBUG LOSS - INPUT:
+  gt_den_map shape: torch.Size([16, 1, 16, 16])
+  pred_lambda_map shape: torch.Size([16, 1, 16, 16])
+  pred_den_map shape: torch.Size([16, 1, 16, 16])
+🔍 DEBUG LOSS - DOPO RESHAPE:
+  gt_den_map_blocks shape: torch.Size([16, 1, 16, 16])
+  pred_logit_pi_map: min=-2.8636, max=2.8558, has_nan=False
+  pred_lambda_map: min=0.2056, max=5.6095, has_nan=False
+  gt_den_map_blocks: min=0.0000, max=43.0000, has_nan=False
+  Gradient norm: 438.6379
+🔍 DEBUG LOSS - INPUT:
+  gt_den_map shape: torch.Size([16, 1, 16, 16])
+  pred_lambda_map shape: torch.Size([16, 1, 16, 16])
+  pred_den_map shape: torch.Size([16, 1, 16, 16])
+🔍 DEBUG LOSS - DOPO RESHAPE:
+  gt_den_map_blocks shape: torch.Size([16, 1, 16, 16])
+  pred_logit_pi_map: min=-2.5871, max=2.5877, has_nan=False
+  pred_lambda_map: min=0.2811, max=6.1399, has_nan=False
+  gt_den_map_blocks: min=0.0000, max=60.0000, has_nan=False
+  Gradient norm: 515.5892
+🔍 DEBUG LOSS - INPUT:
+  gt_den_map shape: torch.Size([12, 1, 16, 16])
+  pred_lambda_map shape: torch.Size([12, 1, 16, 16])
+  pred_den_map shape: torch.Size([12, 1, 16, 16])
+🔍 DEBUG LOSS - DOPO RESHAPE:
+  gt_den_map_blocks shape: torch.Size([12, 1, 16, 16])
+  pred_logit_pi_map: min=-2.8689, max=2.8662, has_nan=False
+  pred_lambda_map: min=0.2184, max=6.6951, has_nan=False
+  gt_den_map_blocks: min=0.0000, max=44.0000, has_nan=False
+  Gradient norm: 582.2448
+Epoch 69/1300 [Train]:   0%|          | 0/19 [00:00<?, ?it/s]2025-11-29 21:32:09,311 - WARNING - 💀 BATCH con immagini NaN! Skipping.
+Epoch 69/1300 [Train]:   5%|▌         | 1/19 [00:01<00:24,  1.36s/it]2025-11-29 21:32:09,332 - WARNING - 💀 BATCH con immagini NaN! Skipping.
+Epoch 69/1300 [Train]:   5%|▌         | 1/19 [00:01<00:24,  1.36s/it, loss=59.1579, lr=9.9e-07]Epoch 69/1300 [Train]:  16%|█▌        | 3/19 [00:01<00:06,  2.44it/s, loss=59.1579, lr=9.9e-07]2025-11-29 21:32:09,465 - WARNING - 💀 BATCH con immagini NaN! Skipping.
+2025-11-29 21:32:09,466 - WARNING - 💀 BATCH con immagini NaN! Skipping.
+Epoch 69/1300 [Train]:  16%|█▌        | 3/19 [00:01<00:06,  2.44it/s, loss=38.0981, lr=9.9e-07]Epoch 69/1300 [Train]:  32%|███▏      | 6/19 [00:01<00:02,  5.47it/s, loss=38.0981, lr=9.9e-07]2025-11-29 21:32:09,585 - WARNING - 💀 BATCH con immagini NaN! Skipping.
+Epoch 69/1300 [Train]:  32%|███▏      | 6/19 [00:01<00:02,  5.47it/s, loss=60.9973, lr=9.9e-07]Epoch 69/1300 [Train]:  42%|████▏     | 8/19 [00:01<00:01,  7.21it/s, loss=60.9973, lr=9.9e-07]Epoch 69/1300 [Train]:  42%|████▏     | 8/19 [00:01<00:01,  7.21it/s, loss=53.4353, lr=9.9e-07]2025-11-29 21:32:09,925 - WARNING - 💀 BATCH con immagini NaN! Skipping.
+Epoch 69/1300 [Train]:  53%|█████▎    | 10/19 [00:01<00:01,  7.81it/s, loss=53.4353, lr=9.9e-07]Epoch 69/1300 [Train]:  53%|█████▎    | 10/19 [00:02<00:01,  7.81it/s, loss=61.7109, lr=9.9e-07]2025-11-29 21:32:10,049 - WARNING - 💀 BATCH con immagini NaN! Skipping.
+Epoch 69/1300 [Train]:  63%|██████▎   | 12/19 [00:02<00:00,  9.42it/s, loss=61.7109, lr=9.9e-07]Epoch 69/1300 [Train]:  63%|██████▎   | 12/19 [00:02<00:00,  9.42it/s, loss=62.0178, lr=9.9e-07]Epoch 69/1300 [Train]:  63%|██████▎   | 12/19 [00:02<00:00,  9.42it/s, loss=52.2117, lr=9.9e-07]Epoch 69/1300 [Train]:  74%|███████▎  | 14/19 [00:02<00:00,  9.01it/s, loss=52.2117, lr=9.9e-07]2025-11-29 21:32:10,292 - WARNING - 💀 BATCH con immagini NaN! Skipping.
+2025-11-29 21:32:10,293 - WARNING - 💀 BATCH con immagini NaN! Skipping.
+Epoch 69/1300 [Train]:  74%|███████▎  | 14/19 [00:02<00:00,  9.01it/s, loss=30.0396, lr=9.9e-07]Epoch 69/1300 [Train]:  89%|████████▉ | 17/19 [00:02<00:00,  9.49it/s, loss=30.0396, lr=9.9e-07]2025-11-29 21:32:10,584 - WARNING - 💀 BATCH con immagini NaN! Skipping.
+2025-11-29 21:32:10,585 - WARNING - 💀 BATCH con immagini NaN! Skipping.
+Epoch 69/1300 [Train]: 100%|██████████| 19/19 [00:02<00:00,  6.78it/s, loss=30.0396, lr=9.9e-07]
+🔍 DEBUG LOSS - INPUT:
+  gt_den_map shape: torch.Size([16, 1, 16, 16])
+  pred_lambda_map shape: torch.Size([16, 1, 16, 16])
+  pred_den_map shape: torch.Size([16, 1, 16, 16])
+🔍 DEBUG LOSS - DOPO RESHAPE:
+  gt_den_map_blocks shape: torch.Size([16, 1, 16, 16])
+  pred_logit_pi_map: min=-2.9094, max=2.9117, has_nan=False
+  pred_lambda_map: min=0.2636, max=5.8698, has_nan=False
+  gt_den_map_blocks: min=0.0000, max=40.0000, has_nan=False
+  Gradient norm: 438.3930
+🔍 DEBUG LOSS - INPUT:
+  gt_den_map shape: torch.Size([16, 1, 16, 16])
+  pred_lambda_map shape: torch.Size([16, 1, 16, 16])
+  pred_den_map shape: torch.Size([16, 1, 16, 16])
+🔍 DEBUG LOSS - DOPO RESHAPE:
+  gt_den_map_blocks shape: torch.Size([16, 1, 16, 16])
+  pred_logit_pi_map: min=-2.5146, max=2.5061, has_nan=False
+  pred_lambda_map: min=0.2430, max=5.1299, has_nan=False
+  gt_den_map_blocks: min=0.0000, max=36.0000, has_nan=False
+  Gradient norm: 413.8889
+🔍 DEBUG LOSS - INPUT:
+  gt_den_map shape: torch.Size([16, 1, 16, 16])
+  pred_lambda_map shape: torch.Size([16, 1, 16, 16])
+  pred_den_map shape: torch.Size([16, 1, 16, 16])
+🔍 DEBUG LOSS - DOPO RESHAPE:
+  gt_den_map_blocks shape: torch.Size([16, 1, 16, 16])
+  pred_logit_pi_map: min=-2.6699, max=2.6582, has_nan=False
+  pred_lambda_map: min=0.2402, max=6.5621, has_nan=False
+  gt_den_map_blocks: min=0.0000, max=56.0000, has_nan=False
+  Gradient norm: 507.3144
+🔍 DEBUG LOSS - INPUT:
+  gt_den_map shape: torch.Size([16, 1, 16, 16])
+  pred_lambda_map shape: torch.Size([16, 1, 16, 16])
+  pred_den_map shape: torch.Size([16, 1, 16, 16])
+🔍 DEBUG LOSS - DOPO RESHAPE:
+  gt_den_map_blocks shape: torch.Size([16, 1, 16, 16])
+  pred_logit_pi_map: min=-2.3612, max=2.3625, has_nan=False
+  pred_lambda_map: min=0.2324, max=6.5892, has_nan=False
+  gt_den_map_blocks: min=0.0000, max=34.0000, has_nan=False
+  Gradient norm: 453.9665
+🔍 DEBUG LOSS - INPUT:
+  gt_den_map shape: torch.Size([16, 1, 16, 16])
+  pred_lambda_map shape: torch.Size([16, 1, 16, 16])
+  pred_den_map shape: torch.Size([16, 1, 16, 16])
+🔍 DEBUG LOSS - DOPO RESHAPE:
+  gt_den_map_blocks shape: torch.Size([16, 1, 16, 16])
+  pred_logit_pi_map: min=-2.7468, max=2.7792, has_nan=False
+  pred_lambda_map: min=0.2096, max=6.1469, has_nan=False
+  gt_den_map_blocks: min=0.0000, max=24.0000, has_nan=False
+  Gradient norm: 613.4644
+🔍 DEBUG LOSS - INPUT:
+  gt_den_map shape: torch.Size([16, 1, 16, 16])
+  pred_lambda_map shape: torch.Size([16, 1, 16, 16])
+  pred_den_map shape: torch.Size([16, 1, 16, 16])
+🔍 DEBUG LOSS - DOPO RESHAPE:
+  gt_den_map_blocks shape: torch.Size([16, 1, 16, 16])
+  pred_logit_pi_map: min=-2.6835, max=2.6988, has_nan=False
+  pred_lambda_map: min=0.1854, max=4.2197, has_nan=False
+  gt_den_map_blocks: min=0.0000, max=36.0000, has_nan=False
+  Gradient norm: 541.5204
+🔍 DEBUG LOSS - INPUT:
+  gt_den_map shape: torch.Size([16, 1, 16, 16])
+  pred_lambda_map shape: torch.Size([16, 1, 16, 16])
+  pred_den_map shape: torch.Size([16, 1, 16, 16])
+🔍 DEBUG LOSS - DOPO RESHAPE:
+  gt_den_map_blocks shape: torch.Size([16, 1, 16, 16])
+  pred_logit_pi_map: min=-2.6250, max=2.6390, has_nan=False
+  pred_lambda_map: min=0.2123, max=5.7266, has_nan=False
+  gt_den_map_blocks: min=0.0000, max=38.0000, has_nan=False
+  Gradient norm: 513.1967
+🔍 DEBUG LOSS - INPUT:
+  gt_den_map shape: torch.Size([16, 1, 16, 16])
+  pred_lambda_map shape: torch.Size([16, 1, 16, 16])
+  pred_den_map shape: torch.Size([16, 1, 16, 16])
+🔍 DEBUG LOSS - DOPO RESHAPE:
+  gt_den_map_blocks shape: torch.Size([16, 1, 16, 16])
+  pred_logit_pi_map: min=-2.5876, max=2.5909, has_nan=False
+  pred_lambda_map: min=0.2882, max=5.7876, has_nan=False
+  gt_den_map_blocks: min=0.0000, max=34.0000, has_nan=False
+  Gradient norm: 497.4869
+Epoch 70/1300 [Train]:   0%|          | 0/19 [00:00<?, ?it/s]2025-11-29 21:32:16,664 - WARNING - 💀 BATCH con immagini NaN! Skipping.
+Epoch 70/1300 [Train]:   5%|▌         | 1/19 [00:01<00:25,  1.44s/it]2025-11-29 21:32:16,747 - WARNING - 💀 BATCH con immagini NaN! Skipping.
+2025-11-29 21:32:16,749 - WARNING - 💀 BATCH con immagini NaN! Skipping.
+Epoch 70/1300 [Train]:   5%|▌         | 1/19 [00:01<00:25,  1.44s/it, loss=46.1414, lr=9.9e-07]Epoch 70/1300 [Train]:  21%|██        | 4/19 [00:01<00:04,  3.04it/s, loss=46.1414, lr=9.9e-07]Epoch 70/1300 [Train]:  21%|██        | 4/19 [00:01<00:04,  3.04it/s, loss=66.5739, lr=9.9e-07]Epoch 70/1300 [Train]:  26%|██▋       | 5/19 [00:01<00:03,  3.71it/s, loss=66.5739, lr=9.9e-07]2025-11-29 21:32:16,994 - WARNING - 💀 BATCH con immagini NaN! Skipping.
+2025-11-29 21:32:16,995 - WARNING - 💀 BATCH con immagini NaN! Skipping.
+2025-11-29 21:32:16,996 - WARNING - 💀 BATCH con immagini NaN! Skipping.
+2025-11-29 21:32:17,147 - WARNING - 💀 BATCH con immagini NaN! Skipping.
+Epoch 70/1300 [Train]:  47%|████▋     | 9/19 [00:01<00:01,  7.82it/s, loss=66.5739, lr=9.9e-07]Epoch 70/1300 [Train]:  47%|████▋     | 9/19 [00:02<00:01,  7.82it/s, loss=76.6897, lr=9.9e-07]2025-11-29 21:32:17,387 - WARNING - 💀 BATCH con immagini NaN! Skipping.
+Epoch 70/1300 [Train]:  58%|█████▊    | 11/19 [00:02<00:01,  7.98it/s, loss=76.6897, lr=9.9e-07]2025-11-29 21:32:17,388 - WARNING - 💀 BATCH con immagini NaN! Skipping.
+Epoch 70/1300 [Train]:  58%|█████▊    | 11/19 [00:02<00:01,  7.98it/s, loss=78.7785, lr=9.9e-07]Epoch 70/1300 [Train]:  68%|██████▊   | 13/19 [00:02<00:00,  9.46it/s, loss=78.7785, lr=9.9e-07]Epoch 70/1300 [Train]:  68%|██████▊   | 13/19 [00:02<00:00,  9.46it/s, loss=42.4462, lr=9.9e-07]Epoch 70/1300 [Train]:  68%|██████▊   | 13/19 [00:02<00:00,  9.46it/s, loss=53.4498, lr=9.9e-07]Epoch 70/1300 [Train]:  79%|███████▉  | 15/19 [00:02<00:00,  9.06it/s, loss=53.4498, lr=9.9e-07]Epoch 70/1300 [Train]:  79%|███████▉  | 15/19 [00:02<00:00,  9.06it/s, loss=58.3154, lr=9.9e-07]Epoch 70/1300 [Train]:  79%|███████▉  | 15/19 [00:02<00:00,  9.06it/s, loss=50.1276, lr=9.9e-07]Epoch 70/1300 [Train]:  89%|████████▉ | 17/19 [00:02<00:00,  8.84it/s, loss=50.1276, lr=9.9e-07]Epoch 70/1300 [Train]:  89%|████████▉ | 17/19 [00:02<00:00,  8.84it/s, loss=51.8737, lr=9.9e-07]Epoch 70/1300 [Train]:  89%|████████▉ | 17/19 [00:02<00:00,  8.84it/s, loss=50.0928, lr=9.9e-07]Epoch 70/1300 [Train]: 100%|██████████| 19/19 [00:02<00:00,  9.07it/s, loss=50.0928, lr=9.9e-07]Epoch 70/1300 [Train]: 100%|██████████| 19/19 [00:03<00:00,  6.07it/s, loss=50.0928, lr=9.9e-07]
+🔍 DEBUG LOSS - INPUT:
+  gt_den_map shape: torch.Size([16, 1, 16, 16])
+  pred_lambda_map shape: torch.Size([16, 1, 16, 16])
+  pred_den_map shape: torch.Size([16, 1, 16, 16])
+🔍 DEBUG LOSS - DOPO RESHAPE:
+  gt_den_map_blocks shape: torch.Size([16, 1, 16, 16])
+  pred_logit_pi_map: min=-2.4056, max=2.3950, has_nan=False
+  pred_lambda_map: min=0.2419, max=6.1027, has_nan=False
+  gt_den_map_blocks: min=0.0000, max=39.0000, has_nan=False
+  Gradient norm: 601.8972
+🔍 DEBUG LOSS - INPUT:
+  gt_den_map shape: torch.Size([16, 1, 16, 16])
+  pred_lambda_map shape: torch.Size([16, 1, 16, 16])
+  pred_den_map shape: torch.Size([16, 1, 16, 16])
+🔍 DEBUG LOSS - DOPO RESHAPE:
+  gt_den_map_blocks shape: torch.Size([16, 1, 16, 16])
+  pred_logit_pi_map: min=-2.5016, max=2.5022, has_nan=False
+  pred_lambda_map: min=0.2532, max=6.1789, has_nan=False
+  gt_den_map_blocks: min=0.0000, max=31.0000, has_nan=False
+  Gradient norm: 619.8912
+🔍 DEBUG LOSS - INPUT:
+  gt_den_map shape: torch.Size([16, 1, 16, 16])
+  pred_lambda_map shape: torch.Size([16, 1, 16, 16])
+  pred_den_map shape: torch.Size([16, 1, 16, 16])
+🔍 DEBUG LOSS - DOPO RESHAPE:
+  gt_den_map_blocks shape: torch.Size([16, 1, 16, 16])
+  pred_logit_pi_map: min=-2.5764, max=2.5946, has_nan=False
+  pred_lambda_map: min=0.1784, max=6.6971, has_nan=False
+  gt_den_map_blocks: min=0.0000, max=47.0000, has_nan=False
+  Gradient norm: 486.7107
+🔍 DEBUG LOSS - INPUT:
+  gt_den_map shape: torch.Size([16, 1, 16, 16])
+  pred_lambda_map shape: torch.Size([16, 1, 16, 16])
+  pred_den_map shape: torch.Size([16, 1, 16, 16])
+🔍 DEBUG LOSS - DOPO RESHAPE:
+  gt_den_map_blocks shape: torch.Size([16, 1, 16, 16])
+  pred_logit_pi_map: min=-2.8498, max=2.8375, has_nan=False
+  pred_lambda_map: min=0.1539, max=6.2800, has_nan=False
+  gt_den_map_blocks: min=0.0000, max=57.0000, has_nan=False
+  Gradient norm: 527.3818
+🔍 DEBUG LOSS - INPUT:
+  gt_den_map shape: torch.Size([16, 1, 16, 16])
+  pred_lambda_map shape: torch.Size([16, 1, 16, 16])
+  pred_den_map shape: torch.Size([16, 1, 16, 16])
+🔍 DEBUG LOSS - DOPO RESHAPE:
+  gt_den_map_blocks shape: torch.Size([16, 1, 16, 16])
+  pred_logit_pi_map: min=-3.1427, max=3.1569, has_nan=False
+  pred_lambda_map: min=0.2179, max=5.5042, has_nan=False
+  gt_den_map_blocks: min=0.0000, max=35.0000, has_nan=False
+  Gradient norm: 617.1387
+🔍 DEBUG LOSS - INPUT:
+  gt_den_map shape: torch.Size([16, 1, 16, 16])
+  pred_lambda_map shape: torch.Size([16, 1, 16, 16])
+  pred_den_map shape: torch.Size([16, 1, 16, 16])
+🔍 DEBUG LOSS - DOPO RESHAPE:
+  gt_den_map_blocks shape: torch.Size([16, 1, 16, 16])
+  pred_logit_pi_map: min=-2.6329, max=2.6218, has_nan=False
+  pred_lambda_map: min=0.1564, max=6.7236, has_nan=False
+  gt_den_map_blocks: min=0.0000, max=26.0000, has_nan=False
+  Gradient norm: 558.1210
+🔍 DEBUG LOSS - INPUT:
+  gt_den_map shape: torch.Size([16, 1, 16, 16])
+  pred_lambda_map shape: torch.Size([16, 1, 16, 16])
+  pred_den_map shape: torch.Size([16, 1, 16, 16])
+🔍 DEBUG LOSS - DOPO RESHAPE:
+  gt_den_map_blocks shape: torch.Size([16, 1, 16, 16])
+  pred_logit_pi_map: min=-2.7165, max=2.7028, has_nan=False
+  pred_lambda_map: min=0.1430, max=5.4210, has_nan=False
+  gt_den_map_blocks: min=0.0000, max=27.0000, has_nan=False
+  Gradient norm: 554.5977
+🔍 DEBUG LOSS - INPUT:
+  gt_den_map shape: torch.Size([16, 1, 16, 16])
+  pred_lambda_map shape: torch.Size([16, 1, 16, 16])
+  pred_den_map shape: torch.Size([16, 1, 16, 16])
+🔍 DEBUG LOSS - DOPO RESHAPE:
+  gt_den_map_blocks shape: torch.Size([16, 1, 16, 16])
+  pred_logit_pi_map: min=-2.7730, max=2.7520, has_nan=False
+  pred_lambda_map: min=0.2388, max=6.3658, has_nan=False
+  gt_den_map_blocks: min=0.0000, max=72.0000, has_nan=False
+  Gradient norm: 502.6407
+🔍 DEBUG LOSS - INPUT:
+  gt_den_map shape: torch.Size([16, 1, 16, 16])
+  pred_lambda_map shape: torch.Size([16, 1, 16, 16])
+  pred_den_map shape: torch.Size([16, 1, 16, 16])
+🔍 DEBUG LOSS - DOPO RESHAPE:
+  gt_den_map_blocks shape: torch.Size([16, 1, 16, 16])
+  pred_logit_pi_map: min=-3.0619, max=3.0633, has_nan=False
+  pred_lambda_map: min=0.1769, max=5.9118, has_nan=False
+  gt_den_map_blocks: min=0.0000, max=60.0000, has_nan=False
+  Gradient norm: 471.2506
+🔍 DEBUG LOSS - INPUT:
+  gt_den_map shape: torch.Size([12, 1, 16, 16])
+  pred_lambda_map shape: torch.Size([12, 1, 16, 16])
+  pred_den_map shape: torch.Size([12, 1, 16, 16])
+🔍 DEBUG LOSS - DOPO RESHAPE:
+  gt_den_map_blocks shape: torch.Size([12, 1, 16, 16])
+  pred_logit_pi_map: min=-3.1267, max=3.1414, has_nan=False
+  pred_lambda_map: min=0.1511, max=4.7880, has_nan=False
+  gt_den_map_blocks: min=0.0000, max=15.0000, has_nan=False
+  Gradient norm: 484.0492
+Epoch 70 [Val]:   0%|          | 0/182 [00:00<?, ?it/s]Epoch 70 [Val]:   1%|          | 1/182 [00:00<01:58,  1.53it/s]Epoch 70 [Val]:   5%|▍         | 9/182 [00:00<00:11, 15.50it/s]Epoch 70 [Val]:  10%|█         | 19/182 [00:00<00:05, 32.01it/s]Epoch 70 [Val]:  16%|█▌        | 29/182 [00:00<00:03, 46.90it/s]Epoch 70 [Val]:  22%|██▏       | 40/182 [00:01<00:02, 60.79it/s]Epoch 70 [Val]:  28%|██▊       | 51/182 [00:01<00:01, 72.03it/s]Epoch 70 [Val]:  34%|███▎      | 61/182 [00:01<00:01, 77.45it/s]Epoch 70 [Val]:  39%|███▉      | 71/182 [00:01<00:01, 81.43it/s]Epoch 70 [Val]:  45%|████▌     | 82/182 [00:01<00:01, 87.03it/s]Epoch 70 [Val]:  51%|█████     | 93/182 [00:01<00:00, 92.63it/s]Epoch 70 [Val]:  57%|█████▋    | 103/182 [00:01<00:00, 94.65it/s]Epoch 70 [Val]:  62%|██████▏   | 113/182 [00:01<00:00, 94.98it/s]Epoch 70 [Val]:  68%|██████▊   | 124/182 [00:01<00:00, 96.78it/s]
