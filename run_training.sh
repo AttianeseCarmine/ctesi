@@ -1,0 +1,68 @@
+#!/bin/bash
+
+# Attiva l'uscita immediata in caso di errore
+set -e
+
+# Configurazione
+CONFIG_FILE="config_sha.yaml"
+LOG_DIR="logs_pipeline"
+
+# Crea cartella log se non esiste
+mkdir -p $LOG_DIR
+
+echo "========================================================"
+echo "🚀 AVVIO TRAINING ZIP-CLIP-EBC COMPLETO"
+echo "📅 Data: $(date)"
+echo "📄 Config: $CONFIG_FILE"
+echo "========================================================"
+
+# --- PULIZIA (Opzionale: scommenta se vuoi cancellare automaticamente i vecchi esperimenti) ---
+# echo "🧹 Cancellazione vecchi esperimenti..."
+# rm -rf experiments/*
+# echo "✅ Pulizia completata."
+
+# --- STAGE 1 ---
+echo ""
+echo "--------------------------------------------------------"
+echo "▶️  AVVIO STAGE 1: π-Head Training (Classificazione)"
+echo "--------------------------------------------------------"
+start_time=$(date +%s)
+
+# Esegui train_stage1 e salva l'output sia a video che su file
+python train_stage1.py --config $CONFIG_FILE 2>&1 | tee "$LOG_DIR/stage1.log"
+
+end_time=$(date +%s)
+echo "✅ Stage 1 Completato in $((end_time - start_time)) secondi."
+
+
+# --- STAGE 2 ---
+echo ""
+echo "--------------------------------------------------------"
+echo "▶️  AVVIO STAGE 2: EBC-Head Training (Conteggio)"
+echo "--------------------------------------------------------"
+start_time=$(date +%s)
+
+python train_stage2.py --config $CONFIG_FILE 2>&1 | tee "$LOG_DIR/stage2.log"
+
+end_time=$(date +%s)
+echo "✅ Stage 2 Completato in $((end_time - start_time)) secondi."
+
+
+# --- STAGE 3 ---
+echo ""
+echo "--------------------------------------------------------"
+echo "▶️  AVVIO STAGE 3: Joint Fine-tuning"
+echo "--------------------------------------------------------"
+start_time=$(date +%s)
+
+python train_stage3.py --config $CONFIG_FILE 2>&1 | tee "$LOG_DIR/stage3.log"
+
+end_time=$(date +%s)
+echo "✅ Stage 3 Completato in $((end_time - start_time)) secondi."
+
+echo ""
+echo "========================================================"
+echo "🏆 TRAINING COMPLETATO CON SUCCESSO!"
+echo "========================================================"
+
+# nohup ./run_training.sh > main_log.out 2>&1 &

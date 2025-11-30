@@ -30,7 +30,7 @@ DATA:
   CROP_SIZE_STAGE1: 384      # Stage 1 beneficia di crop più grandi
   CROP_SCALE_STAGE1: [0.5, 2.0]
   CROP_SIZE_STAGE2: 256
-  CROP_SCALE_STAGE2: [0.75, 1.5]
+  CROP_SCALE_STAGE2: [0.5, 2.0]
   
   # Normalizzazione CLIP (IMPORTANTE: diversa da ImageNet!)
   NORM_MEAN: [0.48145466, 0.4578275, 0.40821073]
@@ -136,7 +136,7 @@ BINS_CONFIG:
     ]
     # Centri dei bin (valore atteso per ogni bin)
     # Nota: bin 0 non ha centro perché gestito da π
-    bin_centers: [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.5, 13.5, 17.0]
+    bin_centers: [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.5, 13.5, 25.0]
 
 # ============================================================
 # STAGE 1: Training π-Head (Zero-Inflation)
@@ -176,10 +176,10 @@ LOSS_STAGE1:
   
   # Peso per classe positiva (blocchi con persone)
   # > 1.0 perché i blocchi vuoti sono la maggioranza
-  POS_WEIGHT: 1.5
+  POS_WEIGHT: 3.0
   
   # Loss ausiliaria sul conteggio totale
-  COUNT_WEIGHT: 0.1
+  COUNT_WEIGHT: 0.0
   
   # Regularizzazione sulla distribuzione di π
   PI_REG:
@@ -262,7 +262,7 @@ TRAIN_STAGE3:
 # ============================================================
 LOSS_STAGE3:
   # Peso relativo delle due loss
-  ALPHA_PI: 0.5               # Peso loss π
+  ALPHA_PI: 0.05               # Peso loss π
   ALPHA_EBC: 1.0              # Peso loss EBC
   
   # Loss sul conteggio totale
