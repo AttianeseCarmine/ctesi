@@ -11,6 +11,7 @@ from .transforms import build_transforms, RandomCrop, Resize, RandomResizedCrop,
 from .transforms import ColorJitter, RandomGrayscale, GaussianBlur, RandomApply, PepperSaltNoise
 
 from .utils import collate_fn
+from .utils import safe_collate_fn
 
 
 # === FUNZIONE NUOVA (Wrapper per il Dataloader) ===
@@ -68,7 +69,7 @@ def build_dataloader(
         batch_size=batch_size,
         shuffle=shuffle,
         num_workers=num_workers,
-        collate_fn=collate_fn,
+        collate_fn=safe_collate_fn,
         pin_memory=True,
     )
     
@@ -79,7 +80,7 @@ __all__ = [
     "Crowd", "InMemoryCrowd", "available_datasets", "standardize_dataset_name", "NWPUTest", "ShanghaiTech",
     "RandomCrop", "Resize", "RandomResizedCrop", "RandomHorizontalFlip", "Resize2Multiple", "ZeroPad2Multiple",
     "ColorJitter", "RandomGrayscale", "GaussianBlur", "RandomApply", "PepperSaltNoise",
-    "collate_fn",
+    "safe_collate_fn",
     "build_dataloader", 
     "build_transforms", 
 ]

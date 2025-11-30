@@ -54,6 +54,7 @@ def _bin_count(gt_den_map: Tensor, bins: List[Tuple[float, float]]) -> Tensor:
     return gt_class_map
 
 # --- CLASSE LOSS PRINCIPALE ---
+# losses/loss.py
 
 class QuadLoss(nn.Module):
     def __init__(
@@ -65,14 +66,13 @@ class QuadLoss(nn.Module):
         weight_reg: float = 1.0,
         weight_aux: float = 0.0,
         pi_loss_weight_bce: float = 1.0,
-        pi_mask_threshold: float = 0.5,
         **kwargs
     ) -> None:
         super().__init__()
         self.input_size = input_size
         self.block_size = block_size
         self.bins = bins 
-        self.bins_lambda = bins[1:] 
+        self.bins_lambda = bins[1:]  # EBC bins (senza zero)
         self.num_blocks_h = input_size // block_size
         self.num_blocks_w = input_size // block_size
 
@@ -81,32 +81,25 @@ class QuadLoss(nn.Module):
         self.weight_aux = weight_aux
         self.pi_loss_weight_bce = pi_loss_weight_bce
 
-        # Componenti Loss
-        self.pi_loss_nll = ZIPoissonNLL(reduction="mean")
-        self.pi_loss_bce = ZICrossEntropy(reduction="mean")
+        # Loss components
+        self.pi_loss_bce = ZICrossEntropy(reduction="mean")  # Solo BCE per π
         self.lambda_loss_ebc = nn.CrossEntropyLoss(reduction="mean")
         self.cnt_loss_fn = nn.L1Loss(reduction="mean")
 
     def forward(
         self,
-        pred_logit_map: Tensor,
-        pred_den_map: Tensor,
-        gt_den_map: Tensor,
+        pred_logit_map: Tensor,          # EBC logits
+        pred_den_map: Tensor,            # Density finale
+        gt_den_map: Tensor,              # GT density (in blocchi)
         gt_points: List[Tensor],
-        pred_logit_pi_map: Optional[Tensor] = None,
-        pred_lambda_map: Optional[Tensor] = None,
+        pred_logit_pi_map: Optional[Tensor] = None,  # π logits
+        pred_lambda_map: Optional[Tensor] = None,     # ❌ NON PIÙ USATO
     ) -> Tuple[Tensor, Dict[str, Tensor]]:
         
-        # ✅ DEBUG 1: Stampa PRIMA di tutto
-        print(f"🔍 DEBUG LOSS - INPUT:")
-        print(f"  gt_den_map shape: {gt_den_map.shape}")
-        print(f"  pred_lambda_map shape: {pred_lambda_map.shape if pred_lambda_map is not None else 'None'}")
-        print(f"  pred_den_map shape: {pred_den_map.shape}")
-        
-        # 0. Sanitizzazione GT
+        # Sanitizzazione GT
         gt_den_map = torch.clamp(gt_den_map, min=0.0)
-
-        # Reshape GT in blocchi
+        
+        # Reshape GT in blocchi (se necessario)
         if gt_den_map.shape[-2:] != (self.num_blocks_h, self.num_blocks_w):
             gt_den_map_blocks = _reshape_density(gt_den_map, block_size=self.block_size)
         else:
@@ -117,55 +110,26 @@ class QuadLoss(nn.Module):
         lambda_loss = torch.tensor(0.0, device=pred_den_map.device)
         cnt_loss = torch.tensor(0.0, device=pred_den_map.device)
 
-        # --- 1. LOSS ZIP ---
-        if self.weight_reg > 0 and pred_logit_pi_map is not None and pred_lambda_map is not None:
+        # --- 1. LOSS π (Stage 1 + 3) ---
+        if self.weight_reg > 0 and pred_logit_pi_map is not None:
+            # Sanitizzazione
+            pi_logits = torch.clamp(pred_logit_pi_map.float(), -10, 10)
             
-            # ✅ DEBUG 2: Stampa DOPO il reshape
-            print(f"🔍 DEBUG LOSS - DOPO RESHAPE:")
-            print(f"  gt_den_map_blocks shape: {gt_den_map_blocks.shape}")
-            print(f"  pred_logit_pi_map: min={pred_logit_pi_map.min():.4f}, max={pred_logit_pi_map.max():.4f}, has_nan={torch.isnan(pred_logit_pi_map).any()}")
-            print(f"  pred_lambda_map: min={pred_lambda_map.min():.4f}, max={pred_lambda_map.max():.4f}, has_nan={torch.isnan(pred_lambda_map).any()}")
-            print(f"  gt_den_map_blocks: min={gt_den_map_blocks.min():.4f}, max={gt_den_map_blocks.max():.4f}, has_nan={torch.isnan(gt_den_map_blocks).any()}")
+            # ✅ Solo Binary Cross Entropy (vuoto vs pieno)
+            pi_loss, pi_info = self.pi_loss_bce(pi_logits, gt_den_map_blocks)
             
-            # A. RIMOZIONE NAN/INF
-            if torch.isnan(pred_logit_pi_map).any() or torch.isinf(pred_logit_pi_map).any():
-                print("⚠️ pred_logit_pi_map ha NaN/Inf! Sostituisco con 0.")
-                pred_logit_pi_map = torch.nan_to_num(pred_logit_pi_map, nan=0.0, posinf=10.0, neginf=-10.0)
-            
-            if torch.isnan(pred_lambda_map).any() or torch.isinf(pred_lambda_map).any():
-                print("⚠️ pred_lambda_map ha NaN/Inf! Sostituisco con 1.0.")
-                pred_lambda_map = torch.nan_to_num(pred_lambda_map, nan=1.0, posinf=100.0, neginf=0.1)
+            loss_info["pi_bce"] = pi_info['bce'].detach()
 
-            # B. CLAMPING DI SICUREZZA
-            pi_logits_stable = torch.clamp(pred_logit_pi_map.float(), -10, 10)
-            lambda_map_stable = torch.clamp(pred_lambda_map.float(), 0, 100) 
-
-            # C. Calcolo Loss
-            pi_loss_n, n_info = self.pi_loss_nll(pi_logits_stable, lambda_map_stable, gt_den_map_blocks)
-            pi_loss_b, b_info = self.pi_loss_bce(pi_logits_stable, gt_den_map_blocks)
-            
-            # D. ZIP COUNT Loss (L1 Stabilizzante)
-            # Aiuta a tenere i valori di lambda in un range ragionevole all'inizio
-            zip_count_pred = lambda_map_stable.sum(dim=(1,2,3))
-            zip_count_gt = gt_den_map_blocks.sum(dim=(1,2,3))
-            zip_l1_loss = F.l1_loss(zip_count_pred, zip_count_gt)
-            
-            # Somma pesata
-            pi_loss = pi_loss_n + (self.pi_loss_weight_bce * pi_loss_b) + (0.5 * zip_l1_loss)
-            
-            loss_info.update({
-                "zip_nll": n_info['nll'].detach(),
-                "zip_bce": b_info['bce'].detach(),
-                "zip_l1": zip_l1_loss.detach()
-            })
-
-        # --- 2. LOSS EBC (Classification Head) ---
+        # --- 2. LOSS λ_EBC (Stage 2 + 3) ---
         if self.weight_cls > 0:
-            # Sanitizzazione Logits EBC
+            # Sanitizzazione
             if torch.isnan(pred_logit_map).any():
                 pred_logit_map = torch.nan_to_num(pred_logit_map, 0.0)
             
+            # Converti GT in classi bin (EBC)
             gt_class_map = _bin_count(gt_den_map_blocks, bins=self.bins_lambda)
+            
+            # Maschera: considera solo blocchi NON vuoti
             gt_mask_nonzero = (gt_den_map_blocks >= self.bins_lambda[0][0]).squeeze(1)
             
             num_active = gt_mask_nonzero.sum()
@@ -177,15 +141,17 @@ class QuadLoss(nn.Module):
             
             loss_info["ebc_loss"] = lambda_loss.detach()
 
-        # --- 3. LOSS CONTEGGIO GENERALE (AUX - EBC) ---
+        # --- 3. LOSS CONTEGGIO (AUX - opzionale) ---
         if self.weight_aux > 0:
-            # Sanitizzazione Density Map EBC
             if torch.isnan(pred_den_map).any():
                 pred_den_map = torch.nan_to_num(pred_den_map, 0.0)
 
             gt_cnt = torch.tensor([len(p) for p in gt_points], dtype=torch.float32, device=pred_den_map.device)
             pred_cnt = pred_den_map.float().sum(dim=(1, 2, 3))
             cnt_loss = self.cnt_loss_fn(pred_cnt, gt_cnt)
+
+            cnt_loss = torch.clamp(cnt_loss, max=50.0)
+
             loss_info["cnt_loss"] = cnt_loss.detach()
 
         # --- TOTALE ---
@@ -193,9 +159,8 @@ class QuadLoss(nn.Module):
                      (self.weight_cls * lambda_loss) + \
                      (self.weight_aux * cnt_loss)
         
-        # Ultimo check di sicurezza
         if torch.isnan(total_loss) or torch.isinf(total_loss):
-            print("💀 ERRORE: Loss NaN/Inf rilevata nel totale! Clamp a 100.0.")
+            print("💀 Loss NaN/Inf! Fallback a 100.0")
             total_loss = torch.tensor(100.0, device=total_loss.device, requires_grad=True)
             
         loss_info["total_loss"] = total_loss.detach()

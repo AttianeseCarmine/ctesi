@@ -102,13 +102,21 @@ class Trainer:
             torch.save(state, self.best_ckpt_path)
             self.logger.info(f"💾 Best checkpoint salvato: {self.best_ckpt_path} (MAE {self.best_mae:.2f})")
 
+# trainer.py - Metodo _train_one_epoch
+
     def _train_one_epoch(self) -> float:
         self.model.train()
         loss_meter = AverageMeter()
         
+        # ✅ Contatori per debug
+        batch_count = 0
+        debug_freq = 50  # Stampa ogni 50 batch
+        
         pbar = tqdm(self.train_loader, desc=f"Epoch {self.epoch}/{self.num_epochs} [Train]")
         
         for batch in pbar:
+            batch_count += 1
+            
             if isinstance(batch, dict):
                 images = batch['image'].to(self.device)
                 gt_map = batch['density_map'].to(self.device)
@@ -117,12 +125,9 @@ class Trainer:
                 images, gt_points, gt_map = batch
                 images = images.to(self.device)
                 gt_map = gt_map.to(self.device)
-            # Il modello predice 16x16 blocchi. Il GT è 256x256.
-            # Dobbiamo sommare la densità in ogni blocco 16x16 per ottenere il conteggio per blocco.
-            # Kernel size 16, Stride 16. divisor_override=1 fa la somma invece della media.
+            
+            # Crea blocchi GT
             with torch.no_grad():
-                # Assumiamo input_size=256 e patch_size=16 -> fattore di riduzione 16
-                # Se la gt_map è [B, 1, 256, 256], il risultato sarà [B, 1, 16, 16]
                 kernel_size = 16 
                 gt_den_map_blocks = F.avg_pool2d(
                     gt_map, 
@@ -130,45 +135,97 @@ class Trainer:
                     stride=kernel_size, 
                     divisor_override=1
                 )
-            # ✅ VERIFICA BATCH
-            if torch.isnan(images).any():
-                self.logger.warning("💀 BATCH con immagini NaN! Skipping.")
-                continue
-            if torch.isnan(gt_map).any():
-                self.logger.warning("💀 BATCH con GT NaN! Skipping.")
-                continue
+            
+            # Verifica batch
+            if torch.isnan(images).any() or torch.isinf(images).any():
+                self.logger.warning("💀 BATCH con NaN/Inf! Sanitizzo...")
+                images = torch.nan_to_num(images, nan=0.0, posinf=10.0, neginf=-10.0)
+            if torch.isnan(gt_map).any() or torch.isinf(gt_map).any():
+                self.logger.warning("⚠️ Sanitizzo GT con NaN/Inf")
+                gt_map = torch.nan_to_num(gt_map, nan=0.0, posinf=10.0, neginf=-10.0)
+                
             self.optimizer.zero_grad()
-            outputs = self.model(images)  # ✅ Ora ritorna sempre un dizionario
-
-            # ✅ FIX: Accedi agli elementi del dizionario
-            loss, _ = self.criterion(
-                pred_logit_map=outputs["pred_logit_map"],
-                pred_den_map=outputs["pred_den_map"],
-                gt_den_map=gt_den_map_blocks,            # <--- CORRETTO: Usa la mappa ridotta
+            
+            # Forward
+            outputs = self.model(images)
+            
+            # ✅ DEBUG MODELLO - Ogni N batch
+            if batch_count % debug_freq == 0:
+                print(f"\n🔍 DEBUG BATCH {batch_count}:")
+                print(f"  Image shape: {images.shape}")
+                print(f"  GT count: {[len(p) for p in gt_points]}")
+                print(f"  GT blocks sum: {gt_den_map_blocks.sum(dim=(1,2,3)).tolist()}")
+                
+                if isinstance(outputs, dict):
+                    pred_den_map = outputs["pred_den_map"]
+                    pred_cnt = pred_den_map.sum(dim=(1,2,3))
+                    print(f"  Pred count: {pred_cnt.tolist()}")
+                    
+                    if "pred_logit_pi_map" in outputs and outputs["pred_logit_pi_map"] is not None:
+                        pi_probs = outputs["pred_logit_pi_map"].softmax(dim=1)[:, 1:2]
+                        mask = (pi_probs > 0.5).float()
+                        print(f"  Active blocks: {mask.mean().item():.2%}")
+            
+            # Gestisci output
+            if isinstance(outputs, dict):
+                pred_logit_map = outputs["pred_logit_map"]
+                pred_den_map = outputs["pred_den_map"]
+                pred_logit_pi_map = outputs.get("pred_logit_pi_map")
+                pred_lambda_map = outputs.get("pred_lambda_map")
+            else:
+                pred_den_map = outputs
+                pred_logit_map = None
+                pred_logit_pi_map = None
+                pred_lambda_map = None
+            
+            # Loss
+            loss, loss_info = self.criterion(
+                pred_logit_map=pred_logit_map,
+                pred_den_map=pred_den_map,
+                gt_den_map=gt_den_map_blocks,
                 gt_points=gt_points,
-                pred_logit_pi_map=outputs["pred_logit_pi_map"],
-                pred_lambda_map=outputs["pred_lambda_map"]
+                pred_logit_pi_map=pred_logit_pi_map,
+                pred_lambda_map=pred_lambda_map
             )
-
-
+            
+            # ✅ DEBUG LOSS - Ogni N batch
+            if batch_count % debug_freq == 0:
+                print(f"  Loss components:")
+                for k, v in loss_info.items():
+                    if isinstance(v, torch.Tensor):
+                        print(f"    {k}: {v.item():.4f}")
+                    else:
+                        print(f"    {k}: {v:.4f}")
+            
             if torch.isnan(loss):
-                self.logger.warning("Loss NaN! Skipping batch.")
+                self.logger.warning(f"💀 Loss NaN at batch {batch_count}! Skipping.")
                 continue
-
+            
             loss.backward()
+            
+            # Gradient norm
             total_norm = 0
             for p in self.model.parameters():
                 if p.grad is not None:
                     total_norm += p.grad.data.norm(2).item() ** 2
             total_norm = total_norm ** 0.5
-            print(f"  Gradient norm: {total_norm:.4f}")
+            
+            # ✅ DEBUG GRADIENTI - Ogni N batch
+            if batch_count % debug_freq == 0:
+                print(f"  Gradient norm: {total_norm:.4f}")
+            
             if self.clip_grad_norm:
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.clip_grad_norm)
+            
             self.optimizer.step()
             
             loss_meter.update(loss.item())
-            pbar.set_postfix(loss=f"{loss.item():.4f}", lr=f"{self.optimizer.param_groups[0]['lr']:.1e}")
-
+            pbar.set_postfix(
+                loss=f"{loss.item():.4f}", 
+                avg_loss=f"{loss_meter.avg:.4f}",
+                lr=f"{self.optimizer.param_groups[0]['lr']:.1e}"
+            )
+        
         return loss_meter.avg
 
     def _validate(self) -> Tuple[float, float]:

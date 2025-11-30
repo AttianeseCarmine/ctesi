@@ -1,12 +1,12 @@
 # =========================================================
-# CONFIGURAZIONE VI MIGLIORATA (ZIP + EBC) - FIX STABILITY
+# CONFIGURAZIONE CORRETTA - π + CLIP-EBC
 # =========================================================
 dataset:
   name: "sha"
   train_split: "train"
   eval_split: "val"
 
-  # === DATA AUGMENTATION ===
+  # Data Augmentation
   input_size: 256
   random_crop: true
   random_resize: true
@@ -18,92 +18,75 @@ dataset:
   mean: [0.48145466, 0.4578275, 0.40821073]
   std: [0.26862954, 0.26130258, 0.27577711]
 
-  # === COUNT-AWARE SAMPLER ===
+  # Count-aware Sampler
   count_sampler:
     enable: true
     base_weight: 1.0
     power: 1.25
     log_offset: 1.0
 
-
 # =========================================================
-# MODELLO → ZIP + EBC
+# MODELLO: π-Head + CLIP-EBC
 # =========================================================
 model:
   name: "ViT-B-16"
   weight_name: "openai"
   
-  # === FIX GATING ===
-  pi_soft: true       
-  pi_soft_min: 0.02    # AUMENTATO (era 0.1): Impedisce alla maschera di andare a zero assoluto in training
+  # Gating
+  pi_soft_min: 0.3    # Soft gating in training
+  pi_thresh: 0.6      # Hard threshold in eval
+  gate_mode: "multiply"
   
   input_size: 256
   block_size: 16
   num_vpt: 0
   vpt_drop: 0.0
-  quick_gelu: true
   
-  # === PARAMETRI ZIP ===
-  zip_lambda_max: 13 # Numero massimo di persone presenti in un blocco
-  gate_mode: "multiply"
+  # ✅ SOLO EBC Bins (13 bins: da 1 a 13+)
+  # Bin 0 (zero persone) è gestito da π-head, NON da EBC
+  ebc_bins: [
+    [1, 1], [2, 2], [3, 3], [4, 4], [5, 5],
+    [6, 6], [7, 7], [8, 8], [9, 9], [10, 10],
+    [11, 12], [13, 14], [15, 9999]
+  ]  # ✅ 13 bins
 
-  # Soft π Thresholding
-  pi_thresh: 0.75     # AUMENTATO (era 0.12): In validazione, siamo più severi nel dire "è vuoto" solo se siamo sicuri.
-  pi_soft_power: 1.0
+  ebc_bin_centers: [
+    1.0, 2.0, 3.0, 4.0, 5.0,
+    6.0, 7.0, 8.0, 9.0, 10.0,
+    11.38, 13.38, 16.26
+  ]  # ✅ 13 centri
 
-  # λ regularization
-  lambda_target: 1.0
-  lambda_weight: 1.0e-3 # LEGGERMENTE RIDOTTO (era 1.8e-3)
-
-  # === BIN (ZIP + EBC) - INVARIATI ===
-  bins: [[0, 0], [1, 1], [2, 2], [3, 3], [4, 4], [5, 5],
-         [6, 6], [7, 7], [8, 8], [9, 9], [10, 10],
-         [11, 12], [13, 14], [15, 9999]]
-
-  zip_bins: [[0, 0], [1, 1], [2, 2], [3, 3], [4, 4], [5, 5],
-             [6, 6], [7, 7], [8, 8], [9, 9], [10, 10],
-             [11, 12], [13, 14], [15, 9999]]
-
-  zip_bin_centers: [0.0, 1.0, 2.0, 3.0, 4.0, 5.0,
-                    6.0, 7.0, 8.0, 9.0, 10.0,
-                    11.38, 13.38, 16.26]
-
-  ebc_bins: [[1, 1], [2, 2], [3, 3], [4, 4], [5, 5],
-             [6, 6], [7, 7], [8, 8], [9, 9], [10, 10],
-             [11, 12], [13, 14], [15, 9999]]
-
-  ebc_bin_centers: [1.0, 2.0, 3.0, 4.0, 5.0,
-                    6.0, 7.0, 8.0, 9.0, 10.0,
-                    11.38, 13.38, 16.26]
-
+  # ✅ 13 text prompts (uno per bin)
   text_prompts:
     lambda: [
-      "one person", "two people", "three people", "four people", "five people",
-      "six people", "seven people", "eight people", "nine people", "ten people",
-      "about twelve people", "about fourteen people", "a dense crowd of people"
-    ]
-
+      "one person",
+      "two people",
+      "three people",
+      "four people",
+      "five people",
+      "six people",
+      "seven people",
+      "eight people",
+      "nine people",
+      "ten people",
+      "about twelve people",
+      "about fourteen people",
+      "a dense crowd of people"
+    ]  # ✅ 13 prompts
 
 # =========================================================
-# LOSS MIGLIORATA
+# LOSS
 # =========================================================
 loss:
   name: "quad_loss"
-  reg_loss: "zipnll"
-
-  # === BILANCIAMENTO LOSS ===
-  weight_cls: 1.0      # RIDOTTO (era 2.0): Per non sopraffare la ZIP loss all'inizio
-  weight_reg: 1.0      # RIDOTTO (era 2.0): Per stabilità numerica (evita NaN)
-  weight_aux: 0.1      # RIDOTTO (era 0.35): Aux loss meno aggressiva
-
-  # BCE PI loss
+  
+  # ✅ Stage 1: Solo π
+  weight_cls: 0.0  # EBC OFF in Stage 1
+  weight_reg: 1.0  # π ON in Stage 1
+  weight_aux: 0.01  # Conteggio totale (opzionale)
+  
+  # BCE per π
   pi_loss_weight_bce: 1.0
-
-  # Count-Consistency Loss
-  count_consistency:
-    enable: true
-    weight: 0.1
-
 
 # =========================================================
 # TRAIN GLOBAL
@@ -114,67 +97,64 @@ train_base:
   output_dir: "./output_final"
   eval_freq: 5
 
-
 eval:
   batch_size: 1
   num_workers: 8
   sliding_window: false
 
-
 # =========================================================
-# STAGE 1 (ZIP) - CRITICO PER IL FIX
+# STAGE 1: Pre-training π Head (Filtro)
 # =========================================================
 train_stage1:
   batch_size: 16
   num_workers: 8
-  num_epochs: 1300
+  num_epochs: 10  # Test rapido (poi porta a 50-100)
 
-  lr: 1.0e-5          # Aumenta a 0.0001 (standard per training from scratch)
-  lr_backbone: 1.0e-6 # Aumenta leggermente anche questo
+  lr: 5.0e-4           # π-head learning rate
+  lr_backbone: 1.0e-5  # Backbone lento
   
   weight_decay: 1.0e-4
   optimizer: "adamw"
   scheduler: "cosine"
-  warmup_epochs: 5    # ✅ Aumenta warmup
+  warmup_epochs: 5
   
-  early_stopping_patience: 100
-  clip_grad_norm: 1.0  # ✅ Abbassa (era 2.0)
+  early_stopping_patience: 50
+  clip_grad_norm: 1.0
 
 # =========================================================
-# STAGE 2 (EBC)
+# STAGE 2: Pre-training EBC Head
 # =========================================================
 train_stage2:
   batch_size: 16
   num_workers: 4
-  num_epochs: 1300
+  num_epochs: 10
 
-  lr: 2.0e-5          # RIDOTTO (era 5.0e-5)
-  lr_backbone: 1.0e-6 # RIDOTTO
+  lr: 3.0e-4
+  lr_backbone: 0  # Backbone congelato
   optimizer: "adamw"
 
   weight_decay: 1.0e-4
   scheduler: "cosine"
-  warmup_epochs: 5
+  warmup_epochs: 3
 
-  early_stopping_patience: 120
+  early_stopping_patience: 50
   clip_grad_norm: 1.0
 
-
 # =========================================================
-# STAGE 3 (JOINT)
+# STAGE 3: Joint Fine-tuning
 # =========================================================
 train_stage3:
   batch_size: 8
   num_workers: 4
-  num_epochs: 1300
+  num_epochs: 10
 
-  lr: 1.0e-5          # RIDOTTO (era 1.5e-4): 1.5e-4 era ENORME per il fine-tuning!
-  lr_backbone: 1.0e-6
+  lr: 1.0e-4
+  lr_backbone: 5.0e-6  # Backbone molto lento
   optimizer: "adamw"
 
   weight_decay: 1.0e-4
   scheduler: "cosine"
-  warmup_epochs: 5
+  warmup_epochs: 3
 
-  early_stopping_patience: 120
+  early_stopping_patience: 50
   clip_grad_norm: 1.0

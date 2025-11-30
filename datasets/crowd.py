@@ -150,6 +150,13 @@ class Crowd(Dataset):
         image_names = [image_name] * len(images)
         images = torch.stack(images, 0)
 
+            # ✅ DEBUG: Verifica NaN subito dopo il caricamento
+        if torch.isnan(image).any():
+            print(f"💀 NaN trovato nell'immagine idx={idx}, file={self.files[idx]}")
+            # Sostituisci con un'immagine zero
+            image = torch.zeros_like(image)
+        
+
         if self.return_filename:
             return images, labels, density_maps, image_names
         else:

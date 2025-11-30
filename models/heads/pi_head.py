@@ -1,4 +1,4 @@
-# models/heads/conv_zip_head.py
+# models/heads/pi_head.py
 
 import torch
 import torch.nn as nn
@@ -35,6 +35,7 @@ class PiHead(nn.Module):
         self._init_weights()
 
     def _init_weights(self):
+        """Inizializzazione attenta per evitare NaN"""
         for m in self.shared.modules():
             if isinstance(m, nn.Conv2d):
                 nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
@@ -50,9 +51,19 @@ class PiHead(nn.Module):
             nn.init.constant_(self.pi_head.bias, 0.0)
 
     def forward(self, feat: torch.Tensor):
+        """
+        Forward pass della π-head.
+        
+        Args:
+            feat: Feature dal backbone [B, C, H, W]
+        
+        Returns:
+            Dictionary con:
+                - logit_pi_maps: Logits π [B, 2, H, W]
+        """
         h = self.shared(feat)
         
-        # Solo logits π
+        # Solo logits π (classe 0 = vuoto, classe 1 = pieno)
         logit_pi_maps = torch.clamp(self.pi_head(h), -10, 10)
         
         return {

@@ -28,6 +28,23 @@ def generate_density_map(label: Tensor, height: int, width: int, sigma: Optional
 
     return density_map
 
+
+def safe_collate_fn(batch):
+    # Chiama il collate_fn originale
+    images, points, density_maps = collate_fn(batch)
+    
+    # ✅ SANITIZZA NaN/Inf nelle immagini
+    if torch.isnan(images).any():
+        print(f"⚠️ NaN rilevato in {torch.isnan(images).sum()} pixel, sostituisco con 0")
+        images = torch.nan_to_num(images, nan=0.0)
+    
+    if torch.isinf(images).any():
+        print(f"⚠️ Inf rilevato in {torch.isinf(images).sum()} pixel, clamppo")
+        images = torch.clamp(images, -10, 10)
+    
+    return images, points, density_maps
+
+
 def collate_fn(batch):
     # 1. Decomprimi i 3 valori restituiti da Crowd.__getitem__
     #    Ogni elemento è (image_crops, label_crops, density_crops)

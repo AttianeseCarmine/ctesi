@@ -63,10 +63,6 @@ def main(args, cfg: Dict):
         ebc_bin_centers=cfg['model']['ebc_bin_centers'],
         text_prompts=cfg['model']['text_prompts'],
         
-        # Parametri per ZIP (ConvZIPHead)
-        zip_bins=cfg['model']['zip_bins'],
-        zip_bin_centers=cfg['model']['zip_bin_centers'],
-        zip_lambda_max=cfg['model'].get('zip_lambda_max', 8.0),
         
         # Parametri di Gating
         pi_thresh=cfg['model'].get('pi_thresh', 0.5),
@@ -92,18 +88,29 @@ def main(args, cfg: Dict):
 
 
     # --- 3. Logica di Stadio (Congelamento e Caricamento) ---
-    # (Questa sezione è GIA' CORRETTA per la nuova architettura)
     if args.stage == 1:
-        print("--- Configurazione STADIO 1: Pre-training PI Head (ConvZIP) + Backbone ---")
-        cfg['loss']['weight_cls'] = 0.0  # Disattiva loss EBC
-        cfg['loss']['weight_reg'] = 1.0  # Attiva loss ZIP
-        cfg['loss']['weight_aux'] = 0.0  
-        print(f"Pesi loss sovrascritti: CLS=0.0, REG=1.0, AUX=0.0")
+        print("--- STAGE 1: Pre-training π Head (Filtro Blocchi Vuoti) ---")
+        
+        # Loss: SOLO π
+        cfg['loss']['weight_cls'] = 0.0  # ❌ EBC OFF
+        cfg['loss']['weight_reg'] = 1.0  # ✅ π ON
+        cfg['loss']['weight_aux'] = 0.1  # ✅ Conteggio totale come regularizer (opzionale)
+        
+        print(f"Loss weights: π={cfg['loss']['weight_reg']}, "
+            f"EBC={cfg['loss']['weight_cls']}, "
+            f"AUX={cfg['loss']['weight_aux']}")
 
-        # Si addestrano Backbone e la nuova zip_head (ConvZIPHead)
-        print("Congelamento: ebc_head")
+        # Scongela tutto
+        for param in model.parameters():
+            param.requires_grad = True
+        
+        # Congela EBC head
+        print("Congelamento: ebc_head (non serve in Stage 1)")
         for param in model.ebc_head.parameters():
             param.requires_grad = False
+        
+        # ✅ OPZIONALE: Congela anche lambda_text_feats
+        model.lambda_text_feats.requires_grad = False
         
         save_path = stage1_ckpt_path
 
