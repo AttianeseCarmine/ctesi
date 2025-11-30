@@ -21,9 +21,6 @@ nohup python train.py --config "$CONFIG_FILE" --stage 1 > "$LOG_DIR/stage1.log" 
 echo "✅ STADIO 1 completato. Rinomino i checkpoint..."
 # Rinomina 'best.pth' in 'stage1_best.pth' così lo Stage 2 può trovarlo
 mv "$OUTPUT_DIR/best.pth" "$OUTPUT_DIR/stage1_best.pth"
-# (Opzionale) Rinomina anche il last per non sovrascriverlo
-mv "$OUTPUT_DIR/last.pth" "$OUTPUT_DIR/stage1_last.pth" 2>/dev/null || true
-
 
 # --- STADIO 2: Addestra LAMBDA Head ---
 echo ""
@@ -34,8 +31,6 @@ nohup python train.py --config "$CONFIG_FILE" --stage 2 --load_ckpt "$OUTPUT_DIR
 echo "✅ STADIO 2 completato. Rinomino i checkpoint..."
 # Rinomina il nuovo 'best.pth' (prodotto dallo Stage 2) in 'stage2_best.pth'
 mv "$OUTPUT_DIR/best.pth" "$OUTPUT_DIR/stage2_best.pth"
-mv "$OUTPUT_DIR/last.pth" "$OUTPUT_DIR/stage2_last.pth" 2>/dev/null || true
-
 
 # --- STADIO 3: Joint Fine-tuning ---
 echo ""

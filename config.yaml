@@ -31,7 +31,8 @@ dataset:
 model:
   name: "ViT-B-16"
   weight_name: "openai"
-  
+  norm: "batch_norm"   # ERA: "none" -> Questo stabilizza i valori
+  act: "relu"
   # Gating
   pi_soft_min: 0.3    # Soft gating in training
   pi_thresh: 0.6      # Hard threshold in eval
@@ -108,7 +109,7 @@ eval:
 train_stage1:
   batch_size: 16
   num_workers: 8
-  num_epochs: 10  # Test rapido (poi porta a 50-100)
+  num_epochs: 1000  # Test rapido (poi porta a 50-100)
 
   lr: 1.0e-4           # π-head learning rate
   lr_backbone: 1.0e-5  # Backbone lento
@@ -118,7 +119,7 @@ train_stage1:
   scheduler: "cosine"
   warmup_epochs: 5
   
-  early_stopping_patience: 50
+  early_stopping_patience: 200
   clip_grad_norm: 1.0
 
 # =========================================================
@@ -127,7 +128,7 @@ train_stage1:
 train_stage2:
   batch_size: 16
   num_workers: 4
-  num_epochs: 10
+  num_epochs: 1000
 
   lr: 3.0e-4
   lr_backbone: 0  # Backbone congelato
@@ -137,7 +138,7 @@ train_stage2:
   scheduler: "cosine"
   warmup_epochs: 3
 
-  early_stopping_patience: 50
+  early_stopping_patience: 200
   clip_grad_norm: 1.0
 
 # =========================================================
@@ -146,7 +147,7 @@ train_stage2:
 train_stage3:
   batch_size: 8
   num_workers: 4
-  num_epochs: 10
+  num_epochs: 1000
 
   lr: 1.0e-4
   lr_backbone: 5.0e-6  # Backbone molto lento
@@ -156,5 +157,5 @@ train_stage3:
   scheduler: "cosine"
   warmup_epochs: 3
 
-  early_stopping_patience: 50
+  early_stopping_patience: 200
   clip_grad_norm: 1.0
