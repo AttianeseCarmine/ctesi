@@ -48,7 +48,7 @@ model:
   gate_mode: "multiply"
 
   # Soft π Thresholding
-  pi_thresh: 0.4     # AUMENTATO (era 0.12): In validazione, siamo più severi nel dire "è vuoto" solo se siamo sicuri.
+  pi_thresh: 0.75     # AUMENTATO (era 0.12): In validazione, siamo più severi nel dire "è vuoto" solo se siamo sicuri.
   pi_soft_power: 1.0
 
   # λ regularization
@@ -129,7 +129,7 @@ train_stage1:
   num_workers: 8
   num_epochs: 1300
 
-  lr: 5.0e-5          # Aumenta a 0.0001 (standard per training from scratch)
+  lr: 1.0e-5          # Aumenta a 0.0001 (standard per training from scratch)
   lr_backbone: 1.0e-6 # Aumenta leggermente anche questo
   
   weight_decay: 1.0e-4
@@ -137,7 +137,7 @@ train_stage1:
   scheduler: "cosine"
   warmup_epochs: 5    # ✅ Aumenta warmup
   
-  early_stopping_patience: 1000
+  early_stopping_patience: 100
   clip_grad_norm: 1.0  # ✅ Abbassa (era 2.0)
 
 # =========================================================
