@@ -85,7 +85,7 @@ PI_HEAD:
 # ============================================================
 EBC_HEAD:
   # Temperature per il softmax della similarity
-  TEMPERATURE: 0.07
+  TEMPERATURE: 0.1
   
   # Learnable temperature
   LEARNABLE_TEMP: true
@@ -93,23 +93,6 @@ EBC_HEAD:
   # Refiner per le feature visive (opzionale)
   USE_REFINER: true
   REFINER_HIDDEN: 256
-  
-  # Prompts testuali per ogni bin di conteggio
-  # Verranno encodati con il text encoder di CLIP
-  TEXT_PROMPTS:
-    - "a photo showing exactly one person"
-    - "a photo showing exactly two people"
-    - "a photo showing exactly three people"
-    - "a photo showing exactly four people"
-    - "a photo showing exactly five people"
-    - "a photo showing exactly six people"
-    - "a photo showing exactly seven people"
-    - "a photo showing exactly eight people"
-    - "a photo showing exactly nine people"
-    - "a photo showing exactly ten people"
-    - "a photo showing about eleven or twelve people"
-    - "a photo showing about thirteen or fourteen people"
-    - "a dense crowd of fifteen or more people"
 
 # ============================================================
 # BINS CONFIGURATION
@@ -147,7 +130,7 @@ BINS_CONFIG:
 TRAIN_STAGE1:
   BATCH_SIZE: 8
   NUM_WORKERS: 4
-  EPOCHS: 300
+  EPOCHS: 1000
   
   # Learning rates
   LR_PI_HEAD: 1.0e-4          # π-head (da zero)
@@ -196,7 +179,7 @@ LOSS_STAGE1:
 TRAIN_STAGE2:
   BATCH_SIZE: 16
   NUM_WORKERS: 4
-  EPOCHS: 150
+  EPOCHS: 1000
   
   # Learning rates
   LR_EBC_HEAD: 3.0e-4         # EBC-head
@@ -227,7 +210,7 @@ LOSS_STAGE2:
   LABEL_SMOOTHING: 0.1
   
   # Loss ausiliaria sul conteggio totale
-  COUNT_WEIGHT: 0.5
+  COUNT_WEIGHT: 10
 
 # ============================================================
 # STAGE 3: Joint Fine-tuning
@@ -237,7 +220,7 @@ LOSS_STAGE2:
 TRAIN_STAGE3:
   BATCH_SIZE: 8
   NUM_WORKERS: 4
-  EPOCHS: 400
+  EPOCHS: 1300
   
   # Learning rates (più bassi per preservare ciò che è stato appreso)
   LR_HEADS: 5.0e-5            # Entrambe le teste

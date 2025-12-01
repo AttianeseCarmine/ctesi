@@ -322,4 +322,4 @@ if __name__ == "__main__":
     main(args.config)
 
     #python train_stage2.py --config config_sha.yaml
-    #python train_stage2.py --config config_sha.yaml | tee train_stage2.txt
+    #

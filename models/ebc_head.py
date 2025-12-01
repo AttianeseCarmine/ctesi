@@ -11,6 +11,7 @@ import torch.nn.functional as F
 from typing import List, Optional, Tuple
 import math
 
+from .utils import get_prompts_from_bins
 
 class FeatureRefiner(nn.Module):
     """
@@ -302,24 +303,39 @@ class EBCHeadWithBinLogits(nn.Module):
     
     Questa versione è più simile all'architettura CLIP-EBC originale.
     """
-    
     def __init__(
         self,
         visual_dim: int,
-        text_dim: int,
-        bins: List[Tuple[int, int]],
-        bin_centers: List[float],
-        temperature: float = 0.07,
-        learnable_temp: bool = True,
-        use_refiner: bool = True,
+        bins: List[Tuple[float, float]],
+        text_dim: int = 512,
+        text_prompts: Optional[List[str]] = None,
+        bin_centers: Optional[List[float]] = None,
+        use_refiner: bool = False,
+        refiner_layers: int = 2,
         refiner_hidden: int = 256,
+        temperature: float = 0.1,
+        refiner_dropout: float = 0.1,
+        initial_temp: float = 0.07,
+        learnable_temp: bool = True,
+        prompt_type: str = "word",  # <--- 1. AGGIUNGI QUESTO PARAMETRO
     ):
         super().__init__()
         
+        self.bins = bins
         self.visual_dim = visual_dim
         self.text_dim = text_dim
-        self.bins = bins
-        self.num_bins = len(bin_centers)
+        
+        # --- 2. MODIFICA QUESTO BLOCCO ---
+        # Logica per la generazione automatica dei prompt
+        if text_prompts is None or len(text_prompts) == 0:
+            # Se non vengono passati prompt manuali, generalii automaticamente usando utils.py
+            # Questo assicura che i prompt siano sempre sincronizzati con i bins definiti nel config
+            self.text_prompts_raw = get_prompts_from_bins(bins, prompt_type=prompt_type)
+            print(f"✅ EBCHead: Prompt generati automaticamente ({len(self.text_prompts_raw)} bins)")
+        else:
+            # Se vengono passati prompt manuali (dal config), usa quelli
+            self.text_prompts_raw = text_prompts
+            print(f"ℹ️ EBCHead: Usando {len(self.text_prompts_raw)} prompt manuali.")
         
         # Il primo bin [0,0] è gestito da π, quindi i bin effettivi per EBC sono num_bins - 1
         # Ma se bin_centers include lo 0, lo escludiamo
