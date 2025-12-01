@@ -129,3 +129,13 @@ experiments/sha_zip_clip_ebc/stage3/last_stage3_model.pth
 experiments/sha_zip_clip_ebc/stage3/logs/events.out.tfevents.1764536801.e9ec2311c7a9.53294.0
 experiments/sha_zip_clip_ebc/stage3/logs/events.out.tfevents.1764536890.e9ec2311c7a9.60886.0
 losses/__pycache__/__init__.cpython-312.pyc
+logs_pipeline/stage1.log
+logs_pipeline/stage2.log
+logs_pipeline/stage3.log
+losses/__pycache__/__init__.cpython-312.pyc
+losses/__pycache__/bregman_pytorch.cpython-312.pyc
+losses/__pycache__/dace_loss.cpython-312.pyc
+losses/__pycache__/dm_loss.cpython-312.pyc
+losses/__pycache__/losses.cpython-312.pyc
+losses/__pycache__/utils.cpython-312.pyc
+main_log.out
