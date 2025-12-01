@@ -204,8 +204,8 @@ TRAIN_STAGE2:
 # ============================================================
 LOSS_STAGE2:
   # Cross Entropy per classificazione nei bins
-  TYPE: "cross_entropy"
-  
+  #TYPE: "cross_entropy"
+  COUNT_LOSS_TYPE: "dmcount"
   # Label smoothing (opzionale)
   LABEL_SMOOTHING: 0.1
   
