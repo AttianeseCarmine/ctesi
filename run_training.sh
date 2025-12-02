@@ -18,7 +18,8 @@ echo "========================================================"
 
 # --- PULIZIA (Opzionale: scommenta se vuoi cancellare automaticamente i vecchi esperimenti) ---
 # echo "🧹 Cancellazione vecchi esperimenti..."
-# rm -rf experiments/*
+# 
+rm -rf experiments/*
 # echo "✅ Pulizia completata."
 
 # --- STAGE 1 ---
@@ -66,3 +67,9 @@ echo "🏆 TRAINING COMPLETATO CON SUCCESSO!"
 echo "========================================================"
 
 # nohup ./run_training.sh > main_log.out 2>&1 &
+echo " REALIZZO I GRAFICI DEI RISULTATI... "
+python visualize_stage1.py
+python visualize_stage2.py
+python visualize_stage3.py
+
+python logs/filter_logs.py logs_pipeline/stage1.log logs_pipeline/stage2.log logs_pipeline/stage3.log

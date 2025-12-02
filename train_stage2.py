@@ -1,17 +1,23 @@
 #!/usr/bin/env python3
 # ============================================================
-# ZIP-CLIP-EBC: Stage 2 Training - EBC-Head (CORRETTO)
+# ZIP-CLIP-EBC: Stage 2 Training - EBC-Head
 # ============================================================
-# Obiettivo: Addestrare l'EBC-head a contare usando DACELoss
-#            (Classificazione + Optimal Transport).
+# Obiettivo: Addestrare l'EBC-head a contare persone nei blocchi
+#            non-vuoti usando similarity CLIP.
+# Cosa viene addestrato: EBC-head
+# Cosa è congelato: π-head + backbone
 # ============================================================
 
+#!/usr/bin/env python3
 import argparse
 import os
 import sys
 import yaml
+import random
 import numpy as np
+from pathlib import Path
 import torch
+import torch.nn as nn
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
@@ -19,7 +25,8 @@ from tqdm import tqdm
 # --- I TUOI IMPORT ---
 from models.zip_clip_ebc_model import build_model
 from losses import build_stage2_loss
-from train_utils import init_seeds, get_scheduler, collate_fn
+# Importiamo le utility necessarie
+from train_utils import init_seeds, get_optimizer, get_scheduler, collate_fn, resume_if_exists
 from datasets import get_dataset
 from datasets.transforms import build_transforms
 
@@ -29,41 +36,39 @@ def load_config(config_path: str) -> dict:
 
 def train_one_epoch(model, dataloader, criterion, optimizer, device, config, epoch):
     model.train()
-    # Congeliamo backbone e pi_head (Stage 2)
+    # Congeliamo BNorm e Dropout di backbone e pi_head
     model.backbone.eval()
     model.pi_head.eval()
     
     total_loss = 0.0
     num_batches = 0
     
+    # Clip grad specifico per EBC (dal config)
     clip_grad = config.get("TRAIN_STAGE2", {}).get("CLIP_GRAD_NORM", 1.0)
     
     pbar = tqdm(dataloader, desc=f"Train Epoch {epoch}")
     
     for batch in pbar:
-        # 1. Estrazione Dati (con Punti per DACELoss)
-        images = batch['image'].to(device)
-        gt_density = batch['density'].to(device)
-        points = batch['points'] # Lista di tensori (necessaria per Optimal Transport)
-        
-        # Sposta i punti su device (se necessario per la loss specifica)
-        points = [p.to(device) for p in points]
+        # Gestione batch (dict o list)
+        if isinstance(batch, dict):
+            images = batch['image']
+            gt_density = batch['density']
+        else:
+            images, gt_density = batch[0], batch[1]
 
+        images = images.to(device)
+        gt_density = gt_density.to(device)
+        
         optimizer.zero_grad()
         
-        # 2. Forward Pass
-        # EBC Only: Ritorna un dizionario con logit e lambda
+        # Forward: EBC Only
+        # Nota: Qui usiamo la maschera generata da Pi (che è congelata).
+        # Se Pi è accurata (come abbiamo visto), va benissimo.
         outputs = model.forward_ebc_only(images)
         
-        # 3. Loss Calculation (DACELoss richiede argomenti specifici)
-        # Scompatta l'output del modello per la loss
-        pred_class = outputs['logit_bin_maps']
-        pred_density = outputs['lambda_maps']
+        # Loss: Stage 2 (Cross Entropy sui bin)
+        loss, loss_dict = criterion(outputs, gt_density)
         
-        # Chiamata corretta alla DACELoss
-        loss, loss_dict = criterion(pred_class, pred_density, gt_density, points)
-        
-        # 4. Backward & Step
         loss.backward()
         
         if clip_grad > 0:
@@ -74,11 +79,11 @@ def train_one_epoch(model, dataloader, criterion, optimizer, device, config, epo
         total_loss += loss.item()
         num_batches += 1
         
-        # Log
+        # Log veloce
+        ce_loss = loss_dict.get('ebc_ce_loss', 0)
         pbar.set_postfix({
             "loss": f"{loss.item():.4f}",
-            "ce": f"{loss_dict.get('ebc_ce_loss', 0):.4f}", # Logga parti della loss
-            "cnt": f"{loss_dict.get('ebc_count_loss', 0):.4f}"
+            "ce": f"{ce_loss:.4f}",
         })
     
     return total_loss / max(num_batches, 1)
@@ -87,24 +92,29 @@ def train_one_epoch(model, dataloader, criterion, optimizer, device, config, epo
 def validate(model, dataloader, criterion, device, config):
     model.eval()
     
+    total_loss = 0.0
     total_mae = 0.0
     total_mse = 0.0
     num_samples = 0
     
     for batch in tqdm(dataloader, desc="Validating", leave=False):
-        images = batch['image'].to(device)
-        gt_density = batch['density'].to(device)
-        points = batch['points']
-        points = [p.to(device) for p in points]
+        if isinstance(batch, dict):
+            images = batch['image']
+            gt_density = batch['density']
+        else:
+            images, gt_density = batch[0], batch[1]
+
+        images = images.to(device)
+        gt_density = gt_density.to(device)
         
-        # Inference
         outputs = model.forward_ebc_only(images)
         
-        # Per la validazione usiamo MAE/MSE sul conteggio puro
-        # pred_count è calcolato sommando la mappa di densità lambda
-        pred_density = outputs['lambda_maps']
-        pred_count = pred_density.sum(dim=[1, 2, 3])
+        # Loss
+        loss, _ = criterion(outputs, gt_density)
+        total_loss += loss.item()
         
+        # Metriche conteggio
+        pred_count = outputs["pred_count"]
         gt_count = gt_density.sum(dim=[1, 2, 3])
         
         mae = torch.abs(pred_count - gt_count).sum().item()
@@ -114,7 +124,10 @@ def validate(model, dataloader, criterion, device, config):
         total_mse += mse
         num_samples += images.shape[0]
     
+    num_batches = len(dataloader)
+    
     return {
+        "val_loss": total_loss / max(num_batches, 1),
         "val_mae": total_mae / max(num_samples, 1),
         "val_rmse": np.sqrt(total_mse / max(num_samples, 1)),
     }
@@ -128,55 +141,72 @@ def main(config_path: str):
     train_cfg = config.get("TRAIN_STAGE2", {})
     run_name = config.get("RUN_NAME", "experiment")
     
+    # Percorsi output corretti
     output_dir = os.path.join(config["EXP"]["OUT_DIR"], run_name, "stage2")
     os.makedirs(output_dir, exist_ok=True)
     
+    # Logging tensorboard
     writer = SummaryWriter(log_dir=os.path.join(output_dir, "logs"))
     
     print(f"=" * 60)
-    print(f"🚀 ZIP-CLIP-EBC: Stage 2 Training (EBC-Head) - REVISED")
-    print(f"   Loss: DACELoss (Classification + Optimal Transport)")
+    print(f"🚀 ZIP-CLIP-EBC: Stage 2 Training (EBC-Head)")
+    print(f"   Device: {device}")
     print(f"   Output: {output_dir}")
     print(f"=" * 60)
     
     # 1. Modello
     model = build_model(config).to(device)
     
-    # 2. Caricamento Stage 1
+    # 2. Carica Stage 1 (Gestione nomi file corretta)
     stage1_dir = os.path.join(config["EXP"]["OUT_DIR"], run_name, "stage1")
-    ckpt_path = os.path.join(stage1_dir, "best_stage1_model.pth")
     
-    if not os.path.exists(ckpt_path):
-        # Fallback names
-        ckpt_path = os.path.join(stage1_dir, "last_stage1_model.pth")
+    # Cerchiamo il checkpoint in ordine di preferenza
+    candidates = [
+        "best_stage1_model.pth", 
+        "last_stage1_model.pth", 
+        "best_model.pth" # Fallback vecchi nomi
+    ]
     
-    if os.path.exists(ckpt_path):
-        print(f"📥 Caricamento pesi Stage 1 da: {ckpt_path}")
-        ckpt = torch.load(ckpt_path, map_location=device)
-        # Gestione dict vs state_dict
-        if isinstance(ckpt, dict) and 'model' in ckpt:
-            model.load_state_dict(ckpt['model'], strict=False)
-        else:
-            model.load_state_dict(ckpt, strict=False)
-    else:
-        print(f"⚠️  ATTENZIONE: Checkpoint Stage 1 non trovato in {stage1_dir}!")
+    loaded = False
+    for filename in candidates:
+        ckpt_path = os.path.join(stage1_dir, filename)
+        if os.path.exists(ckpt_path):
+            print(f"📥 Caricamento pesi Stage 1 da: {ckpt_path}")
+            # Fix per PyTorch 2.6+
+            ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
+            
+            # Gestione se il checkpoint è dict completo o solo state_dict
+            if isinstance(ckpt, dict) and 'model' in ckpt:
+                model.load_state_dict(ckpt['model'], strict=False)
+            else:
+                model.load_state_dict(ckpt, strict=False)
+            loaded = True
+            break
     
-    # 3. Freeze & Unfreeze
+    if not loaded:
+        print(f"⚠️ ATTENZIONE: Nessun checkpoint Stage 1 trovato in {stage1_dir}!")
+        print("   Il training partirà da zero (sconsigliato).")
+    
+    # 3. Congelamento (Cruciale per Stage 2)
     model.freeze_backbone()
     model.freeze_pi_head()
     model.unfreeze_ebc_head()
     
-    print(f"🔒 Backbone e π-Head CONGELATI")
-    print(f"🔓 EBC-Head SCONGELATA per training")
+    # Verifica parametri
+    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"ℹ️  Parametri trainabili (EBC only): {trainable:,}")
     
-    # 4. Dataset
+    # 4. Dataset Reale (Copiato da Stage 1)
     data_cfg = config["DATA"]
     
-    # --- CORREZIONE TRANSFORMS ---
-    # Usiamo il parametro 'stage' per dire a build_transforms di leggere 
-    # CROP_SIZE_STAGE2 dal config
-    train_tf = build_transforms(config, is_train=True, stage="stage2")
-    val_tf = build_transforms(config, is_train=False, stage="stage2")
+    # Stage 2 usa crop normali (256) come definito nel config
+    train_tf = build_transforms(
+        data_cfg, 
+        is_train=True, 
+        override_crop_size=data_cfg.get("CROP_SIZE_STAGE2"),
+        override_crop_scale=data_cfg.get("CROP_SCALE_STAGE2")
+    )
+    val_tf = build_transforms(data_cfg, is_train=False)
     
     DatasetClass = get_dataset(config["DATASET"])
     
@@ -198,7 +228,7 @@ def main(config_path: str):
         batch_size=train_cfg.get("BATCH_SIZE", 8),
         shuffle=True,
         num_workers=train_cfg.get("NUM_WORKERS", 4),
-        collate_fn=collate_fn, # Importante per gestire la lista di punti!
+        collate_fn=collate_fn,
         pin_memory=True,
         drop_last=True
     )
@@ -211,10 +241,11 @@ def main(config_path: str):
         collate_fn=collate_fn
     )
     
-    # 5. Loss & Optimizer
-    # Nota: build_stage2_loss ora ritorna DACELoss come configurato
-    criterion = build_stage2_loss(config, device)
+    # 5. Loss, Optimizer, Scheduler
+    criterion = build_stage2_loss(config).to(device)
     
+    # Optimizer solo per EBC (usiamo la tua funzione helper se esiste, o config manuale)
+    # Qui usiamo la logica diretta per sicurezza
     lr_ebc = train_cfg.get("LR_EBC_HEAD", 1e-4)
     optimizer = torch.optim.AdamW(
         filter(lambda p: p.requires_grad, model.parameters()),
@@ -225,10 +256,22 @@ def main(config_path: str):
     num_epochs = train_cfg.get("EPOCHS", 100)
     scheduler = get_scheduler(optimizer, train_cfg, num_epochs)
     
-    # 6. Loop
+    # 6. Training Loop
     best_val_mae = float('inf')
+    start_epoch = 1
     
-    for epoch in range(1, num_epochs + 1):
+    # Resume Stage 2 (se esiste un checkpoint interrotto di Stage 2)
+    if train_cfg.get("RESUME_LAST", True):
+        last_s2 = os.path.join(output_dir, "last_stage2_model.pth")
+        if os.path.exists(last_s2):
+            ckpt = torch.load(last_s2, map_location=device, weights_only=False)
+            model.load_state_dict(ckpt['model'], strict=False)
+            optimizer.load_state_dict(ckpt['opt'])
+            start_epoch = ckpt['epoch'] + 1
+            best_val_mae = ckpt['best_val']
+            print(f"🔄 Resume Stage 2 dall'epoca {start_epoch}")
+
+    for epoch in range(start_epoch, num_epochs + 1):
         train_loss = train_one_epoch(
             model, train_loader, criterion, optimizer, device, config, epoch
         )
@@ -237,8 +280,9 @@ def main(config_path: str):
             scheduler.step()
         
         writer.add_scalar("train/loss", train_loss, epoch)
-        writer.add_scalar("lr/ebc", optimizer.param_groups[0]["lr"], epoch)
+        writer.add_scalar("lr/ebc_head", optimizer.param_groups[0]["lr"], epoch)
         
+        # Validazione
         if epoch % train_cfg.get("VAL_INTERVAL", 5) == 0 or epoch == num_epochs:
             metrics = validate(model, val_loader, criterion, device, config)
             
@@ -248,26 +292,34 @@ def main(config_path: str):
             print(f"📉 Epoch {epoch}: Train Loss={train_loss:.4f} | Val MAE={val_mae:.2f} | RMSE={val_rmse:.2f}")
             
             writer.add_scalar("val/mae", val_mae, epoch)
+            writer.add_scalar("val/rmse", val_rmse, epoch)
+            
+            # Save Checkpoints
+            ckpt_dict = {
+                "epoch": epoch,
+                "model": model.state_dict(),
+                "opt": optimizer.state_dict(),
+                "best_val": best_val_mae
+            }
+            
+            # Save Last
+            torch.save(ckpt_dict, os.path.join(output_dir, "last_stage2_model.pth"))
             
             # Save Best
             if val_mae < best_val_mae:
                 best_val_mae = val_mae
-                print(f"⭐ New Best Model! (MAE: {best_val_mae:.2f})")
+                print(f"⭐ New Best Stage 2 Model! (MAE: {best_val_mae:.2f})")
                 torch.save(model.state_dict(), os.path.join(output_dir, "best_stage2_model.pth"))
-            
-            # Save Last
-            torch.save({
-                'epoch': epoch,
-                'model': model.state_dict(),
-                'opt': optimizer.state_dict(),
-                'best_val': best_val_mae
-            }, os.path.join(output_dir, "last_stage2_model.pth"))
-
+    
     writer.close()
-    print("✅ Stage 2 Completato.")
+    print("✅ Stage 2 Completato!")
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description="ZIP-CLIP-EBC Stage 2")
     parser.add_argument("--config", type=str, default="config_sha.yaml")
     args = parser.parse_args()
+    
     main(args.config)
+
+    #python train_stage2.py --config config_sha.yaml
+    #

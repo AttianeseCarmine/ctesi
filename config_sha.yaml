@@ -130,7 +130,7 @@ BINS_CONFIG:
 TRAIN_STAGE1:
   BATCH_SIZE: 8
   NUM_WORKERS: 4
-  EPOCHS: 1000
+  EPOCHS: 700
   
   # Learning rates
   LR_PI_HEAD: 1.0e-4          # π-head (da zero)
@@ -204,8 +204,8 @@ TRAIN_STAGE2:
 # ============================================================
 LOSS_STAGE2:
   # Cross Entropy per classificazione nei bins
-  #TYPE: "cross_entropy"
-  COUNT_LOSS_TYPE: "dmcount"
+  TYPE: "cross_entropy"
+  
   # Label smoothing (opzionale)
   LABEL_SMOOTHING: 0.1
   
@@ -220,7 +220,7 @@ LOSS_STAGE2:
 TRAIN_STAGE3:
   BATCH_SIZE: 8
   NUM_WORKERS: 4
-  EPOCHS: 1300
+  EPOCHS: 1600
   
   # Learning rates (più bassi per preservare ciò che è stato appreso)
   LR_HEADS: 5.0e-5            # Entrambe le teste
