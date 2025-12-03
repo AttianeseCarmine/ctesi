@@ -146,3 +146,8 @@ logs/stage3_clean.txt
 logs/train_stage2.txt
 logs/train_stage3.txt
 logs/training_plot.png
+losses/__pycache__/losses.cpython-312.pyc
+models/__pycache__/zip_clip_ebc_model.cpython-312.pyc
+main_log.out
+
+experiments/
