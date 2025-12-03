@@ -278,3 +278,5 @@ EXP:
   OUT_DIR: "experiments"
   SAVE_BEST: true
   LOG_INTERVAL: 50
+
+  # 21:43 configurazione 
