@@ -65,7 +65,7 @@ MODEL:
   # EBC Head (CLIP-based)
   # Numero di bins per la classificazione del conteggio
   # Ogni bin corrisponde a un prompt testuale
-  NUM_EBC_BINS: 13            # 13 bins: 1,2,3,...,10,11-12,13-14,15+
+  NUM_EBC_BINS: 16            # 13 bins: 1,2,3,...,10,11-12,13-14,15+
   
   # Upsample output alla dimensione input
   UPSAMPLE_TO_INPUT: false    # false = mantieni la griglia del backbone
@@ -101,26 +101,37 @@ EBC_HEAD:
 # bin_centers sono i valori attesi per ogni bin (usati per calcolare λ)
 BINS_CONFIG:
   sha:
+    # Aumentiamo i bin per gestire meglio l'alta densità
     bins: [
-      [0, 0],      # Bin 0: zero persone (gestito da π)
-      [1, 1],      # Bin 1: 1 persona
-      [2, 2],      # Bin 2: 2 persone
-      [3, 3],      # Bin 3: 3 persone
-      [4, 4],      # Bin 4: 4 persone
-      [5, 5],      # Bin 5: 5 persone
-      [6, 6],      # Bin 6: 6 persone
-      [7, 7],      # Bin 7: 7 persone
-      [8, 8],      # Bin 8: 8 persone
-      [9, 9],      # Bin 9: 9 persone
-      [10, 10],    # Bin 10: 10 persone
-      [11, 12],    # Bin 11: 11-12 persone
-      [13, 14],    # Bin 12: 13-14 persone
-      [15, 9999]   # Bin 13: 15+ persone
+      [0, 0], [1, 1], [2, 2], [3, 3], [4, 4], 
+      [5, 5], [6, 6], [7, 7], [8, 8], [9, 10], 
+      [11, 12], [13, 14], [15, 17], [18, 21], [22, 29], [30, 9999]
     ]
-    # Centri dei bin (valore atteso per ogni bin)
-    # Nota: bin 0 non ha centro perché gestito da π
-    bin_centers: [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.5, 13.5, 25.0]
+    # Centri aggiornati per i nuovi bin
+    bin_centers: [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.5, 11.5, 13.5, 16.0, 19.5, 25.5, 35.0]
 
+# Definizione esplicita per massima precisione
+#    bins: [
+#      [0, 0],   # Bin 0 (Pi-Head)
+#      [1, 1], [2, 2], [3, 3], [4, 4], [5, 5], [6, 6], [7, 7], [8, 8], [9, 9], [10, 10],
+#      [11, 11], [12, 12], [13, 13], [14, 14], [15, 15], [16, 16], [17, 17], [18, 18], [19, 19], [20, 20],
+#      [21, 21], [22, 22], [23, 23], [24, 24], [25, 25], [26, 26], [27, 27], [28, 28], [29, 29], [30, 30],
+#      [31, 31], [32, 32], [33, 33], [34, 34], [35, 35], [36, 36], [37, 37], [38, 38], [39, 39], [40, 40],
+#      [41, 41], [42, 42], [43, 43], [44, 44], [45, 45], [46, 46], [47, 47], [48, 48], [49, 49], [50, 50],
+#      [51, 51], [52, 52], [53, 53], [54, 54], [55, 55], [56, 56], [57, 57], [58, 58], [59, 59], [60, 60],
+#      [61, 61], [62, 62], [63, 63], 
+#      [64, 9999] # Bin Finale (Folla estrema)
+#    ]
+#    # I centri sono semplicemente i numeri stessi (tranne l'ultimo)
+#    bin_centers: [
+#      0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0,
+#      11.0, 12.0, 13.0, 14.0, 15.0, 16.0, 17.0, 18.0, 19.0, 20.0,
+#      21.0, 22.0, 23.0, 24.0, 25.0, 26.0, 27.0, 28.0, 29.0, 30.0,
+#      31.0, 32.0, 33.0, 34.0, 35.0, 36.0, 37.0, 38.0, 39.0, 40.0,
+#      41.0, 42.0, 43.0, 44.0, 45.0, 46.0, 47.0, 48.0, 49.0, 50.0,
+#      51.0, 52.0, 53.0, 54.0, 55.0, 56.0, 57.0, 58.0, 59.0, 60.0,
+#      61.0, 62.0, 63.0, 75.0
+#    ]
 # ============================================================
 # STAGE 1: Training π-Head (Zero-Inflation)
 # ============================================================
@@ -130,7 +141,7 @@ BINS_CONFIG:
 TRAIN_STAGE1:
   BATCH_SIZE: 8
   NUM_WORKERS: 4
-  EPOCHS: 700
+  EPOCHS: 500
   
   # Learning rates
   LR_PI_HEAD: 1.0e-4          # π-head (da zero)
@@ -162,7 +173,7 @@ LOSS_STAGE1:
   POS_WEIGHT: 3.0
   
   # Loss ausiliaria sul conteggio totale
-  COUNT_WEIGHT: 0.0
+  COUNT_WEIGHT: 0.05
   
   # Regularizzazione sulla distribuzione di π
   PI_REG:
@@ -179,10 +190,10 @@ LOSS_STAGE1:
 TRAIN_STAGE2:
   BATCH_SIZE: 16
   NUM_WORKERS: 4
-  EPOCHS: 1000
+  EPOCHS: 800
   
   # Learning rates
-  LR_EBC_HEAD: 3.0e-4         # EBC-head
+  LR_EBC_HEAD: 1.0e-4        # EBC-head
   LR_BACKBONE: 0.0            # Backbone congelato
   
   OPTIMIZER: "adamw"
@@ -204,13 +215,17 @@ TRAIN_STAGE2:
 # ============================================================
 LOSS_STAGE2:
   # Cross Entropy per classificazione nei bins
-  TYPE: "cross_entropy"
-  
-  # Label smoothing (opzionale)
-  LABEL_SMOOTHING: 0.1
+  #TYPE: "cross_entropy"
+  TYPE: "distribution_matching"
   
   # Loss ausiliaria sul conteggio totale
-  COUNT_WEIGHT: 10
+  COUNT_WEIGHT: 0.1
+
+  # -----------------------------------------------------------
+  # Parametri specifici per Cross Entropy
+  LABEL_SMOOTHING: 0.1
+  # Parametri specifici per Distribution Matching
+  SIGMA: 1.0  # Larghezza della gaussiana target
 
 # ============================================================
 # STAGE 3: Joint Fine-tuning
@@ -220,7 +235,7 @@ LOSS_STAGE2:
 TRAIN_STAGE3:
   BATCH_SIZE: 8
   NUM_WORKERS: 4
-  EPOCHS: 1600
+  EPOCHS: 1300
   
   # Learning rates (più bassi per preservare ciò che è stato appreso)
   LR_HEADS: 5.0e-5            # Entrambe le teste
@@ -244,6 +259,9 @@ TRAIN_STAGE3:
 # LOSS STAGE 3 (Joint)
 # ============================================================
 LOSS_STAGE3:
+
+  TYPE: "distribution_matching"
+
   # Peso relativo delle due loss
   ALPHA_PI: 0.05               # Peso loss π
   ALPHA_EBC: 1.0              # Peso loss EBC
@@ -251,6 +269,8 @@ LOSS_STAGE3:
   # Loss sul conteggio totale
   COUNT_WEIGHT: 1.0
 
+  # Se usi distribution_matching qui, eredita il SIGMA o definiscilo:
+  SIGMA: 1.0
 # ============================================================
 # OUTPUT
 # ============================================================

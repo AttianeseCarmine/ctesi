@@ -19,7 +19,7 @@ echo "========================================================"
 # --- PULIZIA (Opzionale: scommenta se vuoi cancellare automaticamente i vecchi esperimenti) ---
 # echo "🧹 Cancellazione vecchi esperimenti..."
 # 
-rm -rf experiments/*
+#rm -rf experiments/*
 # echo "✅ Pulizia completata."
 
 # --- STAGE 1 ---
@@ -73,3 +73,10 @@ python visualize_stage2.py
 python visualize_stage3.py
 
 python logs/filter_logs.py logs_pipeline/stage1.log logs_pipeline/stage2.log logs_pipeline/stage3.log
+python logs/plot_training_logs.py logs/stage1_clean.txt --out grafico_stage1.png
+python logs/plot_training_logs.py logs/stage2_clean.txt --out grafico_stage2.png
+python logs/plot_training_logs.py logs/stage3_clean.txt --out grafico_stage3.png
+
+python evaluate_stage1.py --config config_sha.yaml
+python evaluate_stage2.py --config config_sha.yaml
+python evaluate_stage3.py --config config_sha.yaml

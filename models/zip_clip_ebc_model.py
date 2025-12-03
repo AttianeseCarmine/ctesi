@@ -15,36 +15,11 @@ from typing import Dict, List, Optional, Tuple
 from .clip_backbone import CLIPBackbone, build_clip_backbone
 from .pi_head import PiHead, build_pi_head
 from .ebc_head import EBCHeadWithBinLogits, build_ebc_head
-
+from .utils import get_prompts_from_bins
 
 class ZIPCLIPEBCModel(nn.Module):
     """
     Modello completo per crowd counting con Zero-Inflated architecture.
-    
-    Architettura:
-    ```
-    Input Image
-         │
-         ▼
-    ┌─────────────┐
-    │ CLIP Backbone│ ──► Feature Map [B, D, H, W]
-    └─────────────┘
-         │
-         ├──────────────────┐
-         ▼                  ▼
-    ┌─────────┐       ┌──────────┐
-    │ π-Head  │       │ EBC-Head │
-    │ (Conv)  │       │ (CLIP)   │
-    └─────────┘       └──────────┘
-         │                  │
-         ▼                  ▼
-    P(vuoto/pieno)    λ (count per bin)
-         │                  │
-         └───────┬──────────┘
-                 ▼
-        Density Map = (1 - P(vuoto)) × λ
-    ```
-    
     Args:
         config: Dizionario di configurazione
     """
@@ -104,39 +79,54 @@ class ZIPCLIPEBCModel(nn.Module):
         print(f"   Soft gate: {self.pi_soft_gate}")
     
     def _init_text_features(self, config: Dict):
-        """Inizializza le text features per l'EBC head."""
         ebc_cfg = config.get("EBC_HEAD", {})
         prompts = ebc_cfg.get("TEXT_PROMPTS", [])
         
         if not prompts:
-            # Usa prompts di default
-            prompts = [
-                "a photo showing exactly one person",
-                "a photo showing exactly two people",
-                "a photo showing exactly three people",
-                "a photo showing exactly four people",
-                "a photo showing exactly five people",
-                "a photo showing exactly six people",
-                "a photo showing exactly seven people",
-                "a photo showing exactly eight people",
-                "a photo showing exactly nine people",
-                "a photo showing exactly ten people",
-                "a photo showing about eleven or twelve people",
-                "a photo showing about thirteen or fourteen people",
-                "a dense crowd of fifteen or more people",
-            ]
-        
-        # Verifica che il numero di prompts corrisponda ai bins
+            dataset_name = config.get("DATASET", "sha")
+            bins_config = config.get("BINS_CONFIG", {}).get(dataset_name, {})
+            all_bins = bins_config.get("bins", [])
+            
+            # Escludi bin [0,0]
+            if all_bins and all_bins[0] in ([0, 0], (0, 0)):
+                target_bins = all_bins[1:]
+            else:
+                target_bins = all_bins
+            
+            # Usa la funzione esistente!
+            prompts = get_prompts_from_bins(target_bins, prompt_type="word")
+            
+            print(f"   ℹ️ Auto-Generated Prompts ({len(prompts)}):")
+            print(f"      Start: {prompts[:2]}")
+            print(f"      End:   {prompts[-1]}")
+        # Verifica coerenza
         expected_num = self.ebc_head.num_ebc_bins
         if len(prompts) != expected_num:
-            raise ValueError(
-                f"Numero di prompts ({len(prompts)}) non corrisponde "
-                f"al numero di EBC bins ({expected_num})"
-            )
+            # Fallback di emergenza se qualcosa va storto con i bin
+            print(f"⚠️ Warning: Mismatch prompt/bin ({len(prompts)} vs {expected_num}).")
+            print("   Tentativo di usare prompt di default estesi...")
+            # Un elenco di default più lungo per coprire i tuoi 16 bin attuali
+            default_prompts = [
+                "one person", "two people", "three people", "four people", 
+                "five people", "six people", "seven people", "eight people",
+                "nine or ten people", "eleven or twelve people", "thirteen or fourteen people",
+                "fifteen to seventeen people", "eighteen to twenty-one people", 
+                "twenty-two to twenty-nine people", "thirty or more people"
+            ]
+            # Se combaciano usiamo questi, altrimenti errore
+            if len(default_prompts) == expected_num:
+                prompts = default_prompts
+            else:
+                raise ValueError(
+                    f"ERRORE CRITICO: Generati {len(prompts)} prompt per {expected_num} bin EBC.\n"
+                    f"Controlla BINS_CONFIG in config_sha.yaml."
+                )
         
-        # Codifica i prompts
+        # Codifica i prompts con CLIP
         with torch.no_grad():
-            text_features = self.backbone.get_text_features(prompts)
+            # Assicurati che il device sia corretto
+            device = next(self.backbone.parameters()).device
+            text_features = self.backbone.get_text_features(prompts).to(device)
         
         # Imposta nell'EBC head
         self.ebc_head.set_text_features(text_features)

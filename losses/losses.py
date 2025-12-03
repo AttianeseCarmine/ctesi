@@ -334,24 +334,7 @@ class EBCHeadLoss(nn.Module):
 # ============================================================
 # STAGE 3: Joint Loss (Combinata)
 # ============================================================
-
 class JointLoss(nn.Module):
-    """
-    Loss combinata per Stage 3 (fine-tuning congiunto).
-    
-    Combina:
-    - Loss π-head (BCE)
-    - Loss EBC-head (CE)
-    - Loss sul conteggio totale
-    
-    Args:
-        bins: Lista di bins
-        alpha_pi: Peso per loss π
-        alpha_ebc: Peso per loss EBC
-        count_weight: Peso per loss conteggio
-        block_size: Dimensione blocco
-    """
-    
     def __init__(
         self,
         bins: List[Tuple[int, int]],
@@ -361,6 +344,9 @@ class JointLoss(nn.Module):
         block_size: int = 16,
         pos_weight_pi: float = 3.0,
         label_smoothing_ebc: float = 0.1,
+        # --- NUOVI PARAMETRI ---
+        ebc_loss_type: str = "cross_entropy",
+        ebc_sigma: float = 1.0,
     ):
         super().__init__()
         
@@ -369,20 +355,29 @@ class JointLoss(nn.Module):
         self.count_weight = count_weight
         self.block_size = block_size
         
-        # Loss components
+        # 1. Componente Pi-Head (Sempre presente!)
         self.pi_loss = PiHeadLoss(
             pos_weight=pos_weight_pi,
-            count_weight=0.0,  # Gestiamo il count separatamente
+            count_weight=0.0,
             pi_reg_weight=0.0,
             block_size=block_size,
         )
         
-        self.ebc_loss = EBCHeadLoss(
-            bins=bins,
-            label_smoothing=label_smoothing_ebc,
-            count_weight=0.0,  # Gestiamo il count separatamente
-            block_size=block_size,
-        )
+        # 2. Componente EBC-Head (Scelta dinamica)
+        if ebc_loss_type == "distribution_matching":
+            self.ebc_loss = DistributionMatchingLoss(
+                bins=bins,
+                sigma=ebc_sigma,
+                count_weight=0.0, # Count gestito globalmente da JointLoss
+                block_size=block_size
+            )
+        else:
+            self.ebc_loss = EBCHeadLoss(
+                bins=bins,
+                label_smoothing=label_smoothing_ebc,
+                count_weight=0.0,
+                block_size=block_size,
+            )
     
     def forward(
         self,
@@ -427,7 +422,96 @@ class JointLoss(nn.Module):
         
         return total_loss, loss_dict
 
+class DistributionMatchingLoss(nn.Module):
+    """
+    Nuova Loss sperimentale: invece di penalizzare se il bin non è esatto,
+    cerca di matchare la distribuzione di probabilità.
+    """
+    def __init__(self, bins, sigma=1.0, count_weight=0.5, block_size=16):
+        super().__init__()
+        self.bins = bins
+        # Escludiamo il bin 0 se è [0,0] (gestito da Pi-head)
+        if bins[0] == [0, 0] or bins[0] == (0, 0):
+            self.ebc_bins = bins[1:]
+        else:
+            self.ebc_bins = bins
+            
+        self.num_ebc_bins = len(self.ebc_bins)
+        # Centri dei bin per calcolare la distanza
+        self.bin_centers = torch.tensor([(b[0] + b[1]) / 2.0 for b in self.ebc_bins]).float()
+        
+        self.sigma = sigma
+        self.count_weight = count_weight
+        self.block_size = block_size
+        self.kl_loss = nn.KLDivLoss(reduction='none')
 
+    def generate_soft_targets(self, gt_counts, device):
+        # [N, 1]
+        gt = gt_counts.unsqueeze(1)
+        # [1, num_bins]
+        centers = self.bin_centers.to(device).unsqueeze(0)
+        
+        # Distanza quadratica -> Gaussiana
+        dist_sq = (gt - centers) ** 2
+        logits = -dist_sq / (2 * self.sigma ** 2)
+        
+        # Softmax -> Probabilità target
+        targets = F.softmax(logits, dim=1)
+        return targets
+
+    def forward(self, predictions, gt_density):
+        logit_bin_maps = predictions["logit_bin_maps"] 
+        lambda_maps = predictions["lambda_maps"]
+        pi_prob = predictions.get("pi_prob")
+        
+        # 1. Prepara GT (come prima)
+        B, C, H, W = logit_bin_maps.shape
+        gt_counts_map = F.avg_pool2d(
+            gt_density, 
+            kernel_size=self.block_size, 
+            stride=self.block_size
+        ) * (self.block_size ** 2)
+        
+        if gt_counts_map.shape[-2:] != (H, W):
+            gt_counts_map = F.interpolate(gt_counts_map, size=(H, W), mode='nearest')
+            
+        # 2. Seleziona solo blocchi attivi
+        mask = (gt_counts_map > 0.1).float().squeeze(1)
+        valid_pixels = mask > 0
+        
+        if valid_pixels.sum() == 0:
+            return torch.tensor(0.0, device=logit_bin_maps.device, requires_grad=True), {}
+
+        # 3. Predizioni sui pixel validi
+        pred_logits_valid = logit_bin_maps.permute(0, 2, 3, 1)[valid_pixels] 
+        pred_log_probs = F.log_softmax(pred_logits_valid, dim=1)
+        
+        gt_counts_valid = gt_counts_map.squeeze(1)[valid_pixels]
+        
+        # 4. KL Divergence con Soft Targets
+        with torch.no_grad():
+            target_probs = self.generate_soft_targets(gt_counts_valid, pred_logits_valid.device)
+            
+        kl_loss = self.kl_loss(pred_log_probs, target_probs).sum(dim=1).mean()
+        
+        # 5. Count Loss (Ausiliaria)
+        count_loss = torch.tensor(0.0, device=logit_bin_maps.device)
+        if self.count_weight > 0:
+            if pi_prob is not None:
+                pred_density = pi_prob * lambda_maps
+            else:
+                pred_density = lambda_maps
+            pred_count = pred_density.sum(dim=[1, 2, 3])
+            gt_count = gt_density.sum(dim=[1, 2, 3])
+            count_loss = F.l1_loss(pred_count, gt_count)
+
+        total_loss = kl_loss + self.count_weight * count_loss
+        
+        return total_loss, {
+            "ebc_ce_loss": kl_loss.detach(), # Manteniamo lo stesso nome chiave per i log!
+            "ebc_count_loss": count_loss.detach(),
+            "ebc_total_loss": total_loss.detach()
+        }
 # ============================================================
 # Factory Functions
 # ============================================================
@@ -446,7 +530,7 @@ def build_stage1_loss(config: Dict) -> PiHeadLoss:
         block_size=data_cfg.get("ZIP_BLOCK_SIZE", 16),
     )
 
-
+'''
 def build_stage2_loss(config: Dict) -> EBCHeadLoss:
     """Costruisce la loss per Stage 2."""
     loss_cfg = config.get("LOSS_STAGE2", {})
@@ -476,7 +560,60 @@ def build_stage3_loss(config: Dict) -> JointLoss:
         count_weight=loss_cfg.get("COUNT_WEIGHT", 0.2),
         block_size=data_cfg.get("ZIP_BLOCK_SIZE", 16),
     )
+'''
 
+def build_stage2_loss(config: Dict):
+    loss_cfg = config.get("LOSS_STAGE2", {})
+    loss_type = loss_cfg.get("TYPE", "cross_entropy") # Default al vecchio metodo
+    
+    data_cfg = config.get("DATA", {})
+    dataset_name = config.get("DATASET", "sha")
+    bins_cfg = config.get("BINS_CONFIG", {}).get(dataset_name, {})
+    bins = bins_cfg.get("bins", [])
+    
+    print(f"🔧 Costruzione Loss Stage 2. Tipo: {loss_type.upper()}")
+
+    if loss_type == "distribution_matching":
+        return DistributionMatchingLoss(
+            bins=bins,
+            sigma=loss_cfg.get("SIGMA", 1.0),
+            count_weight=loss_cfg.get("COUNT_WEIGHT", 0.5),
+            block_size=data_cfg.get("ZIP_BLOCK_SIZE", 16),
+        )
+    else:
+        # Vecchia implementazione
+        return EBCHeadLoss(
+            bins=bins,
+            label_smoothing=loss_cfg.get("LABEL_SMOOTHING", 0.1),
+            count_weight=loss_cfg.get("COUNT_WEIGHT", 0.5),
+            block_size=data_cfg.get("ZIP_BLOCK_SIZE", 16),
+        )
+
+def build_stage3_loss(config: Dict) -> JointLoss:
+    """Costruisce la loss per Stage 3."""
+    loss_cfg = config.get("LOSS_STAGE3", {})
+    loss_type = loss_cfg.get("TYPE", "cross_entropy") 
+    
+    data_cfg = config.get("DATA", {})
+    dataset_name = config.get("DATASET", "sha")
+    bins_cfg = config.get("BINS_CONFIG", {}).get(dataset_name, {})
+    
+    # 1. Recupera i bins (correzione: prima mancava questa riga!)
+    bins = bins_cfg.get("bins", [[0, 0], [1, 1]])
+    
+    print(f"🔧 Costruzione Loss Stage 3 (Joint). EBC Mode: {loss_type.upper()}")
+    
+    # Restituiamo SEMPRE JointLoss, ma configurata diversamente
+    return JointLoss(
+        bins=bins,
+        alpha_pi=loss_cfg.get("ALPHA_PI", 0.05),
+        alpha_ebc=loss_cfg.get("ALPHA_EBC", 1.0),
+        count_weight=loss_cfg.get("COUNT_WEIGHT", 1.0),
+        block_size=data_cfg.get("ZIP_BLOCK_SIZE", 16),
+        # Passiamo la configurazione per la sotto-loss EBC
+        ebc_loss_type=loss_type,
+        ebc_sigma=loss_cfg.get("SIGMA", 1.0)
+    )
 
 if __name__ == "__main__":
     # Test
@@ -525,3 +662,5 @@ if __name__ == "__main__":
         print(f"  {k}: {v.item():.4f}")
     
     print("\n✅ Test completato!")
+
+# FACCIAMO QUESTA PROVA

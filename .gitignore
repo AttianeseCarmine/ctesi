@@ -139,3 +139,10 @@ losses/__pycache__/dm_loss.cpython-312.pyc
 losses/__pycache__/losses.cpython-312.pyc
 losses/__pycache__/utils.cpython-312.pyc
 main_log.out
+config_sha.yaml
+logs/stage1_clean.txt
+logs/stage2_clean.txt
+logs/stage3_clean.txt
+logs/train_stage2.txt
+logs/train_stage3.txt
+logs/training_plot.png
