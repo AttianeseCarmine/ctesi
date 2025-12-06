@@ -10,9 +10,5 @@
 📥 Caricamento pesi Stage 1 da: experiments/sha_zip_clip_ebc/stage1/best_stage1_model.pth
 🔓 EBC-head scongelato
 ℹ️  Parametri trainabili (EBC only): 264,449
-📉 Scheduler attivo: COSINE (max_epochs=6)
-📉 Epoch 5: Train Loss=31.8575 | Val MAE=2092.13 | RMSE=2377.94
-⭐ New Best Stage 2 Model! (MAE: 2092.13)
-📉 Epoch 6: Train Loss=31.4965 | Val MAE=2091.62 | RMSE=2377.37
-⭐ New Best Stage 2 Model! (MAE: 2091.62)
+📉 Scheduler attivo: COSINE (max_epochs=800)
 ✅ Stage 2 Completato!

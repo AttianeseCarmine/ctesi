@@ -1,13 +1,9 @@
- # ============================================================
-# ZIP-CLIP-EBC: Configurazione per ShanghaiTech Part A
 # ============================================================
-# Architettura:
-#   - Backbone: CLIP ViT-B/16 (feature extractor)
-#   - π-Head: Convoluzionale puro (classifica blocchi vuoti/pieni)
-#   - λ-Head (EBC): CLIP-based (conta persone nei blocchi non-vuoti)
+# ZIP-CLIP-EBC: Configurazione per ShanghaiTech Part A
+# VERSIONE: High-Resolution (64 Bins)
 # ============================================================
 
-RUN_NAME: "sha_zip_clip_ebc"
+RUN_NAME: "sha_zip_clip_ebc_64bins"
 SEED: 42
 DEVICE: "cuda"
 
@@ -20,25 +16,23 @@ DATA:
   TRAIN_SPLIT: "train"
   VAL_SPLIT: "val"
   
-  # Dimensioni blocco per ZIP (deve corrispondere allo stride del backbone)
-  # CLIP ViT-B/16 ha patch_size=16, quindi ZIP_BLOCK_SIZE=16
+  # CLIP ViT-B/16 ha patch_size=16
   ZIP_BLOCK_SIZE: 16
   
   # Augmentation
   CROP_SIZE: 256
   CROP_SCALE: [0.75, 1.5]
-  CROP_SIZE_STAGE1: 384      # Stage 1 beneficia di crop più grandi
+  CROP_SIZE_STAGE1: 384
   CROP_SCALE_STAGE1: [0.5, 2.0]
   CROP_SIZE_STAGE2: 256
   CROP_SCALE_STAGE2: [0.5, 2.0]
   
-  # Normalizzazione CLIP (IMPORTANTE: diversa da ImageNet!)
+  # Normalizzazione CLIP
   NORM_MEAN: [0.48145466, 0.4578275, 0.40821073]
   NORM_STD: [0.26862954, 0.26130258, 0.27577711]
   
   IMG_EXTS: [".jpg", ".png"]
   
-  # Count-aware sampler per bilanciare il training
   COUNT_SAMPLER:
     ENABLE: true
     BASE_WEIGHT: 1.0
@@ -49,234 +43,154 @@ DATA:
 # MODELLO
 # ============================================================
 MODEL:
-  # Backbone CLIP
   BACKBONE: "ViT-B-16"
   CLIP_PRETRAINED: "openai"
   
   # π-Head (convoluzionale)
-  PI_THRESH: 0.3              # Soglia hard per inference
-  PI_SOFT_GATE: true          # Usa soft gating durante training
-  PI_SOFT_MIN: 0.1            # Minimo valore della maschera soft
-  PI_SOFT_POWER: 1.0          # Potenza per il gating
+  PI_THRESH: 0.3
+  PI_SOFT_GATE: true
+  PI_SOFT_MIN: 0.1
+  PI_SOFT_POWER: 1.0
+  GATE_MODE: "multiply"
   
-  # Gating mode: come combinare π con le feature
-  GATE_MODE: "multiply"       # "multiply" o "concat"
+  # EBC Head (High Resolution)
+  # 64 Bin di conteggio (escluso lo zero gestito da π)
+  NUM_EBC_BINS: 64
   
-  # EBC Head (CLIP-based)
-  # Numero di bins per la classificazione del conteggio
-  # Ogni bin corrisponde a un prompt testuale
-  NUM_EBC_BINS: 16            # 13 bins: 1,2,3,...,10,11-12,13-14,15+
-  
-  # Upsample output alla dimensione input
-  UPSAMPLE_TO_INPUT: false    # false = mantieni la griglia del backbone
+  UPSAMPLE_TO_INPUT: false
 
 # ============================================================
-# π-HEAD CONFIG (Convoluzionale)
+# π-HEAD CONFIG
 # ============================================================
 PI_HEAD:
-  # Architettura: feature -> conv -> 2 classi (vuoto/pieno)
   HIDDEN_DIM: 256
   NUM_LAYERS: 2
   DROPOUT: 0.1
   USE_BN: true
 
 # ============================================================
-# EBC HEAD CONFIG (CLIP-based)
+# EBC HEAD CONFIG
 # ============================================================
 EBC_HEAD:
-  # Temperature per il softmax della similarity
   TEMPERATURE: 0.1
-  
-  # Learnable temperature
   LEARNABLE_TEMP: true
-  
-  # Refiner per le feature visive (opzionale)
   USE_REFINER: true
   REFINER_HIDDEN: 256
 
 # ============================================================
-# BINS CONFIGURATION
+# BINS CONFIGURATION (64 Classi)
 # ============================================================
-# Ogni bin definisce un range [min, max] di conteggio
-# bin_centers sono i valori attesi per ogni bin (usati per calcolare λ)
+# Bin 0: [0,0] (Gestito da Pi-Head)
+# Bin 1-63: [1,1]...[63,63] (Conteggio esatto)
+# Bin 64: [64, 9999] (Folla estrema)
 BINS_CONFIG:
   sha:
-    # Aumentiamo i bin per gestire meglio l'alta densità
     bins: [
-      [0, 0], [1, 1], [2, 2], [3, 3], [4, 4], 
-      [5, 5], [6, 6], [7, 7], [8, 8], [9, 10], 
-      [11, 12], [13, 14], [15, 17], [18, 21], [22, 29], [30, 9999]
+      [0, 0],
+      [1, 1], [2, 2], [3, 3], [4, 4], [5, 5], [6, 6], [7, 7], [8, 8], [9, 9], [10, 10],
+      [11, 11], [12, 12], [13, 13], [14, 14], [15, 15], [16, 16], [17, 17], [18, 18], [19, 19], [20, 20],
+      [21, 21], [22, 22], [23, 23], [24, 24], [25, 25], [26, 26], [27, 27], [28, 28], [29, 29], [30, 30],
+      [31, 31], [32, 32], [33, 33], [34, 34], [35, 35], [36, 36], [37, 37], [38, 38], [39, 39], [40, 40],
+      [41, 41], [42, 42], [43, 43], [44, 44], [45, 45], [46, 46], [47, 47], [48, 48], [49, 49], [50, 50],
+      [51, 51], [52, 52], [53, 53], [54, 54], [55, 55], [56, 56], [57, 57], [58, 58], [59, 59], [60, 60],
+      [61, 61], [62, 62], [63, 63],
+      [64, 9999]
     ]
-    # Centri aggiornati per i nuovi bin
-    bin_centers: [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.5, 11.5, 13.5, 16.0, 19.5, 25.5, 35.0]
+    # Centri dei bin per il calcolo della density map
+    bin_centers: [
+      0.0,
+      1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0,
+      11.0, 12.0, 13.0, 14.0, 15.0, 16.0, 17.0, 18.0, 19.0, 20.0,
+      21.0, 22.0, 23.0, 24.0, 25.0, 26.0, 27.0, 28.0, 29.0, 30.0,
+      31.0, 32.0, 33.0, 34.0, 35.0, 36.0, 37.0, 38.0, 39.0, 40.0,
+      41.0, 42.0, 43.0, 44.0, 45.0, 46.0, 47.0, 48.0, 49.0, 50.0,
+      51.0, 52.0, 53.0, 54.0, 55.0, 56.0, 57.0, 58.0, 59.0, 60.0,
+      61.0, 62.0, 63.0,
+      75.0
+    ]
 
-# Definizione esplicita per massima precisione
-#    bins: [
-#      [0, 0],   # Bin 0 (Pi-Head)
-#      [1, 1], [2, 2], [3, 3], [4, 4], [5, 5], [6, 6], [7, 7], [8, 8], [9, 9], [10, 10],
-#      [11, 11], [12, 12], [13, 13], [14, 14], [15, 15], [16, 16], [17, 17], [18, 18], [19, 19], [20, 20],
-#      [21, 21], [22, 22], [23, 23], [24, 24], [25, 25], [26, 26], [27, 27], [28, 28], [29, 29], [30, 30],
-#      [31, 31], [32, 32], [33, 33], [34, 34], [35, 35], [36, 36], [37, 37], [38, 38], [39, 39], [40, 40],
-#      [41, 41], [42, 42], [43, 43], [44, 44], [45, 45], [46, 46], [47, 47], [48, 48], [49, 49], [50, 50],
-#      [51, 51], [52, 52], [53, 53], [54, 54], [55, 55], [56, 56], [57, 57], [58, 58], [59, 59], [60, 60],
-#      [61, 61], [62, 62], [63, 63], 
-#      [64, 9999] # Bin Finale (Folla estrema)
-#    ]
-#    # I centri sono semplicemente i numeri stessi (tranne l'ultimo)
-#    bin_centers: [
-#      0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0,
-#      11.0, 12.0, 13.0, 14.0, 15.0, 16.0, 17.0, 18.0, 19.0, 20.0,
-#      21.0, 22.0, 23.0, 24.0, 25.0, 26.0, 27.0, 28.0, 29.0, 30.0,
-#      31.0, 32.0, 33.0, 34.0, 35.0, 36.0, 37.0, 38.0, 39.0, 40.0,
-#      41.0, 42.0, 43.0, 44.0, 45.0, 46.0, 47.0, 48.0, 49.0, 50.0,
-#      51.0, 52.0, 53.0, 54.0, 55.0, 56.0, 57.0, 58.0, 59.0, 60.0,
-#      61.0, 62.0, 63.0, 75.0
-#    ]
 # ============================================================
-# STAGE 1: Training π-Head (Zero-Inflation)
+# STAGE 1: Training π-Head
 # ============================================================
-# Obiettivo: Imparare a distinguere blocchi vuoti da blocchi con persone
-# Cosa si addestra: π-Head + fine-tuning leggero del backbone
-# Cosa è congelato: EBC-Head
 TRAIN_STAGE1:
   BATCH_SIZE: 8
   NUM_WORKERS: 4
-  EPOCHS: 500
-  
-  # Learning rates
-  LR_PI_HEAD: 1.0e-4          # π-head (da zero)
-  LR_BACKBONE: 1.0e-5         # Backbone (fine-tuning leggero)
-  
+  EPOCHS: 500  # Aumentato per sicurezza
+  LR_PI_HEAD: 1.0e-4
+  LR_BACKBONE: 1.0e-5
   OPTIMIZER: "adamw"
   WEIGHT_DECAY: 1.0e-4
-  
   SCHEDULER: "cosine"
   WARMUP_EPOCHS: 5
   LR_MIN_FACTOR: 0.01
-  
   VAL_INTERVAL: 5
   EARLY_STOPPING_PATIENCE: 50
   CLIP_GRAD_NORM: 1.0
-  
   RESUME_LAST: true
   SAVE_BEST: true
 
-# ============================================================
-# LOSS STAGE 1 (π-Head)
-# ============================================================
 LOSS_STAGE1:
-  # Binary Cross Entropy per classificazione vuoto/pieno
   TYPE: "bce_with_logits"
-  
-  # Peso per classe positiva (blocchi con persone)
-  # > 1.0 perché i blocchi vuoti sono la maggioranza
   POS_WEIGHT: 3.0
-  
-  # Loss ausiliaria sul conteggio totale
-  COUNT_WEIGHT: 0.05
-  
-  # Regularizzazione sulla distribuzione di π
+  COUNT_WEIGHT: 0.05 # Aiuto leggero per il backbone
   PI_REG:
     ENABLE: true
-    TARGET_MEAN: 0.25         # Target: ~25% blocchi occupati
+    TARGET_MEAN: 0.25
     WEIGHT: 1.0e-3
 
 # ============================================================
-# STAGE 2: Training EBC-Head (Conteggio CLIP-based)
+# STAGE 2: Training EBC-Head
 # ============================================================
-# Obiettivo: Imparare a contare persone nei blocchi NON vuoti
-# Cosa si addestra: EBC-Head
-# Cosa è congelato: π-Head + Backbone
 TRAIN_STAGE2:
   BATCH_SIZE: 16
   NUM_WORKERS: 4
-  EPOCHS: 800
-  
-  # Learning rates
-  LR_EBC_HEAD: 1.0e-4        # EBC-head
-  LR_BACKBONE: 0.0            # Backbone congelato
-  
+  EPOCHS: 1000 # Necessario per 64 classi
+  LR_EBC_HEAD: 1.0e-4
+  LR_BACKBONE: 0.0
   OPTIMIZER: "adamw"
   WEIGHT_DECAY: 1.0e-4
-  
   SCHEDULER: "cosine"
   WARMUP_EPOCHS: 3
   LR_MIN_FACTOR: 0.01
-  
   VAL_INTERVAL: 5
   EARLY_STOPPING_PATIENCE: 40
   CLIP_GRAD_NORM: 1.0
-  
   RESUME_LAST: true
   SAVE_BEST: true
 
-# ============================================================
-# LOSS STAGE 2 (EBC-Head)
-# ============================================================
 LOSS_STAGE2:
-  # Cross Entropy per classificazione nei bins
-  #TYPE: "cross_entropy"
   TYPE: "distribution_matching"
-  
-  # Loss ausiliaria sul conteggio totale
-  COUNT_WEIGHT: 0.1
-
-  # -----------------------------------------------------------
-  # Parametri specifici per Cross Entropy
-  LABEL_SMOOTHING: 0.1
-  # Parametri specifici per Distribution Matching
-  SIGMA: 1.0  # Larghezza della gaussiana target
+  SIGMA: 1.0
+  COUNT_WEIGHT: 0.1 # Basso per evitare instabilità
 
 # ============================================================
 # STAGE 3: Joint Fine-tuning
 # ============================================================
-# Obiettivo: Ottimizzare tutto insieme per coerenza globale
-# Cosa si addestra: Tutto (π + EBC + Backbone)
 TRAIN_STAGE3:
   BATCH_SIZE: 8
   NUM_WORKERS: 4
   EPOCHS: 1300
-  
-  # Learning rates (più bassi per preservare ciò che è stato appreso)
-  LR_HEADS: 5.0e-5            # Entrambe le teste
-  LR_BACKBONE: 5.0e-6         # Backbone (molto leggero)
-  
+  LR_HEADS: 1.0e-5
+  LR_BACKBONE: 1.0e-6
   OPTIMIZER: "adamw"
   WEIGHT_DECAY: 1.0e-4
-  
   SCHEDULER: "cosine"
   WARMUP_EPOCHS: 5
   LR_MIN_FACTOR: 0.01
-  
   VAL_INTERVAL: 5
   EARLY_STOPPING_PATIENCE: 40
   CLIP_GRAD_NORM: 1.0
-  
   RESUME_LAST: false
   SAVE_BEST: true
 
-# ============================================================
-# LOSS STAGE 3 (Joint)
-# ============================================================
 LOSS_STAGE3:
-
   TYPE: "distribution_matching"
-
-  # Peso relativo delle due loss
-  ALPHA_PI: 0.05               # Peso loss π
-  ALPHA_EBC: 1.0              # Peso loss EBC
-  
-  # Loss sul conteggio totale
-  COUNT_WEIGHT: 1.0
-
-  # Se usi distribution_matching qui, eredita il SIGMA o definiscilo:
+  ALPHA_PI: 0.05
+  ALPHA_EBC: 1.0
+  COUNT_WEIGHT: 1
   SIGMA: 1.0
-# ============================================================
-# OUTPUT
-# ============================================================
+
 EXP:
   OUT_DIR: "experiments"
   SAVE_BEST: true
   LOG_INTERVAL: 50
-
-  # 21:43 configurazione 

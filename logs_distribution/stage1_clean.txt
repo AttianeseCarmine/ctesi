@@ -9,10 +9,7 @@
 🔓 Backbone scongelato
 🔓 π-head scongelato
 ⚙️  Creazione optimizer: ADAMW (lr=5e-05, weight_decay=0.0001)
-📉 Scheduler attivo: COSINE (max_epochs=6)
+📉 Scheduler attivo: COSINE (max_epochs=500)
 ℹ️ Count-aware sampler attivo: avg_w=9.349, max_count=3138.0
-ℹ️ Nessun checkpoint precedente trovato, partenza da zero.
-📉 Epoch 5: Train Loss=5.5887 | Val MAE=6929.32 | RMSE=7866.13
-⭐ New Best Model Saved (MAE=6929.32)!
-📉 Epoch 6: Train Loss=4.6719 | Val MAE=7092.54 | RMSE=8009.04
+✅ Ripreso l'addestramento da experiments/sha_zip_clip_ebc/stage1/last_stage1_model.pth (epoch=501)
 ✅ Stage 1 Completato!

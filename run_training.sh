@@ -19,7 +19,7 @@ echo "========================================================"
 # --- PULIZIA (Opzionale: scommenta se vuoi cancellare automaticamente i vecchi esperimenti) ---
 # echo "🧹 Cancellazione vecchi esperimenti..."
 # 
-#rm -rf experiments/*
+rm -rf experiments/*
 # echo "✅ Pulizia completata."
 
 # --- STAGE 1 ---
