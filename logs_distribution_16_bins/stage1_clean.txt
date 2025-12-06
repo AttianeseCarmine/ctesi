@@ -1,0 +1,60 @@
+🚀 Avvio Stage 1: Training Pi-Head (Zero-Inflation)
+✅ CLIPBackbone inizializzato:
+✅ PiHead inizializzato:
+✅ EBCHead: Prompt generati automaticamente (17 bins)
+✅ EBCHeadWithBinLogits inizializzato:
+ℹ️ Auto-Generated Prompts (16):
+✅ ZIPCLIPEBCModel inizializzato:
+🔓 Backbone SCONGELATO (Fine-tuning)
+🔓 Backbone scongelato
+🔓 π-head scongelato
+⚙️  Creazione optimizer: ADAMW (lr=5e-05, weight_decay=0.0001)
+📉 Scheduler attivo: COSINE (max_epochs=200)
+ℹ️ Count-aware sampler attivo: avg_w=9.349, max_count=3138.0
+ℹ️ Nessun checkpoint precedente trovato, partenza da zero.
+📉 Epoch 5: Train Loss=7.3428 | Val MAE=6214.38 | RMSE=7197.52
+⭐ New Best Model Saved (MAE=6214.38)!
+📉 Epoch 10: Train Loss=5.5564 | Val MAE=7285.14 | RMSE=8118.39
+📉 Epoch 15: Train Loss=5.3007 | Val MAE=7801.99 | RMSE=8841.48
+📉 Epoch 20: Train Loss=3.1718 | Val MAE=3998.84 | RMSE=4704.35
+⭐ New Best Model Saved (MAE=3998.84)!
+📉 Epoch 25: Train Loss=3.0963 | Val MAE=5339.31 | RMSE=6270.33
+📉 Epoch 30: Train Loss=2.6026 | Val MAE=2943.62 | RMSE=3703.78
+⭐ New Best Model Saved (MAE=2943.62)!
+📉 Epoch 35: Train Loss=2.0404 | Val MAE=2988.43 | RMSE=3866.99
+📉 Epoch 40: Train Loss=3.5296 | Val MAE=3765.08 | RMSE=4506.04
+📉 Epoch 45: Train Loss=2.0152 | Val MAE=2709.91 | RMSE=3828.52
+⭐ New Best Model Saved (MAE=2709.91)!
+📉 Epoch 50: Train Loss=2.0025 | Val MAE=3518.64 | RMSE=4282.44
+📉 Epoch 55: Train Loss=2.0064 | Val MAE=4285.03 | RMSE=5454.79
+📉 Epoch 60: Train Loss=2.6337 | Val MAE=3053.41 | RMSE=3890.35
+📉 Epoch 65: Train Loss=3.2431 | Val MAE=3003.80 | RMSE=3676.72
+📉 Epoch 70: Train Loss=2.9277 | Val MAE=3065.31 | RMSE=4000.25
+📉 Epoch 75: Train Loss=2.1095 | Val MAE=3263.14 | RMSE=4072.83
+📉 Epoch 80: Train Loss=2.7229 | Val MAE=3596.64 | RMSE=4384.22
+📉 Epoch 85: Train Loss=2.2573 | Val MAE=3219.91 | RMSE=4080.98
+📉 Epoch 90: Train Loss=1.7256 | Val MAE=3222.17 | RMSE=3916.76
+📉 Epoch 95: Train Loss=2.1914 | Val MAE=3895.74 | RMSE=4773.53
+📉 Epoch 100: Train Loss=2.2522 | Val MAE=2287.76 | RMSE=3011.86
+⭐ New Best Model Saved (MAE=2287.76)!
+📉 Epoch 105: Train Loss=1.8757 | Val MAE=3338.67 | RMSE=4201.68
+📉 Epoch 110: Train Loss=1.4565 | Val MAE=3344.07 | RMSE=4158.12
+📉 Epoch 115: Train Loss=1.6660 | Val MAE=3131.02 | RMSE=3935.81
+📉 Epoch 120: Train Loss=1.3118 | Val MAE=3170.71 | RMSE=3993.29
+📉 Epoch 125: Train Loss=1.4348 | Val MAE=3125.83 | RMSE=3851.97
+📉 Epoch 130: Train Loss=1.7599 | Val MAE=3281.45 | RMSE=4021.52
+📉 Epoch 135: Train Loss=1.3010 | Val MAE=3672.16 | RMSE=4505.64
+📉 Epoch 140: Train Loss=1.4620 | Val MAE=3653.83 | RMSE=4483.34
+📉 Epoch 145: Train Loss=1.5013 | Val MAE=3310.24 | RMSE=4109.20
+📉 Epoch 150: Train Loss=1.5769 | Val MAE=3395.69 | RMSE=4222.92
+📉 Epoch 155: Train Loss=1.4739 | Val MAE=3301.90 | RMSE=4132.82
+📉 Epoch 160: Train Loss=1.3451 | Val MAE=3081.58 | RMSE=3833.80
+📉 Epoch 165: Train Loss=1.5835 | Val MAE=3325.94 | RMSE=4103.89
+📉 Epoch 170: Train Loss=1.2209 | Val MAE=3451.49 | RMSE=4282.11
+📉 Epoch 175: Train Loss=1.1740 | Val MAE=3237.04 | RMSE=4023.98
+📉 Epoch 180: Train Loss=1.2620 | Val MAE=3209.66 | RMSE=3969.88
+📉 Epoch 185: Train Loss=1.3512 | Val MAE=3493.93 | RMSE=4323.05
+📉 Epoch 190: Train Loss=1.0976 | Val MAE=3423.48 | RMSE=4235.72
+📉 Epoch 195: Train Loss=1.0906 | Val MAE=3505.84 | RMSE=4340.05
+📉 Epoch 200: Train Loss=1.6354 | Val MAE=3425.70 | RMSE=4236.35
+✅ Stage 1 Completato!

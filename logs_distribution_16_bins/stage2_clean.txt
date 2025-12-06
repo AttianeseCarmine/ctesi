@@ -1,0 +1,291 @@
+============================================================
+🚀 ZIP-CLIP-EBC: Stage 2 Training (EBC-Head)
+============================================================
+✅ CLIPBackbone inizializzato:
+✅ PiHead inizializzato:
+✅ EBCHead: Prompt generati automaticamente (17 bins)
+✅ EBCHeadWithBinLogits inizializzato:
+ℹ️ Auto-Generated Prompts (16):
+✅ ZIPCLIPEBCModel inizializzato:
+📥 Caricamento pesi Stage 1 da: experiments/sha_zip_clip_ebc_l40s/stage1/best_stage1_model.pth
+🔓 EBC-head scongelato
+ℹ️  Parametri trainabili (EBC only): 264,449
+📉 Scheduler attivo: COSINE (max_epochs=1000)
+📉 Epoch 5: Train Loss=61.3233 | Val MAE=985.11 | RMSE=1317.34
+⭐ New Best Stage 2 Model! (MAE: 985.11)
+📉 Epoch 10: Train Loss=34.1520 | Val MAE=641.46 | RMSE=875.18
+⭐ New Best Stage 2 Model! (MAE: 641.46)
+📉 Epoch 15: Train Loss=31.2615 | Val MAE=589.30 | RMSE=807.70
+⭐ New Best Stage 2 Model! (MAE: 589.30)
+📉 Epoch 20: Train Loss=32.3328 | Val MAE=581.47 | RMSE=797.55
+⭐ New Best Stage 2 Model! (MAE: 581.47)
+📉 Epoch 25: Train Loss=30.1729 | Val MAE=578.40 | RMSE=793.65
+⭐ New Best Stage 2 Model! (MAE: 578.40)
+📉 Epoch 30: Train Loss=30.5463 | Val MAE=576.58 | RMSE=791.27
+⭐ New Best Stage 2 Model! (MAE: 576.58)
+📉 Epoch 35: Train Loss=30.7075 | Val MAE=574.87 | RMSE=788.92
+⭐ New Best Stage 2 Model! (MAE: 574.87)
+📉 Epoch 40: Train Loss=29.5439 | Val MAE=573.55 | RMSE=787.04
+⭐ New Best Stage 2 Model! (MAE: 573.55)
+📉 Epoch 45: Train Loss=28.5918 | Val MAE=572.59 | RMSE=785.61
+⭐ New Best Stage 2 Model! (MAE: 572.59)
+📉 Epoch 50: Train Loss=29.5201 | Val MAE=571.97 | RMSE=784.58
+⭐ New Best Stage 2 Model! (MAE: 571.97)
+📉 Epoch 55: Train Loss=29.0366 | Val MAE=571.60 | RMSE=783.76
+⭐ New Best Stage 2 Model! (MAE: 571.60)
+📉 Epoch 60: Train Loss=30.0197 | Val MAE=571.37 | RMSE=783.08
+⭐ New Best Stage 2 Model! (MAE: 571.37)
+📉 Epoch 65: Train Loss=28.9157 | Val MAE=571.70 | RMSE=783.05
+📉 Epoch 70: Train Loss=28.4226 | Val MAE=572.13 | RMSE=783.09
+📉 Epoch 75: Train Loss=28.4037 | Val MAE=572.91 | RMSE=783.54
+📉 Epoch 80: Train Loss=29.2353 | Val MAE=573.51 | RMSE=783.77
+📉 Epoch 85: Train Loss=29.0317 | Val MAE=573.95 | RMSE=783.84
+📉 Epoch 90: Train Loss=29.7802 | Val MAE=574.28 | RMSE=783.79
+📉 Epoch 95: Train Loss=29.8480 | Val MAE=574.52 | RMSE=783.68
+📉 Epoch 100: Train Loss=27.9907 | Val MAE=574.76 | RMSE=783.57
+📉 Epoch 105: Train Loss=27.8494 | Val MAE=574.67 | RMSE=783.10
+📉 Epoch 110: Train Loss=29.0003 | Val MAE=574.18 | RMSE=782.19
+📉 Epoch 115: Train Loss=27.7200 | Val MAE=573.82 | RMSE=781.47
+📉 Epoch 120: Train Loss=27.3483 | Val MAE=572.83 | RMSE=780.01
+📉 Epoch 125: Train Loss=29.9048 | Val MAE=572.03 | RMSE=778.79
+📉 Epoch 130: Train Loss=28.0998 | Val MAE=571.11 | RMSE=777.45
+⭐ New Best Stage 2 Model! (MAE: 571.11)
+📉 Epoch 135: Train Loss=27.4233 | Val MAE=570.33 | RMSE=776.29
+⭐ New Best Stage 2 Model! (MAE: 570.33)
+📉 Epoch 140: Train Loss=26.5409 | Val MAE=569.01 | RMSE=774.50
+⭐ New Best Stage 2 Model! (MAE: 569.01)
+📉 Epoch 145: Train Loss=27.6215 | Val MAE=567.85 | RMSE=772.91
+⭐ New Best Stage 2 Model! (MAE: 567.85)
+📉 Epoch 150: Train Loss=28.4268 | Val MAE=567.75 | RMSE=772.50
+⭐ New Best Stage 2 Model! (MAE: 567.75)
+📉 Epoch 155: Train Loss=27.8949 | Val MAE=569.41 | RMSE=774.37
+📉 Epoch 160: Train Loss=26.2371 | Val MAE=569.13 | RMSE=773.75
+📉 Epoch 165: Train Loss=26.6060 | Val MAE=564.66 | RMSE=768.37
+⭐ New Best Stage 2 Model! (MAE: 564.66)
+📉 Epoch 170: Train Loss=26.9180 | Val MAE=559.23 | RMSE=762.02
+⭐ New Best Stage 2 Model! (MAE: 559.23)
+📉 Epoch 175: Train Loss=26.1492 | Val MAE=558.06 | RMSE=760.50
+⭐ New Best Stage 2 Model! (MAE: 558.06)
+📉 Epoch 180: Train Loss=27.6484 | Val MAE=553.76 | RMSE=755.60
+⭐ New Best Stage 2 Model! (MAE: 553.76)
+📉 Epoch 185: Train Loss=25.5092 | Val MAE=552.04 | RMSE=753.10
+⭐ New Best Stage 2 Model! (MAE: 552.04)
+📉 Epoch 190: Train Loss=25.4104 | Val MAE=547.49 | RMSE=747.64
+⭐ New Best Stage 2 Model! (MAE: 547.49)
+📉 Epoch 195: Train Loss=25.2522 | Val MAE=544.72 | RMSE=743.51
+⭐ New Best Stage 2 Model! (MAE: 544.72)
+📉 Epoch 200: Train Loss=25.8239 | Val MAE=542.08 | RMSE=740.46
+⭐ New Best Stage 2 Model! (MAE: 542.08)
+📉 Epoch 205: Train Loss=25.5489 | Val MAE=542.06 | RMSE=739.28
+⭐ New Best Stage 2 Model! (MAE: 542.06)
+📉 Epoch 210: Train Loss=25.9210 | Val MAE=538.83 | RMSE=735.33
+⭐ New Best Stage 2 Model! (MAE: 538.83)
+📉 Epoch 215: Train Loss=26.0720 | Val MAE=530.80 | RMSE=727.40
+⭐ New Best Stage 2 Model! (MAE: 530.80)
+📉 Epoch 220: Train Loss=24.7185 | Val MAE=530.36 | RMSE=725.82
+⭐ New Best Stage 2 Model! (MAE: 530.36)
+📉 Epoch 225: Train Loss=25.1191 | Val MAE=527.38 | RMSE=722.08
+⭐ New Best Stage 2 Model! (MAE: 527.38)
+📉 Epoch 230: Train Loss=25.0623 | Val MAE=522.53 | RMSE=717.73
+⭐ New Best Stage 2 Model! (MAE: 522.53)
+📉 Epoch 235: Train Loss=25.6631 | Val MAE=519.34 | RMSE=714.21
+⭐ New Best Stage 2 Model! (MAE: 519.34)
+📉 Epoch 240: Train Loss=25.4293 | Val MAE=524.77 | RMSE=718.18
+📉 Epoch 245: Train Loss=25.4648 | Val MAE=521.72 | RMSE=714.62
+📉 Epoch 250: Train Loss=24.9395 | Val MAE=520.98 | RMSE=713.58
+📉 Epoch 255: Train Loss=25.4863 | Val MAE=518.54 | RMSE=710.53
+⭐ New Best Stage 2 Model! (MAE: 518.54)
+📉 Epoch 260: Train Loss=24.4422 | Val MAE=510.69 | RMSE=703.26
+⭐ New Best Stage 2 Model! (MAE: 510.69)
+📉 Epoch 265: Train Loss=24.6737 | Val MAE=511.64 | RMSE=702.95
+📉 Epoch 270: Train Loss=25.3652 | Val MAE=507.93 | RMSE=699.25
+⭐ New Best Stage 2 Model! (MAE: 507.93)
+📉 Epoch 275: Train Loss=24.5609 | Val MAE=506.56 | RMSE=697.88
+⭐ New Best Stage 2 Model! (MAE: 506.56)
+📉 Epoch 280: Train Loss=25.2249 | Val MAE=506.83 | RMSE=696.80
+📉 Epoch 285: Train Loss=25.4862 | Val MAE=502.80 | RMSE=692.94
+⭐ New Best Stage 2 Model! (MAE: 502.80)
+📉 Epoch 290: Train Loss=24.7080 | Val MAE=500.01 | RMSE=691.02
+⭐ New Best Stage 2 Model! (MAE: 500.01)
+📉 Epoch 295: Train Loss=24.5023 | Val MAE=505.87 | RMSE=694.31
+📉 Epoch 300: Train Loss=24.7251 | Val MAE=500.43 | RMSE=689.16
+📉 Epoch 305: Train Loss=23.7692 | Val MAE=497.79 | RMSE=686.91
+⭐ New Best Stage 2 Model! (MAE: 497.79)
+📉 Epoch 310: Train Loss=25.1193 | Val MAE=497.70 | RMSE=686.07
+⭐ New Best Stage 2 Model! (MAE: 497.70)
+📉 Epoch 315: Train Loss=23.8378 | Val MAE=498.25 | RMSE=685.68
+📉 Epoch 320: Train Loss=23.8483 | Val MAE=498.43 | RMSE=685.22
+📉 Epoch 325: Train Loss=23.0117 | Val MAE=495.92 | RMSE=682.65
+⭐ New Best Stage 2 Model! (MAE: 495.92)
+📉 Epoch 330: Train Loss=24.4587 | Val MAE=492.93 | RMSE=679.97
+⭐ New Best Stage 2 Model! (MAE: 492.93)
+📉 Epoch 335: Train Loss=24.1239 | Val MAE=490.91 | RMSE=677.98
+⭐ New Best Stage 2 Model! (MAE: 490.91)
+📉 Epoch 340: Train Loss=24.5143 | Val MAE=492.61 | RMSE=678.13
+📉 Epoch 345: Train Loss=22.7916 | Val MAE=492.20 | RMSE=677.28
+📉 Epoch 350: Train Loss=22.9820 | Val MAE=490.37 | RMSE=675.27
+⭐ New Best Stage 2 Model! (MAE: 490.37)
+📉 Epoch 355: Train Loss=23.1102 | Val MAE=488.59 | RMSE=673.37
+⭐ New Best Stage 2 Model! (MAE: 488.59)
+📉 Epoch 360: Train Loss=23.3555 | Val MAE=485.55 | RMSE=670.93
+⭐ New Best Stage 2 Model! (MAE: 485.55)
+📉 Epoch 365: Train Loss=23.5791 | Val MAE=483.14 | RMSE=669.04
+⭐ New Best Stage 2 Model! (MAE: 483.14)
+📉 Epoch 370: Train Loss=23.2062 | Val MAE=481.63 | RMSE=667.80
+⭐ New Best Stage 2 Model! (MAE: 481.63)
+📉 Epoch 375: Train Loss=23.6000 | Val MAE=482.73 | RMSE=667.29
+📉 Epoch 380: Train Loss=24.5848 | Val MAE=483.19 | RMSE=666.86
+📉 Epoch 385: Train Loss=23.3991 | Val MAE=486.85 | RMSE=669.54
+📉 Epoch 390: Train Loss=22.3821 | Val MAE=481.48 | RMSE=664.56
+⭐ New Best Stage 2 Model! (MAE: 481.48)
+📉 Epoch 395: Train Loss=21.6604 | Val MAE=483.30 | RMSE=665.61
+📉 Epoch 400: Train Loss=23.4583 | Val MAE=481.62 | RMSE=663.48
+📉 Epoch 405: Train Loss=23.0402 | Val MAE=477.97 | RMSE=660.65
+⭐ New Best Stage 2 Model! (MAE: 477.97)
+📉 Epoch 410: Train Loss=23.0228 | Val MAE=476.88 | RMSE=659.51
+⭐ New Best Stage 2 Model! (MAE: 476.88)
+📉 Epoch 415: Train Loss=23.0114 | Val MAE=479.55 | RMSE=660.62
+📉 Epoch 420: Train Loss=22.4474 | Val MAE=476.25 | RMSE=657.65
+⭐ New Best Stage 2 Model! (MAE: 476.25)
+📉 Epoch 425: Train Loss=22.8975 | Val MAE=478.44 | RMSE=658.80
+📉 Epoch 430: Train Loss=22.9525 | Val MAE=475.58 | RMSE=656.21
+⭐ New Best Stage 2 Model! (MAE: 475.58)
+📉 Epoch 435: Train Loss=22.2496 | Val MAE=479.07 | RMSE=658.69
+📉 Epoch 440: Train Loss=22.3740 | Val MAE=477.14 | RMSE=657.11
+📉 Epoch 445: Train Loss=23.0063 | Val MAE=474.71 | RMSE=654.71
+⭐ New Best Stage 2 Model! (MAE: 474.71)
+📉 Epoch 450: Train Loss=22.1431 | Val MAE=477.03 | RMSE=655.71
+📉 Epoch 455: Train Loss=21.7149 | Val MAE=471.58 | RMSE=651.22
+⭐ New Best Stage 2 Model! (MAE: 471.58)
+📉 Epoch 460: Train Loss=22.6442 | Val MAE=471.99 | RMSE=651.15
+📉 Epoch 465: Train Loss=22.1671 | Val MAE=473.87 | RMSE=652.40
+📉 Epoch 470: Train Loss=21.8293 | Val MAE=474.54 | RMSE=652.39
+📉 Epoch 475: Train Loss=21.3277 | Val MAE=473.11 | RMSE=650.94
+📉 Epoch 480: Train Loss=22.2775 | Val MAE=467.62 | RMSE=646.38
+⭐ New Best Stage 2 Model! (MAE: 467.62)
+📉 Epoch 485: Train Loss=21.6024 | Val MAE=465.19 | RMSE=644.85
+⭐ New Best Stage 2 Model! (MAE: 465.19)
+📉 Epoch 490: Train Loss=21.6451 | Val MAE=470.07 | RMSE=647.69
+📉 Epoch 495: Train Loss=21.6768 | Val MAE=466.56 | RMSE=644.54
+📉 Epoch 500: Train Loss=21.4582 | Val MAE=467.48 | RMSE=644.92
+📉 Epoch 505: Train Loss=21.6388 | Val MAE=467.39 | RMSE=644.69
+📉 Epoch 510: Train Loss=22.9406 | Val MAE=462.45 | RMSE=640.88
+⭐ New Best Stage 2 Model! (MAE: 462.45)
+📉 Epoch 515: Train Loss=22.4290 | Val MAE=465.09 | RMSE=641.99
+📉 Epoch 520: Train Loss=20.9571 | Val MAE=465.36 | RMSE=641.85
+📉 Epoch 525: Train Loss=21.3183 | Val MAE=465.19 | RMSE=641.51
+📉 Epoch 530: Train Loss=20.4546 | Val MAE=462.51 | RMSE=639.02
+📉 Epoch 535: Train Loss=21.3265 | Val MAE=466.30 | RMSE=642.16
+📉 Epoch 540: Train Loss=22.2374 | Val MAE=462.37 | RMSE=638.03
+⭐ New Best Stage 2 Model! (MAE: 462.37)
+📉 Epoch 545: Train Loss=20.9930 | Val MAE=462.22 | RMSE=637.73
+⭐ New Best Stage 2 Model! (MAE: 462.22)
+📉 Epoch 550: Train Loss=21.7069 | Val MAE=465.91 | RMSE=641.06
+📉 Epoch 555: Train Loss=21.5803 | Val MAE=462.73 | RMSE=637.81
+📉 Epoch 560: Train Loss=21.0019 | Val MAE=461.06 | RMSE=636.32
+⭐ New Best Stage 2 Model! (MAE: 461.06)
+📉 Epoch 565: Train Loss=21.0349 | Val MAE=458.73 | RMSE=634.17
+⭐ New Best Stage 2 Model! (MAE: 458.73)
+📉 Epoch 570: Train Loss=21.4647 | Val MAE=458.16 | RMSE=633.48
+⭐ New Best Stage 2 Model! (MAE: 458.16)
+📉 Epoch 575: Train Loss=19.9173 | Val MAE=458.84 | RMSE=633.65
+📉 Epoch 580: Train Loss=21.6349 | Val MAE=459.54 | RMSE=633.90
+📉 Epoch 585: Train Loss=21.2293 | Val MAE=458.63 | RMSE=633.14
+📉 Epoch 590: Train Loss=21.2730 | Val MAE=455.60 | RMSE=630.39
+⭐ New Best Stage 2 Model! (MAE: 455.60)
+📉 Epoch 595: Train Loss=20.5087 | Val MAE=460.76 | RMSE=634.61
+📉 Epoch 600: Train Loss=20.7038 | Val MAE=457.96 | RMSE=632.20
+📉 Epoch 605: Train Loss=20.6922 | Val MAE=456.39 | RMSE=630.46
+📉 Epoch 610: Train Loss=21.0379 | Val MAE=454.46 | RMSE=628.67
+⭐ New Best Stage 2 Model! (MAE: 454.46)
+📉 Epoch 615: Train Loss=21.5368 | Val MAE=459.28 | RMSE=632.67
+📉 Epoch 620: Train Loss=20.2183 | Val MAE=457.80 | RMSE=631.31
+📉 Epoch 625: Train Loss=21.1040 | Val MAE=453.80 | RMSE=627.60
+⭐ New Best Stage 2 Model! (MAE: 453.80)
+📉 Epoch 630: Train Loss=20.3130 | Val MAE=454.98 | RMSE=628.39
+📉 Epoch 635: Train Loss=20.2414 | Val MAE=452.15 | RMSE=625.76
+⭐ New Best Stage 2 Model! (MAE: 452.15)
+📉 Epoch 640: Train Loss=19.6748 | Val MAE=454.00 | RMSE=627.22
+📉 Epoch 645: Train Loss=20.6086 | Val MAE=454.57 | RMSE=627.55
+📉 Epoch 650: Train Loss=20.5619 | Val MAE=454.70 | RMSE=627.90
+📉 Epoch 655: Train Loss=21.2762 | Val MAE=453.07 | RMSE=625.86
+📉 Epoch 660: Train Loss=20.7249 | Val MAE=453.30 | RMSE=625.91
+📉 Epoch 665: Train Loss=20.1444 | Val MAE=450.71 | RMSE=623.46
+⭐ New Best Stage 2 Model! (MAE: 450.71)
+📉 Epoch 670: Train Loss=20.7545 | Val MAE=452.35 | RMSE=624.79
+📉 Epoch 675: Train Loss=20.6584 | Val MAE=453.67 | RMSE=625.98
+📉 Epoch 680: Train Loss=19.7814 | Val MAE=450.72 | RMSE=622.92
+📉 Epoch 685: Train Loss=21.3536 | Val MAE=450.17 | RMSE=622.38
+⭐ New Best Stage 2 Model! (MAE: 450.17)
+📉 Epoch 690: Train Loss=20.6320 | Val MAE=451.75 | RMSE=623.88
+📉 Epoch 695: Train Loss=19.0367 | Val MAE=450.51 | RMSE=622.52
+📉 Epoch 700: Train Loss=19.6412 | Val MAE=450.49 | RMSE=622.45
+📉 Epoch 705: Train Loss=20.3849 | Val MAE=448.43 | RMSE=620.39
+⭐ New Best Stage 2 Model! (MAE: 448.43)
+📉 Epoch 710: Train Loss=19.7764 | Val MAE=448.83 | RMSE=620.60
+📉 Epoch 715: Train Loss=19.8390 | Val MAE=449.63 | RMSE=621.31
+📉 Epoch 720: Train Loss=20.0300 | Val MAE=448.44 | RMSE=620.13
+📉 Epoch 725: Train Loss=20.2328 | Val MAE=448.46 | RMSE=619.97
+📉 Epoch 730: Train Loss=20.7490 | Val MAE=449.35 | RMSE=620.83
+📉 Epoch 735: Train Loss=19.7931 | Val MAE=447.07 | RMSE=618.61
+⭐ New Best Stage 2 Model! (MAE: 447.07)
+📉 Epoch 740: Train Loss=20.6722 | Val MAE=446.85 | RMSE=618.37
+⭐ New Best Stage 2 Model! (MAE: 446.85)
+📉 Epoch 745: Train Loss=19.6044 | Val MAE=448.48 | RMSE=619.90
+📉 Epoch 750: Train Loss=20.4134 | Val MAE=447.02 | RMSE=618.36
+📉 Epoch 755: Train Loss=20.6462 | Val MAE=447.95 | RMSE=619.29
+📉 Epoch 760: Train Loss=20.5900 | Val MAE=446.49 | RMSE=617.78
+⭐ New Best Stage 2 Model! (MAE: 446.49)
+📉 Epoch 765: Train Loss=19.1716 | Val MAE=448.24 | RMSE=619.36
+📉 Epoch 770: Train Loss=20.7931 | Val MAE=447.87 | RMSE=618.81
+📉 Epoch 775: Train Loss=19.8910 | Val MAE=446.30 | RMSE=617.34
+⭐ New Best Stage 2 Model! (MAE: 446.30)
+📉 Epoch 780: Train Loss=20.7030 | Val MAE=446.96 | RMSE=617.89
+📉 Epoch 785: Train Loss=19.4568 | Val MAE=448.06 | RMSE=618.92
+📉 Epoch 790: Train Loss=20.0507 | Val MAE=447.61 | RMSE=618.46
+📉 Epoch 795: Train Loss=19.9355 | Val MAE=445.00 | RMSE=615.91
+⭐ New Best Stage 2 Model! (MAE: 445.00)
+📉 Epoch 800: Train Loss=20.7975 | Val MAE=447.30 | RMSE=618.04
+📉 Epoch 805: Train Loss=19.2764 | Val MAE=446.38 | RMSE=617.02
+📉 Epoch 810: Train Loss=20.7888 | Val MAE=446.53 | RMSE=617.21
+📉 Epoch 815: Train Loss=19.9972 | Val MAE=445.75 | RMSE=616.43
+📉 Epoch 820: Train Loss=19.7758 | Val MAE=446.20 | RMSE=616.87
+📉 Epoch 825: Train Loss=19.7232 | Val MAE=445.44 | RMSE=616.05
+📉 Epoch 830: Train Loss=20.1585 | Val MAE=446.27 | RMSE=617.02
+📉 Epoch 835: Train Loss=20.6791 | Val MAE=446.30 | RMSE=616.96
+📉 Epoch 840: Train Loss=19.9684 | Val MAE=445.77 | RMSE=616.27
+📉 Epoch 845: Train Loss=20.1058 | Val MAE=445.12 | RMSE=615.55
+📉 Epoch 850: Train Loss=19.9017 | Val MAE=444.95 | RMSE=615.34
+⭐ New Best Stage 2 Model! (MAE: 444.95)
+📉 Epoch 855: Train Loss=20.3204 | Val MAE=445.34 | RMSE=615.71
+📉 Epoch 860: Train Loss=19.8136 | Val MAE=445.71 | RMSE=616.09
+📉 Epoch 865: Train Loss=21.0604 | Val MAE=443.13 | RMSE=613.71
+⭐ New Best Stage 2 Model! (MAE: 443.13)
+📉 Epoch 870: Train Loss=20.3259 | Val MAE=445.55 | RMSE=615.87
+📉 Epoch 875: Train Loss=20.0251 | Val MAE=446.08 | RMSE=616.45
+📉 Epoch 880: Train Loss=19.7365 | Val MAE=444.34 | RMSE=614.67
+📉 Epoch 885: Train Loss=19.7159 | Val MAE=445.09 | RMSE=615.37
+📉 Epoch 890: Train Loss=20.2360 | Val MAE=445.50 | RMSE=615.80
+📉 Epoch 895: Train Loss=20.9571 | Val MAE=445.48 | RMSE=615.77
+📉 Epoch 900: Train Loss=20.0176 | Val MAE=445.13 | RMSE=615.39
+📉 Epoch 905: Train Loss=20.4114 | Val MAE=444.99 | RMSE=615.23
+📉 Epoch 910: Train Loss=19.8296 | Val MAE=444.39 | RMSE=614.64
+📉 Epoch 915: Train Loss=19.7053 | Val MAE=444.90 | RMSE=615.13
+📉 Epoch 920: Train Loss=20.0761 | Val MAE=444.54 | RMSE=614.75
+📉 Epoch 925: Train Loss=20.8373 | Val MAE=444.78 | RMSE=614.97
+📉 Epoch 930: Train Loss=19.3974 | Val MAE=444.75 | RMSE=614.94
+📉 Epoch 935: Train Loss=18.9045 | Val MAE=444.32 | RMSE=614.53
+📉 Epoch 940: Train Loss=20.7470 | Val MAE=444.62 | RMSE=614.81
+📉 Epoch 945: Train Loss=18.0762 | Val MAE=444.89 | RMSE=615.07
+📉 Epoch 950: Train Loss=18.5568 | Val MAE=445.16 | RMSE=615.35
+📉 Epoch 955: Train Loss=20.4356 | Val MAE=445.11 | RMSE=615.29
+📉 Epoch 960: Train Loss=19.9965 | Val MAE=445.00 | RMSE=615.17
+📉 Epoch 965: Train Loss=20.0097 | Val MAE=444.88 | RMSE=615.05
+📉 Epoch 970: Train Loss=19.5736 | Val MAE=444.78 | RMSE=614.94
+📉 Epoch 975: Train Loss=19.3634 | Val MAE=444.77 | RMSE=614.94
+📉 Epoch 980: Train Loss=20.7501 | Val MAE=444.81 | RMSE=614.97
+📉 Epoch 985: Train Loss=19.1608 | Val MAE=444.82 | RMSE=614.99
+📉 Epoch 990: Train Loss=19.8143 | Val MAE=444.82 | RMSE=614.99
+📉 Epoch 995: Train Loss=20.7175 | Val MAE=444.82 | RMSE=614.99
+📉 Epoch 1000: Train Loss=19.6164 | Val MAE=444.82 | RMSE=614.99
+✅ Stage 2 Completato!
