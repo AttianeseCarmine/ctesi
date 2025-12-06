@@ -51,3 +51,4 @@ experiments/sha_zip_clip_ebc_64bins/stage2/logs/events.out.tfevents.1764814192.e
 experiments/sha_zip_clip_ebc_64bins/stage3/best_stage3_model.pth
 experiments/sha_zip_clip_ebc_64bins/stage3/last_stage3_model.pth
 experiments/sha_zip_clip_ebc_64bins/stage3/logs/events.out.tfevents.1764819626.e9ec2311c7a9.3707886.0
+*.pth
