@@ -19,7 +19,7 @@ echo "========================================================"
 # --- PULIZIA (Opzionale: scommenta se vuoi cancellare automaticamente i vecchi esperimenti) ---
 # echo "🧹 Cancellazione vecchi esperimenti..."
 # 
-#rm -rf experiments/*
+#rm -rf experiments/sha_zip_clip_ebc/*
 # echo "✅ Pulizia completata."
 
 # --- STAGE 1 ---
@@ -32,7 +32,7 @@ start_time=$(date +%s)
 # Esegui train_stage1 e salva l'output sia a video che su file
 python train_stage1.py --config $CONFIG_FILE 2>&1 | tee "$LOG_DIR/stage1.log"
 
-end_time=$(date +%s)
+#end_time=$(date +%s)
 echo "✅ Stage 1 Completato in $((end_time - start_time)) secondi."
 
 

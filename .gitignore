@@ -8,3 +8,7 @@ logs/stage2_clean.txt
 logs/stage3_clean.txt
 experiments/*
 *.pth
+logs_pipeline/stage1.log
+logs_pipeline/stage2.log
+logs_pipeline/stage3.log
+main_log.out

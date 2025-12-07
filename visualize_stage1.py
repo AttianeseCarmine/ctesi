@@ -5,121 +5,175 @@ import numpy as np
 import os
 import yaml
 import random
-from torchvision.transforms import functional as F
+import scipy.ndimage
+import torch.nn.functional as F
 
-# I tuoi moduli
+# --- I TUOI IMPORT ---
 from models.zip_clip_ebc_model import build_model
 from datasets import get_dataset
 from datasets.transforms import build_transforms
+from train_utils import collate_fn
 
 def load_config(config_path):
     with open(config_path, "r") as f:
         return yaml.safe_load(f)
 
 def denormalize(tensor):
-    """Converte un tensore normalizzato CLIP in immagine numpy visualizzabile."""
-    # Mean e Std di CLIP
+    """Denormalizza l'immagine per la visualizzazione."""
     mean = np.array([0.48145466, 0.4578275, 0.40821073])
     std = np.array([0.26862954, 0.26130258, 0.27577711])
-    
     img = tensor.permute(1, 2, 0).cpu().numpy()
     img = (img * std + mean)
     img = np.clip(img, 0, 1)
     return img
 
-def main(config_path, checkpoint_path):
-    # 1. Setup
-    config = load_config(config_path)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+def make_visible_gt(density_map, sigma=1.5):
+    """GT nitida (Punti Rossi)."""
+    if isinstance(density_map, torch.Tensor):
+        dmap = density_map.squeeze().cpu().detach().numpy()
+    else:
+        dmap = density_map
+    heatmap = scipy.ndimage.gaussian_filter(dmap, sigma=sigma)
+    if heatmap.max() > 0:
+        heatmap = heatmap / heatmap.max()
+    return heatmap
+
+def draw_grid_mask(ax, pi_prob, H_img, W_img, patch_size=16, thresh=0.25):
+    """
+    Disegna la griglia rossa e oscura i blocchi vuoti.
+    """
+    # 1. Upsample della mappa Pi (Nearest Neighbor per mantenere i blocchi quadrati)
+    pi_map_up = F.interpolate(
+        pi_prob, 
+        size=(H_img, W_img), 
+        mode='nearest' # Importante: Nearest per vedere i blocchi netti
+    )
+    pi_np = pi_map_up.squeeze().cpu().numpy() # [H, W] con valori 0-1
     
-    # 2. Modello
-    print("🏗️ Costruisco il modello...")
+    # 2. Crea l'overlay scuro (Mask)
+    # Creiamo un'immagine nera RGBA
+    overlay = np.zeros((H_img, W_img, 4))
+    overlay[:, :, 0:3] = 0 # Canali RGB neri
+    
+    # Canale Alpha: 
+    # Se Prob < Thresh (Vuoto) -> Alpha 0.7 (Scuro)
+    # Se Prob > Thresh (Folla) -> Alpha 0.0 (Trasparente/Acceso)
+    is_empty = pi_np < thresh
+    overlay[..., 3] = is_empty * 0.75 
+    
+    # Disegna l'overlay scuro
+    ax.imshow(overlay)
+    
+    # 3. Disegna la Griglia Rossa
+    # Linee Verticali
+    for x in range(0, W_img, patch_size):
+        ax.axvline(x, color='red', linewidth=0.3, alpha=0.3)
+    # Linee Orizzontali
+    for y in range(0, H_img, patch_size):
+        ax.axhline(y, color='red', linewidth=0.3, alpha=0.3)
+
+    return pi_np.mean()
+
+def safe_load_weights(model, checkpoint_path, device):
+    print(f"📥 Caricamento pesi da: {checkpoint_path}")
+    ckpt = torch.load(checkpoint_path, map_location=device)
+    state_dict = ckpt['model'] if 'model' in ckpt else ckpt
+    model.load_state_dict(state_dict, strict=False)
+    print("✅ Pesi caricati.")
+
+def main(config_path, checkpoint_path):
+    config = load_config(config_path)
+    device = torch.device("cpu") 
+    
+    print(f"="*60)
+    print(f"🚀 VISUALIZE STAGE 1 (Grid & Mask)")
+    print(f"   Config: {config_path}")
+    print(f"="*60)
+
     model = build_model(config).to(device)
     
-    # 3. Carica Pesi
-    if os.path.exists(checkpoint_path):
-        print(f"📥 Carico checkpoint: {checkpoint_path}")
-        # Fix per weights_only=False
-        ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
-        # Gestione sia se c'è 'model' key o solo state_dict
-        state_dict = ckpt.get('model', ckpt)
-        model.load_state_dict(state_dict, strict=False)
+    if os.path.isfile(checkpoint_path):
+        safe_load_weights(model, checkpoint_path, device)
     else:
-        print(f"⚠️ Checkpoint {checkpoint_path} non trovato! Visualizzo modello non allenato.")
+        print(f"❌ Errore: Checkpoint non trovato: {checkpoint_path}")
+        return
 
     model.eval()
-
-    # 4. Dataset (Validation)
-    data_cfg = config["DATA"]
-    val_tf = build_transforms(data_cfg, is_train=False)
-    DatasetClass = get_dataset(config["DATASET"])
     
-    val_set = DatasetClass(
-        root=data_cfg["ROOT"],
-        split=data_cfg["VAL_SPLIT"],
-        block_size=data_cfg["ZIP_BLOCK_SIZE"],
+    # Recupera la soglia dal config o usa default
+    pi_thresh = config['MODEL'].get('PI_THRESH', 0.25)
+    print(f"ℹ️  Visualizzazione con soglia attivazione: {pi_thresh}")
+
+    DatasetClass = get_dataset(config['DATASET'])
+    val_tf = build_transforms(config['DATA'], is_train=False)
+    
+    val_dataset = DatasetClass(
+        root=config['DATA']['ROOT'],
+        split=config['DATA']['VAL_SPLIT'],
+        block_size=config['DATA']['ZIP_BLOCK_SIZE'],
         transforms=val_tf,
     )
     
-    print(f"🖼️ Estraggo immagini casuali dal validation set ({len(val_set)} immagini)...")
-
-    # 5. Visualizzazione
-    num_samples = 4
-    indices = random.sample(range(len(val_set)), num_samples)
+    indices = random.sample(range(len(val_dataset)), 3)
     
-    fig, axes = plt.subplots(num_samples, 3, figsize=(15, 4 * num_samples))
-    plt.subplots_adjust(wspace=0.1, hspace=0.2)
+    rows = len(indices)
+    fig, axes = plt.subplots(rows, 3, figsize=(18, 6 * rows))
     
-    with torch.no_grad():
-        for i, idx in enumerate(indices):
-            sample = val_set[idx]
-            img_tensor = sample['image'].unsqueeze(0).to(device) # [1, 3, H, W]
-            gt_density = sample['density'].unsqueeze(0).to(device) # [1, 1, H, W]
-            
-            # Forward solo Pi
-            preds = model.forward_pi_only(img_tensor)
-            pi_prob = preds["pi_prob"] # [1, 1, H_grid, W_grid]
-            
-            # Upsample di Pi alla dimensione immagine per visualizzazione sovrapposta
-            pi_map_up = torch.nn.functional.interpolate(
-                pi_prob, size=img_tensor.shape[-2:], mode='bilinear'
-            ).squeeze().cpu().numpy()
-            
-            # Immagine originale
-            img_np = denormalize(sample['image'])
-            
-            # Colonna 1: Immagine Originale
-            axes[i, 0].imshow(img_np)
-            axes[i, 0].set_title(f"Input Image (idx {idx})")
-            axes[i, 0].axis('off')
-            
-            # Colonna 2: Ground Truth (dove sono le persone)
-            axes[i, 1].imshow(gt_density.squeeze().cpu().numpy(), cmap='jet')
-            axes[i, 1].set_title("Ground Truth Density")
-            axes[i, 1].axis('off')
-            
-            # Colonna 3: La tua Pi-Head (Probabilità "Pieno")
-            # Sovrapponiamo la mappa Pi (giallo=pieno, viola=vuoto) sull'immagine
-            axes[i, 2].imshow(img_np)
-            im = axes[i, 2].imshow(pi_map_up, cmap='inferno', alpha=0.6, vmin=0, vmax=1)
-            axes[i, 2].set_title(f"Predicted $\pi$ (Prob. Crowd)")
-            axes[i, 2].axis('off')
-            
-            if i == 0:
-                fig.colorbar(im, ax=axes[i, 2], fraction=0.046, pad=0.04)
+    col_titles = ["Input Image", "Ground Truth (Red Points)", "Zip Mask (Dark=Empty, Grid=16px)"]
+    for ax, col in zip(axes[0], col_titles):
+        ax.set_title(col, fontsize=16, fontweight='bold', pad=20)
 
-    out_path = "check_stage1.png"
-    plt.savefig(out_path, bbox_inches='tight')
-    print(f"✅ Visualizzazione salvata in: {out_path}")
-    print("Controlla l'immagine per vedere se la maschera 'accende' solo le folle!")
+    print("🖼️  Generazione visualizzazioni...")
 
-if __name__ == "__main__":
+    for i, idx in enumerate(indices):
+        sample = val_dataset[idx]
+        image = sample['image'].unsqueeze(0).to(device)
+        gt_density = sample['density'].unsqueeze(0).to(device)
+
+        with torch.no_grad():
+            outputs = model.forward_pi_only(image)
+            pi_prob = outputs['pi_prob']
+
+        img_np = denormalize(sample['image'])
+        H, W = img_np.shape[:2]
+        
+        gt_heat = make_visible_gt(gt_density, sigma=1.5)
+        gt_count = gt_density.sum().item()
+
+        # Col 1: Originale
+        axes[i, 0].imshow(img_np)
+        axes[i, 0].axis('off')
+        axes[i, 0].text(10, 30, f"ID: {idx}", color="white", fontsize=12, bbox=dict(facecolor='black', alpha=0.7))
+
+        # Col 2: GT
+        axes[i, 1].imshow(gt_heat, cmap='jet', vmin=0, vmax=1)
+        axes[i, 1].axis('off')
+        axes[i, 1].text(10, 30, f"GT Count: {gt_count:.1f}", color="white", fontsize=12, bbox=dict(facecolor='black', alpha=0.7))
+
+        # Col 3: Grid Mask Overlay
+        # Prima l'immagine base
+        axes[i, 2].imshow(img_np) 
+        # Poi la funzione magica che disegna griglia e maschera
+        mean_pi = draw_grid_mask(axes[i, 2], pi_prob, H, W, patch_size=16, thresh=pi_thresh)
+        
+        axes[i, 2].axis('off')
+        axes[i, 2].text(10, 30, f"Avg Prob: {mean_pi:.3f}", color="white", fontsize=12, bbox=dict(facecolor='black', alpha=0.7))
+
+    plt.tight_layout()
+    out_file = "check_stage1.png"
+    plt.savefig(out_file, bbox_inches='tight', dpi=150)
+    print(f"✅ Immagine salvata: {out_file}")
+    print("   (Le zone SCURE sono quelle che il modello IGNORA)")
+
+if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="config_sha.yaml")
-    # Punta al checkpoint che si sta salvando ora (last_stage1_model.pth)
-    parser.add_argument("--ckpt", default="experiments/sha_zip_clip_ebc/stage1/last_stage1_model.pth")
+    # Usa il best stage 1 di default
+    parser.add_argument("--checkpoint", default="experiments/sha_zip_clip_ebc/stage1/best_stage1_model.pth")
     args = parser.parse_args()
     
-    main(args.config, args.ckpt)
-
+    # Forza CPU
+    os.environ["CUDA_VISIBLE_DEVICES"] = ""
+    
+    main(args.config, args.checkpoint)
     # python visualize_stage1.py --config config_sha.yaml --ckpt exp/sha_zip_clip_ebc/stage1/last_stage1_model.pth
