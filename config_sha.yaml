@@ -1,14 +1,15 @@
 # ============================================================
 # ZIP-CLIP-EBC: Configurazione per ShanghaiTech Part A
-# VERSIONE: High-Resolution (19 Bins)
+# VERSIONE: High-Resolution 
+# VERSIONE: v2 - Bins Realistici + Parametri Corretti
 # ============================================================
 
-RUN_NAME: "sha_zip_clip_ebc"
+RUN_NAME: "sha_zip_clip_ebc_v2"
 SEED: 42
 DEVICE: "cuda"
 
 # ============================================================
-# DATASET (High Resolution)
+# DATASET
 # ============================================================
 DATASET: "sha"
 DATA:
@@ -18,15 +19,15 @@ DATA:
   
   ZIP_BLOCK_SIZE: 16
   
-  # RISOLUZIONE SOTA (448px) - La tua GPU la gestisce senza problemi
-  CROP_SIZE: 448
-  CROP_SCALE: [0.8, 1.25]
+  # Risoluzione standard (non troppo grande per evitare problemi)
+  CROP_SIZE: 384
+  CROP_SCALE: [0.8, 1.2]
   
-  CROP_SIZE_STAGE1: 448
-  CROP_SCALE_STAGE1: [0.8, 1.25]
+  CROP_SIZE_STAGE1: 384
+  CROP_SCALE_STAGE1: [0.8, 1.2]
   
-  CROP_SIZE_STAGE2: 448
-  CROP_SCALE_STAGE2: [0.8, 1.25]
+  CROP_SIZE_STAGE2: 384
+  CROP_SCALE_STAGE2: [0.8, 1.2]
   
   NORM_MEAN: [0.48145466, 0.4578275, 0.40821073]
   NORM_STD: [0.26862954, 0.26130258, 0.27577711]
@@ -36,23 +37,24 @@ DATA:
   COUNT_SAMPLER:
     ENABLE: true
     BASE_WEIGHT: 1.0
-    POWER: 1.25
+    POWER: 1.0          # Ridotto da 1.25 per bilanciamento più morbido
     LOG_OFFSET: 1.0
 
 # ============================================================
-# MODELLO
+# MODELLO - PARAMETRI CHIAVE CORRETTI
 # ============================================================
 MODEL:
   BACKBONE: "ViT-B-16"
   CLIP_PRETRAINED: "openai"
   
-  PI_THRESH: 0.22
+  # π-Head: soglia più alta per essere più selettivo
+  PI_THRESH: 0.35        # Aumentato da 0.22
   PI_SOFT_GATE: true
-  PI_SOFT_MIN: 0.1
+  PI_SOFT_MIN: 0.05      # Ridotto da 0.1 per permettere soppressione più forte
   GATE_MODE: "multiply"
   
-  # Manteniamo 19 bin per stabilità 
-  NUM_EBC_BINS: 19
+  # Numero corretto di bins (deve matchare BINS_CONFIG)
+  NUM_EBC_BINS: 19       # Ridotto da 19 a 12 per semplificare
   
   UPSAMPLE_TO_INPUT: false
 
@@ -61,127 +63,146 @@ MODEL:
 # ============================================================
 PI_HEAD:
   HIDDEN_DIM: 256
-  NUM_LAYERS: 2
-  DROPOUT: 0.1
+  NUM_LAYERS: 3          # Aumentato da 2 per più capacità
+  DROPOUT: 0.15          # Aumentato per regolarizzazione
   USE_BN: true
 
 EBC_HEAD:
-  TEMPERATURE: 0.1
+  TEMPERATURE: 0.07      # RIDOTTO da 0.1 - distribuzione più peaked
   LEARNABLE_TEMP: true
   USE_REFINER: true
   REFINER_HIDDEN: 256
 
 # ============================================================
-# BINS CONFIGURATION (16 Classi Ibride)
+# BINS CONFIGURATION - REALISTICI PER SHA
+# ============================================================
+# NOTA: In un blocco 16x16, raramente ci sono più di 15-20 teste.
+# I valori estremi (38, 53, 80) erano irrealistici e causavano sovrastima.
+#
+# 12 bins totali: bin[0] per vuoto (gestito da π), 11 per conteggio
 # ============================================================
 BINS_CONFIG:
-  sha:
-    bins: [
-      [0, 0], 
-      # Precisione assoluta per numeri bassi (1-10)
-      [1, 1], [2, 2], [3, 3], [4, 4], [5, 5], 
-      [6, 6], [7, 7], [8, 8], [9, 9], [10, 10],
-      
-      # Fascia media (11-15) - Leggero raggruppamento
-      [11, 12], [13, 15], 
-      
-      # Fascia alta (Qui è il trucco per IMG 160!)
-      [16, 20],   # Centro ~18
-      [21, 30],   # Centro ~25
-      [31, 45],   # Centro ~38
-      [46, 60],   # Centro ~53 (Per blocchi densissimi)
-      [61, 9999]  # Centro ~75 (Solo casi estremi)
-    ]
-    # Centri ricalcolati per la loss
-    bin_centers: [
-      0.0, 
-      1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0,
-      11.5, 14.0,
-      18.0, 25.5, 38.0, 53.0, 80.0
-    ]
-
 # ============================================================
-# STAGE 1: π-Head
+# ZIP-CLIP-EBC: Configurazione SHA - 19 Bins CORRETTI
+# ============================================================
+
+BINS_CONFIG:
+  sha:
+    # 19 bins totali: bin[0] per vuoto, 18 per conteggio
+    bins: [
+      [0, 0],       # Bin 0: Vuoto (π-head)
+      
+      # Precisione singola per bassi conteggi (1-8)
+      [1, 1],       # Bin 1
+      [2, 2],       # Bin 2
+      [3, 3],       # Bin 3
+      [4, 4],       # Bin 4
+      [5, 5],       # Bin 5
+      [6, 6],       # Bin 6
+      [7, 7],       # Bin 7
+      [8, 8],       # Bin 8
+      
+      # Raggruppamento per medi (9-20)
+      [9, 10],      # Bin 9: centro 9.5
+      [11, 12],     # Bin 10: centro 11.5
+      [13, 15],     # Bin 11: centro 14
+      [16, 18],     # Bin 12: centro 17
+      [19, 22],     # Bin 13: centro 20.5
+      
+      # Raggruppamento per alti (23-50+)
+      [23, 27],     # Bin 14: centro 25
+      [28, 35],     # Bin 15: centro 31.5
+      [36, 45],     # Bin 16: centro 40.5
+      [46, 60],     # Bin 17: centro 53
+      [61, 9999]    # Bin 18: centro ~75
+    ]
+    
+    # 18 centri per 18 EBC bins (CORRETTO: esclude bin 0!)
+    bin_centers: [
+      1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0,
+      9.5, 11.5, 14.0, 17.0, 20.5,
+      25.0, 31.5, 40.5, 53.0, 75.0
+    ]
+# ============================================================
+# STAGE 1: π-Head - Training della maschera
 # ============================================================
 TRAIN_STAGE1:
-  # La L40S può gestire batch enormi qui perché il backbone è quasi congelato
-  BATCH_SIZE: 32       # Aumentato da 4/8 a 32!
-  NUM_WORKERS: 8       # Aumentato per nutrire la GPU velocemente
-  EPOCHS: 200
-  LR_PI_HEAD: 1.0e-4
-  LR_BACKBONE: 1.0e-5
+  BATCH_SIZE: 24         # Ridotto per stabilità
+  NUM_WORKERS: 8
+  EPOCHS: 150            # Ridotto da 200
+  LR_PI_HEAD: 5.0e-5     # Ridotto da 1e-4
+  LR_BACKBONE: 5.0e-6    # Ridotto da 1e-5
   OPTIMIZER: "adamw"
+  WEIGHT_DECAY: 1.0e-4   # Aggiunto
   SCHEDULER: "cosine"
-  WARMUP_EPOCHS: 5
+  WARMUP_EPOCHS: 10      # Aumentato da 5
   VAL_INTERVAL: 5
-  EARLY_STOPPING_PATIENCE: 30
-  CLIP_GRAD_NORM: 1.0
+  EARLY_STOPPING_PATIENCE: 25
+  CLIP_GRAD_NORM: 0.5    # Ridotto da 1.0
   RESUME_LAST: true
   SAVE_BEST: true
 
 LOSS_STAGE1:
   TYPE: "bce_with_logits"
-  POS_WEIGHT: 3.0
-  COUNT_WEIGHT: 0.05
+  POS_WEIGHT: 2.5        # Ridotto da 3.0 per evitare over-activation
+  COUNT_WEIGHT: 0.0      # Disattivato in Stage 1 (EBC è congelato)
   PI_REG:
     ENABLE: true
-    TARGET_MEAN: 0.25
-    WEIGHT: 1.0e-3
+    TARGET_MEAN: 0.30    # Aumentato da 0.25 per attivare più blocchi
+    WEIGHT: 5.0e-3       # Aumentato da 1e-3
 
 # ============================================================
-# STAGE 2: EBC-Head
+# STAGE 2: EBC-Head - Training del contatore
 # ============================================================
 TRAIN_STAGE2:
-  # Qui congeliamo il backbone, quindi la memoria usata è ridicola.
-  # Spingiamo il batch size al massimo per avere gradienti perfetti.
-  BATCH_SIZE: 64       # Aumentato a 64! (La tua L40S riderà di questo carico)
+  BATCH_SIZE: 32         # Ridotto da 64 per gradienti più stabili
   NUM_WORKERS: 8
-  EPOCHS: 2000
-  LR_EBC_HEAD: 1.0e-4
-  LR_BACKBONE: 0.0
+  EPOCHS: 1000            # RIDOTTO da 2000! Era troppo e causava overfitting
+  LR_EBC_HEAD: 2.0e-5    # Ridotto da 1e-4
+  LR_BACKBONE: 0.0       # Backbone congelato
   OPTIMIZER: "adamw"
+  WEIGHT_DECAY: 1.0e-4
   SCHEDULER: "cosine"
-  WARMUP_EPOCHS: 3
+  WARMUP_EPOCHS: 10      # Aumentato da 3
   VAL_INTERVAL: 5
-  EARLY_STOPPING_PATIENCE: 50
-  CLIP_GRAD_NORM: 1.0
+  EARLY_STOPPING_PATIENCE: 40
+  CLIP_GRAD_NORM: 0.5
   RESUME_LAST: true
   SAVE_BEST: true
 
 LOSS_STAGE2:
   TYPE: "distribution_matching"
-  SIGMA: 1.0
-  COUNT_WEIGHT: 0.1
+  SIGMA: 2.0          # Aumentato da 1.0 per più smoothness
+  COUNT_WEIGHT: 0.3   # Aumentato per bilanciare
+
 
 # ============================================================
 # STAGE 3: Joint Fine-tuning
 # ============================================================
 TRAIN_STAGE3:
-  # Qui tutto è attivo. 448px x Batch 16 occupa circa 20-24GB VRAM.
-  # Con 46GB potremmo anche osare 24 o 32, ma 16 è sicuro e stabile.
-  BATCH_SIZE: 16       # Aumentato da 4 a 16
+  BATCH_SIZE: 12         # Ridotto da 16
   NUM_WORKERS: 8
-  EPOCHS: 600
+  EPOCHS: 800            # Ridotto da 600
   
-  LR_HEADS: 1.0e-5
-  LR_BACKBONE: 5.0e-6  # Ultra conservativo
+  LR_HEADS: 2.0e-5       # Aumentato da 1e-5
+  LR_BACKBONE: 1.0e-6    # Ridotto da 5e-6
   
   OPTIMIZER: "adamw"
   WEIGHT_DECAY: 1.0e-4
   SCHEDULER: "cosine"
-  WARMUP_EPOCHS: 5
+  WARMUP_EPOCHS: 15      # Aumentato da 5
   VAL_INTERVAL: 2
   EARLY_STOPPING_PATIENCE: 30
-  CLIP_GRAD_NORM: 1.0
+  CLIP_GRAD_NORM: 0.5
   RESUME_LAST: false
   SAVE_BEST: true
 
 LOSS_STAGE3:
   TYPE: "distribution_matching"
-  ALPHA_PI: 0.05
+  ALPHA_PI: 0.1
   ALPHA_EBC: 1.0
-  COUNT_WEIGHT: 0.1
-  SIGMA: 1.0
+  COUNT_WEIGHT: 0.3
+  SIGMA: 1.5
 
 EXP:
   OUT_DIR: "experiments"
