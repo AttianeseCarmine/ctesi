@@ -1,27 +1,26 @@
 # ============================================================
-# ZIP-CLIP-EBC: Configurazione Finale "Scale-Aware SOTA"
+# ZIP-CLIP-EBC: Configurazione per ShanghaiTech Part B (SHB)
+# VERSIONE: Low Density / High Quality
 # ============================================================
 
-RUN_NAME: "sha_final_scale_aware"
+RUN_NAME: "shb_final_scale_aware"
 SEED: 42
 DEVICE: "cuda"
 
 # ============================================================
 # DATASET
 # ============================================================
-DATASET: "sha"
+DATASET: "shb"  # <--- CAMBIO FONDAMENTALE
 DATA:
-  ROOT: "./data/sha/"
+  ROOT: "./data/shb/"
   TRAIN_SPLIT: "train"
   VAL_SPLIT: "val"
   
   ZIP_BLOCK_SIZE: 16
   
-  # --- IL SEGRETO DEL SUCCESSO: SCALE AUGMENTATION ---
+  # SHB ha img 768x1024. Crop 448 o 512 va benissimo.
   CROP_SIZE: 448
-  # [0.4, 2.0] significa:
-  # 0.4 -> Zoom In fortissimo (vedrà facce giganti -> risolve l'errore primo piano)
-  # 2.0 -> Zoom Out fortissimo (vedrà folle minuscole -> risolve l'errore folla densa)
+  # Manteniamo l'augmentation scale-aware che ha funzionato su SHA
   CROP_SCALE: [0.4, 2.0]
   
   CROP_SIZE_STAGE1: 448
@@ -37,8 +36,9 @@ DATA:
   
   COUNT_SAMPLER:
     ENABLE: true
-    BASE_WEIGHT: 1.0
-    POWER: 1.25
+    # Su SHB la varianza è minore, possiamo essere meno aggressivi col sampler
+    BASE_WEIGHT: 0.5 
+    POWER: 1.0
     LOG_OFFSET: 1.0
 
 # ============================================================
@@ -48,14 +48,14 @@ MODEL:
   BACKBONE: "ViT-B-16"
   CLIP_PRETRAINED: "openai"
   
-  # Soglia bilanciata per l'inferenza
-  PI_THRESH: 0.25
+  # Su SHB lo sfondo è molto pulito (strada), la Pi-Head lavorerà benissimo.
+  PI_THRESH: 0.35 
   PI_SOFT_GATE: true
   PI_SOFT_MIN: 0.1
   GATE_MODE: "multiply"
   
-  # 20 Bin totali per coprire tutte le casistiche
-  NUM_EBC_BINS: 20
+  # Usiamo 15 bin ottimizzati per bassa densità
+  NUM_EBC_BINS: 15
   
   UPSAMPLE_TO_INPUT: false
 
@@ -75,55 +75,48 @@ EBC_HEAD:
   REFINER_HIDDEN: 256
 
 # ============================================================
-# BINS CONFIGURATION (20 Classi - Anti-Ghosting & High Density)
+# BINS CONFIGURATION (Ottimizzata per SHB - Bassa Densità)
 # ============================================================
 BINS_CONFIG:
-  sha:
+  shb:
     bins: [
       [0, 0], 
       
-      # NUOVO: Bin "Buffer" [0-1] per ridurre i falsi positivi
-      # Aiuta su IMG 000 e 120 quando il modello è incerto
-      [0, 1], 
+      # Buffer per rumore di fondo (comune in strada)
+      [0, 1],
       
-      # Precisione sui numeri bassi
+      # Conteggio preciso (1-8 persone per blocco è il 99% dei casi in SHB)
       [1, 1], [2, 2], [3, 3], [4, 4], [5, 5], 
-      [6, 6], [7, 7], [8, 8], [9, 9], [10, 10],
+      [6, 6], [7, 7], [8, 8],
       
-      # Fascia Media
-      [11, 12], [13, 15], 
+      # Fasce medie
+      [9, 10], [11, 12], [13, 15], [16, 20],
       
-      # Fascia Alta (Folla)
-      [16, 20],   
-      [21, 30],   
-      [31, 45],   
-      [46, 60],   
-      [61, 9999]  # Estremo
+      # "Folla" per SHB (rarissimo avere >25 persone in 16x16px)
+      [21, 9999] 
     ]
-    # Centri dei bin
+    # Centri
     bin_centers: [
       0.0, 
-      0.5, # Centro del buffer
-      1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0,
-      11.5, 14.0,
-      18.0, 25.5, 38.0, 53.0, 80.0
+      0.5,
+      1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0,
+      9.5, 11.5, 14.0, 18.0, 
+      30.0
     ]
 
 # ============================================================
-# STAGE 1: π-Head
+# TRAINING (Simile a SHA)
 # ============================================================
 TRAIN_STAGE1:
   BATCH_SIZE: 32
   NUM_WORKERS: 8
-  EPOCHS: 200
+  EPOCHS: 150         # SHB è più facile, converge prima
   LR_PI_HEAD: 1.0e-4
   LR_BACKBONE: 1.0e-5
   OPTIMIZER: "adamw"
   SCHEDULER: "cosine"
   WARMUP_EPOCHS: 5
   VAL_INTERVAL: 5
-  EARLY_STOPPING_PATIENCE: 30
-  CLIP_GRAD_NORM: 1.0
   RESUME_LAST: true
   SAVE_BEST: true
 
@@ -136,22 +129,16 @@ LOSS_STAGE1:
     TARGET_MEAN: 0.25
     WEIGHT: 1.0e-3
 
-# ============================================================
-# STAGE 2: EBC-Head
-# ============================================================
 TRAIN_STAGE2:
-  # Batch 64 è fondamentale per stabilizzare i gradienti con l'augmentation aggressiva
-  BATCH_SIZE: 64       
+  BATCH_SIZE: 64
   NUM_WORKERS: 8
-  EPOCHS: 1500
+  EPOCHS: 600         # Meno epoche necessarie
   LR_EBC_HEAD: 1.0e-4
   LR_BACKBONE: 0.0
   OPTIMIZER: "adamw"
   SCHEDULER: "cosine"
   WARMUP_EPOCHS: 5
   VAL_INTERVAL: 5
-  EARLY_STOPPING_PATIENCE: 50
-  CLIP_GRAD_NORM: 1.0
   RESUME_LAST: true
   SAVE_BEST: true
 
@@ -160,23 +147,18 @@ LOSS_STAGE2:
   SIGMA: 1.0
   COUNT_WEIGHT: 0.1
 
-# ============================================================
-# STAGE 3: Joint Fine-tuning
-# ============================================================
 TRAIN_STAGE3:
   BATCH_SIZE: 16
   NUM_WORKERS: 8
-  EPOCHS: 1200
+  EPOCHS: 300
   LR_HEADS: 1.0e-5
-  LR_BACKBONE: 2.0e-6 
+  LR_BACKBONE: 2.0e-6
   OPTIMIZER: "adamw"
   WEIGHT_DECAY: 1.0e-4
   SCHEDULER: "cosine"
   WARMUP_EPOCHS: 5
   VAL_INTERVAL: 2
-  EARLY_STOPPING_PATIENCE: 100
-  CLIP_GRAD_NORM: 1.0
-  RESUME_LAST: true
+  RESUME_LAST: false
   SAVE_BEST: true
 
 LOSS_STAGE3:

@@ -115,7 +115,6 @@ def main(config_path, checkpoint_path):
     )
     
     indices = random.sample(range(len(val_dataset)), 3)
-    
     rows = len(indices)
     fig, axes = plt.subplots(rows, 3, figsize=(18, 6 * rows))
     
