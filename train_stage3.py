@@ -95,7 +95,7 @@ def validate(model, dataloader, criterion, device, config):
     for batch in tqdm(dataloader, desc="Validating", leave=False):
         if isinstance(batch, dict):
             images = batch['image']
-            gt_density = batch['density']
+            gt_density = batch['labels']
         else:
             images, gt_density = batch[0], batch[1]
 

@@ -4,7 +4,8 @@
 set -e
 
 # Configurazione
-CONFIG_FILE="config_sha.yaml"
+#CONFIG_FILE="config_sha.yaml"
+CONFIG_FILE="config_qnrf.yaml"
 LOG_DIR="logs_pipeline"
 
 # Crea cartella log se non esiste
@@ -30,7 +31,7 @@ echo "--------------------------------------------------------"
 start_time=$(date +%s)
 
 # Esegui train_stage1 e salva l'output sia a video che su file
-#python train_stage1.py --config $CONFIG_FILE 2>&1 | tee "$LOG_DIR/stage1.log"
+python train_stage1.py --config $CONFIG_FILE 2>&1 | tee "$LOG_DIR/stage1.log"
 
 #end_time=$(date +%s)
 echo "✅ Stage 1 Completato in $((end_time - start_time)) secondi."
@@ -68,16 +69,16 @@ echo "========================================================"
 
 # nohup ./run_training.sh > main_log.out 2>&1 &
 echo " REALIZZO I GRAFICI DEI RISULTATI... "
-python visualize_stage1.py --checkpoint experiments/sha_final_scale_aware/stage1/best_stage1_model.pth
-python visualize_stage2.py --checkpoint experiments/sha_final_scale_aware/stage2/best_stage2_model.pth
-python visualize_stage3.py --checkpoint experiments/sha_final_scale_aware/stage3/best_stage3_model.pth
+#python visualize_stage1.py --checkpoint experiments/qnrf_baseline/stage1/best_stage1_model.pth
+#python visualize_stage2.py --checkpoint experiments/qnrf_baseline/stage2/best_stage2_model.pth
+#python visualize_stage3.py --checkpoint experiments/qnrf_baseline/stage3/best_stage3_model.pth
 
-python logs/filter_logs.py logs_pipeline/stage1.log logs_pipeline/stage2.log logs_pipeline/stage3.log
-python logs/plot_training_logs.py logs/stage1_clean.txt --out grafico_stage1.png
-python logs/plot_training_logs.py logs/stage2_clean.txt --out grafico_stage2.png
-python logs/plot_training_logs.py logs/stage3_clean.txt --out grafico_stage3.png
+#python logs/filter_logs.py logs_pipeline/stage1.log logs_pipeline/stage2.log logs_pipeline/stage3.log
+#python logs/plot_training_logs.py logs/stage1_clean.txt --out grafico_stage1.png
+#python logs/plot_training_logs.py logs/stage2_clean.txt --out grafico_stage2.png
+#python logs/plot_training_logs.py logs/stage3_clean.txt --out grafico_stage3.png
 
 python evaluate_stage1.py --config config_sha.yaml
-python evaluate_stage2.py --config config_sha.yaml --checkpoint experiments/sha_final_scale_aware/stage2/best_stage2_model.pth
-python evaluate_stage3.py --config config_sha.yaml --checkpoint experiments/sha_final_scale_aware/stage3/best_stage3_model.pth
+python evaluate_stage2.py --config config_sha.yaml --checkpoint experiments/qnrf_baseline/stage2/best_stage2_model.pth
+python evaluate_stage3.py --config config_sha.yaml --checkpoint experiments/qnrf_baseline/stage3/best_stage3_model.pth
 
