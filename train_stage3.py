@@ -83,7 +83,6 @@ def train_one_epoch(model, dataloader, criterion, optimizer, device, config, epo
         })
     
     return total_loss / max(num_batches, 1)
-
 @torch.no_grad()
 def validate(model, dataloader, criterion, device, config):
     model.eval()
@@ -92,10 +91,13 @@ def validate(model, dataloader, criterion, device, config):
     total_mse = 0.0
     total_samples = 0
     
+    # --- DEBUG: Contatore per stampare solo i primi batch ---
+    debug_steps = 0
+    
     for batch in tqdm(dataloader, desc="Validating", leave=False):
         if isinstance(batch, dict):
             images = batch['image']
-            gt_density = batch['labels']
+            gt_density = batch['labels'] # O 'density', controlla la chiave nel tuo dataset!
         else:
             images, gt_density = batch[0], batch[1]
 
@@ -105,10 +107,24 @@ def validate(model, dataloader, criterion, device, config):
         # Forward
         outputs = model(images)
         
-        # Metriche conteggio reale
-        pred_count = outputs["pred_count"]
+        # Predizione
+        pred_count = outputs["pred_count"] 
+        # Se pred_count non c'è, calcolalo dalla mappa:
+        if pred_count is None:
+             pred_count = outputs['density_map'].sum(dim=[1, 2, 3])
+        
+        # GT Reale
         gt_count = gt_density.sum(dim=[1, 2, 3])
         
+        # --- DEBUG PRINT ---
+        if debug_steps < 5:
+            print(f"\n[DEBUG IMG {debug_steps}]")
+            print(f"   GT Tensor Sum: {gt_count.item():.4f}")
+            print(f"   Pred Tensor Sum: {pred_count.item():.4f}")
+            print(f"   Max Val in GT Map: {gt_density.max().item():.6f}")
+            debug_steps += 1
+        # -------------------
+
         mae = torch.abs(pred_count - gt_count).sum().item()
         mse = ((pred_count - gt_count) ** 2).sum().item()
         

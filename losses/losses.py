@@ -408,8 +408,8 @@ class JointLoss(nn.Module):
         
         # Loss totale pesata
         total_loss = (
-            self.alpha_pi * pi_dict["pi_bce_loss"] +
-            self.alpha_ebc * ebc_dict["ebc_ce_loss"] +
+            self.alpha_pi * pi_total + 
+            self.alpha_ebc * ebc_total +  
             self.count_weight * count_loss
         )
         
@@ -419,7 +419,10 @@ class JointLoss(nn.Module):
             "joint_count_loss": count_loss.detach(),
             "joint_total_loss": total_loss.detach(),
         }
-        
+        loss_dict.update(pi_dict)
+        loss_dict.update(ebc_dict) # <--- Questo garantisce che 'loss' (da DM) o 'ebc_ce_loss' (da CE) sia loggata
+        loss_dict['joint_count_loss'] = count_loss
+        loss_dict['total_loss'] = total_loss
         return total_loss, loss_dict
 
 class DistributionMatchingLoss(nn.Module):
