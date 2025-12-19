@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 ZIP-CLIP-EBC: Stage 1 Training - π-Head (Zero-Inflation)
 
