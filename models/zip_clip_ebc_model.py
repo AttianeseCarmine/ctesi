@@ -1,171 +1,139 @@
 # ============================================================
-# ZIP-CLIP-EBC: Modello Completo
+# ZIP-CLIP-EBC: Modello Unificato
 # ============================================================
 # Combina:
-#   - Backbone CLIP (feature extraction)
-#   - π-Head (convoluzionale, classifica vuoto/pieno)
-#   - EBC-Head (CLIP-based, conta persone nei blocchi non-vuoti)
+#   - VGG16-BN Backbone
+#   - ZIP Head (π per zero-inflation, λ per Poisson rate)
+#   - CLIP-EBC Head (classificazione in bins via text-vision matching)
+#
+# Architettura:
+#
+#   Input [B, 3, H, W]
+#          │
+#          ▼
+#   ┌──────────────────┐
+#   │  VGG16 Backbone  │
+#   │  [B, 512, H/16]  │
+#   └────────┬─────────┘
+#            │
+#      ┌─────┴─────┐
+#      │           │
+#      ▼           ▼
+#   ┌──────┐   ┌──────────┐
+#   │ ZIP  │   │ CLIP-EBC │
+#   │ Head │   │   Head   │
+#   └──┬───┘   └────┬─────┘
+#      │            │
+#      │ π, λ_zip   │ λ_ebc
+#      │            │
+#      └─────┬──────┘
+#            ▼
+#    Density = π × λ_ebc
+#            (o combinazione configurabile)
+#
+# Loss: L = (1-α) * L_ZIP + α * L_CLIP-EBC
 # ============================================================
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple, Optional, Union
 
-from .clip_backbone import CLIPBackbone, build_clip_backbone
-from .pi_head import PiHead, build_pi_head
-from .ebc_head import EBCHeadWithBinLogits, build_ebc_head
-from .utils import get_prompts_from_bins
+from .backbone import VGG16Backbone, build_vgg_backbone
+from .pi_head import ZIPHead, ZIPHeadV2, build_zip_head
+from .clip_ebc_head import CLIPEBCHead, build_clip_ebc_head
+
 
 class ZIPCLIPEBCModel(nn.Module):
     """
-    Modello completo per crowd counting con Zero-Inflated architecture.
+    Modello unificato ZIP-CLIP-EBC per crowd counting.
+    
+    Combina la modellazione Zero-Inflated Poisson (ZIP) per gestire
+    lo squilibrio spaziale con CLIP-EBC per la classificazione
+    semantica del conteggio.
+    
     Args:
-        config: Dizionario di configurazione
+        backbone: Nome del backbone ("vgg16_bn" o "vgg19_bn")
+        pretrained_backbone: Se usare pesi pretrained per il backbone
+        clip_model: Nome modello CLIP per EBC head
+        clip_pretrained: Pesi pretrained CLIP
+        bins: Configurazione bins per EBC
+        bin_centers: Centri dei bins per expected count
+        zip_hidden_dim: Dimensione hidden per ZIP head
+        temperature: Temperature iniziale per CLIP similarity
+        density_mode: Come calcolare la density finale:
+            - "zip_only": usa solo π × λ_zip
+            - "ebc_only": usa solo λ_ebc  
+            - "zip_gated_ebc": usa π × λ_ebc (default, raccomandato)
+            - "ensemble": media di zip e ebc
+        freeze_backbone: Se congelare il backbone
+        freeze_clip_text: Se congelare il text encoder CLIP (default True)
     """
     
-    def __init__(self, config: Dict):
+    def __init__(
+        self,
+        backbone: str = "vgg16_bn",
+        pretrained_backbone: bool = True,
+        clip_model: str = "ViT-B-16",
+        clip_pretrained: str = "openai",
+        bins: Optional[List[Tuple[int, int]]] = None,
+        bin_centers: Optional[List[float]] = None,
+        zip_hidden_dim: int = 256,
+        zip_version: str = "v2",
+        temperature: float = 0.07,
+        learnable_temperature: bool = True,
+        prompt_type: str = "word",
+        density_mode: str = "zip_gated_ebc",
+        freeze_backbone: bool = False,
+        freeze_clip_text: bool = True,
+    ):
         super().__init__()
         
-        self.config = config
-        model_cfg = config.get("MODEL", {})
+        self.density_mode = density_mode
         
         # ========================
-        # 1. Backbone CLIP
+        # 1. Backbone
         # ========================
-        self.backbone = build_clip_backbone(config)
+        self.backbone = build_vgg_backbone(
+            backbone_name=backbone,
+            pretrained=pretrained_backbone,
+            freeze_bn=freeze_backbone,
+        )
+        backbone_channels = self.backbone.out_channels
         
-        # Dimensioni
-        self.visual_dim = self.backbone.visual_dim
-        self.embed_dim = self.backbone.embed_dim
-        self.text_dim = self.backbone.text_dim
-        self.patch_size = self.backbone.patch_size
-        
-        # ========================
-        # 2. π-Head (Convoluzionale)
-        # ========================
-        # Input: feature map dal backbone [B, embed_dim, H, W]
-        self.pi_head = build_pi_head(config, in_channels=self.embed_dim)
+        if freeze_backbone:
+            for param in self.backbone.parameters():
+                param.requires_grad = False
         
         # ========================
-        # 3. EBC-Head (CLIP-based)
+        # 2. ZIP Head
         # ========================
-        # Input: feature map proiettate [B, visual_dim, H, W]
-        self.ebc_head = build_ebc_head(
-            config,
-            visual_dim=self.visual_dim,
-            text_dim=self.text_dim,
+        self.zip_head = build_zip_head(
+            in_channels=backbone_channels,
+            hidden_dim=zip_hidden_dim,
+            version=zip_version,
         )
         
         # ========================
-        # 4. Configurazione Gating
+        # 3. CLIP-EBC Head
         # ========================
-        self.gate_mode = model_cfg.get("GATE_MODE", "multiply")
-        self.pi_thresh = model_cfg.get("PI_THRESH", 0.5)
-        self.pi_soft_gate = model_cfg.get("PI_SOFT_GATE", True)
-        self.pi_soft_min = model_cfg.get("PI_SOFT_MIN", 0.1)
-        self.pi_soft_power = model_cfg.get("PI_SOFT_POWER", 1.0)
-        self.upsample_to_input = model_cfg.get("UPSAMPLE_TO_INPUT", False)
+        self.ebc_head = build_clip_ebc_head(
+            in_channels=backbone_channels,
+            clip_model=clip_model,
+            clip_pretrained=clip_pretrained,
+            bins_config={"bins": bins, "bin_centers": bin_centers} if bins else None,
+            temperature=temperature,
+            learnable_temperature=learnable_temperature,
+            prompt_type=prompt_type,
+        )
         
-        # ========================
-        # 5. Inizializza Text Features
-        # ========================
-        self._init_text_features(config)
-        
-        print(f"✅ ZIPCLIPEBCModel inizializzato:")
-        print(f"   Backbone: {model_cfg.get('BACKBONE', 'ViT-B-16')}")
-        print(f"   Patch size: {self.patch_size}")
-        print(f"   Gate mode: {self.gate_mode}")
-        print(f"   Soft gate: {self.pi_soft_gate}")
-    
-    def _init_text_features(self, config: Dict):
-        ebc_cfg = config.get("EBC_HEAD", {})
-        prompts = ebc_cfg.get("TEXT_PROMPTS", [])
-        
-        if not prompts:
-            dataset_name = config.get("DATASET", "sha")
-            bins_config = config.get("BINS_CONFIG", {}).get(dataset_name, {})
-            all_bins = bins_config.get("bins", [])
-            
-            # Escludi bin [0,0]
-            if all_bins and all_bins[0] in ([0, 0], (0, 0)):
-                target_bins = all_bins[1:]
-            else:
-                target_bins = all_bins
-            
-            # Usa la funzione esistente!
-            prompts = get_prompts_from_bins(target_bins, prompt_type="word")
-            
-            print(f"   ℹ️ Auto-Generated Prompts ({len(prompts)}):")
-            print(f"      Start: {prompts[:2]}")
-            print(f"      End:   {prompts[-1]}")
-        # Verifica coerenza
-        expected_num = self.ebc_head.num_ebc_bins
-        if len(prompts) != expected_num:
-            # Fallback di emergenza se qualcosa va storto con i bin
-            print(f"⚠️ Warning: Mismatch prompt/bin ({len(prompts)} vs {expected_num}).")
-            print("   Tentativo di usare prompt di default estesi...")
-            # Un elenco di default più lungo per coprire i tuoi 16 bin attuali
-            default_prompts = [
-                "one person", "two people", "three people", "four people", 
-                "five people", "six people", "seven people", "eight people",
-                "nine or ten people", "eleven or twelve people", "thirteen or fourteen people",
-                "fifteen to seventeen people", "eighteen to twenty-one people", 
-                "twenty-two to twenty-nine people", "thirty or more people"
-            ]
-            # Se combaciano usiamo questi, altrimenti errore
-            if len(default_prompts) == expected_num:
-                prompts = default_prompts
-            else:
-                raise ValueError(
-                    f"ERRORE CRITICO: Generati {len(prompts)} prompt per {expected_num} bin EBC.\n"
-                    f"Controlla BINS_CONFIG in config_sha.yaml."
-                )
-        
-        # Codifica i prompts con CLIP
-        with torch.no_grad():
-            # Assicurati che il device sia corretto
-            device = next(self.backbone.parameters()).device
-            text_features = self.backbone.get_text_features(prompts).to(device)
-        
-        # Imposta nell'EBC head
-        self.ebc_head.set_text_features(text_features)
-        
-        print(f"   Text prompts: {len(prompts)} inizializzati")
-    
-    def get_feature_maps(
-        self,
-        x: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor, Tuple[int, int]]:
-        """
-        Estrae le feature maps dal backbone.
-        
-        Args:
-            x: Immagine [B, 3, H, W]
-        
-        Returns:
-            embed_features: [B, embed_dim, H_grid, W_grid] - per π-head
-            proj_features: [B, visual_dim, H_grid, W_grid] - per EBC-head
-            grid_size: (H_grid, W_grid)
-        """
-        B, C, H, W = x.shape
-        
-        # Estrai patch features
-        patch_features, grid_size = self.backbone(x, return_projected=False)
-        # patch_features: [B, num_patches, embed_dim]
-        
-        H_grid, W_grid = grid_size
-        
-        # Reshape a mappa 2D per π-head
-        embed_features = patch_features.reshape(B, H_grid, W_grid, -1).permute(0, 3, 1, 2)
-        # embed_features: [B, embed_dim, H_grid, W_grid]
-        
-        # Proietta per EBC-head
-        proj_features = self.backbone.project_visual_features(patch_features)
-        proj_features = proj_features.reshape(B, H_grid, W_grid, -1).permute(0, 3, 1, 2)
-        # proj_features: [B, visual_dim, H_grid, W_grid]
-        
-        return embed_features, proj_features, grid_size
+        # Info
+        print(f"\n✅ ZIPCLIPEBCModel inizializzato:")
+        print(f"   Backbone: {backbone}")
+        print(f"   ZIP version: {zip_version}")
+        print(f"   CLIP model: {clip_model}")
+        print(f"   Density mode: {density_mode}")
+        print(f"   Backbone frozen: {freeze_backbone}")
     
     def forward(
         self,
@@ -173,237 +141,193 @@ class ZIPCLIPEBCModel(nn.Module):
         return_intermediates: bool = False,
     ) -> Dict[str, torch.Tensor]:
         """
-        Forward pass completo.
+        Forward pass.
         
         Args:
-            x: Immagine [B, 3, H, W]
-            return_intermediates: Se True, restituisce anche output intermedi
-        
+            x: Input image [B, 3, H, W]
+            return_intermediates: Se restituire output intermedi
+            
         Returns:
             dict con:
-                - logit_pi_maps: [B, 2, H_grid, W_grid] - logits π
-                - pi_prob: [B, 1, H_grid, W_grid] - P(pieno)
-                - logit_bin_maps: [B, num_bins, H_grid, W_grid] - logits EBC
-                - lambda_maps: [B, 1, H_grid, W_grid] - conteggio atteso per blocco
-                - density_map: [B, 1, H_grid, W_grid] - mappa di densità finale
-                - pred_count: [B] - conteggio totale predetto
+                - density: [B, 1, H_out, W_out] - density map finale
+                - pred_count: [B] - conteggio predetto totale
+                
+            Se return_intermediates=True, anche:
+                - features: [B, 512, H_out, W_out] - backbone features
+                - zip_outputs: dict con output ZIP head
+                - ebc_outputs: dict con output EBC head
         """
-        B, C, H_in, W_in = x.shape
+        B, C, H, W = x.shape
         
         # ========================
-        # 1. Feature Extraction
+        # 1. Backbone Features
         # ========================
-        embed_features, proj_features, (H_grid, W_grid) = self.get_feature_maps(x)
+        features = self.backbone(x)  # [B, 512, H/16, W/16]
         
         # ========================
-        # 2. π-Head: Classificazione vuoto/pieno
+        # 2. ZIP Head
         # ========================
-        logit_pi_maps = self.pi_head(embed_features)  # [B, 2, H_grid, W_grid]
+        zip_outputs = self.zip_head(features)
         
-        # Probabilità
-        pi_probs = F.softmax(logit_pi_maps, dim=1)
-        pi_prob = pi_probs[:, 1:2, :, :]  # [B, 1, H_grid, W_grid] - P(pieno)
-        
-        # ========================
-        # 3. Gating Mask
-        # ========================
-        if self.training and self.pi_soft_gate:
-            # Soft gating durante training (mantiene gradienti)
-            mask = pi_prob.clone()
-            if self.pi_soft_min > 0:
-                mask = torch.clamp(mask, min=self.pi_soft_min)
-            if self.pi_soft_power != 1.0:
-                mask = torch.pow(mask, self.pi_soft_power)
+        # Estrai π (probabilità non-vuoto)
+        if "pi_not_empty" in zip_outputs:
+            pi_not_empty = zip_outputs["pi_not_empty"]
         else:
-            # Hard gating durante inference
-            mask = (pi_prob >= self.pi_thresh).float()
+            pi_not_empty = 1 - zip_outputs["pi"]
+        
+        lambda_zip = zip_outputs["lambda_"]
         
         # ========================
-        # 4. EBC-Head: Conteggio CLIP-based
+        # 3. CLIP-EBC Head
         # ========================
-        # Opzione: gating delle feature prima dell'EBC
-        if self.gate_mode == "multiply":
-            gated_features = proj_features * mask
+        ebc_outputs = self.ebc_head(features)
+        lambda_ebc = ebc_outputs["expected_count"]
+        
+        # ========================
+        # 4. Calcola Density Finale
+        # ========================
+        if self.density_mode == "zip_only":
+            density = zip_outputs["expected_count"]
+        elif self.density_mode == "ebc_only":
+            density = lambda_ebc
+        elif self.density_mode == "zip_gated_ebc":
+            # Usa π come gate per λ_ebc
+            density = pi_not_empty * lambda_ebc
+        elif self.density_mode == "ensemble":
+            # Media dei due metodi
+            density_zip = zip_outputs["expected_count"]
+            density_ebc = lambda_ebc
+            density = (density_zip + density_ebc) / 2
         else:
-            gated_features = proj_features
-        
-        ebc_outputs = self.ebc_head(gated_features)
-        logit_bin_maps = ebc_outputs["logit_bin_maps"]  # [B, num_bins, H_grid, W_grid]
-        lambda_maps = ebc_outputs["lambda_maps"]  # [B, 1, H_grid, W_grid]
-        bin_probs = ebc_outputs["bin_probs"]
+            raise ValueError(f"density_mode non valido: {self.density_mode}")
         
         # ========================
-        # 5. Density Map Finale
+        # 5. Conteggio Totale
         # ========================
-        # density = P(pieno) × λ
-        density_map = pi_prob * lambda_maps
-        
-        # ========================
-        # 6. Conteggio Totale
-        # ========================
-        pred_count = density_map.sum(dim=[1, 2, 3])  # [B]
-        
-        # ========================
-        # 7. Upsample se richiesto
-        # ========================
-        if self.upsample_to_input:
-            density_map = F.interpolate(
-                density_map, size=(H_in, W_in),
-                mode='bilinear', align_corners=False
-            )
-            # Normalizza per preservare la somma
-            scale_factor = (H_grid * W_grid) / (H_in * W_in)
-            density_map = density_map * scale_factor
+        pred_count = density.sum(dim=[1, 2, 3])
         
         # ========================
         # Output
         # ========================
         outputs = {
-            "logit_pi_maps": logit_pi_maps,
-            "pi_prob": pi_prob,
-            "logit_bin_maps": logit_bin_maps,
-            "lambda_maps": lambda_maps,
-            "density_map": density_map,
+            "density": density,
             "pred_count": pred_count,
+            "pi": zip_outputs.get("pi", 1 - pi_not_empty),
+            "pi_not_empty": pi_not_empty,
+            "lambda_zip": lambda_zip,
+            "lambda_ebc": lambda_ebc,
+            "bin_probs": ebc_outputs["bin_probs"],
         }
         
         if return_intermediates:
-            outputs["embed_features"] = embed_features
-            outputs["proj_features"] = proj_features
-            outputs["gating_mask"] = mask
-            outputs["bin_probs"] = bin_probs
+            outputs["features"] = features
+            outputs["zip_outputs"] = zip_outputs
+            outputs["ebc_outputs"] = ebc_outputs
         
         return outputs
     
-    def forward_pi_only(self, x: torch.Tensor) -> Dict[str, torch.Tensor]:
-        """
-        Forward pass solo per π-head (Stage 1).
-        
-        Args:
-            x: Immagine [B, 3, H, W]
-        
-        Returns:
-            dict con logit_pi_maps, pi_prob
-        """
-        embed_features, _, _ = self.get_feature_maps(x)
-        logit_pi_maps = self.pi_head(embed_features)
-        
-        pi_probs = F.softmax(logit_pi_maps, dim=1)
-        pi_prob = pi_probs[:, 1:2, :, :]
-        
-        return {
-            "logit_pi_maps": logit_pi_maps,
-            "pi_prob": pi_prob,
-        }
-    
-    def forward_ebc_only(
+    def get_density_map(
         self,
         x: torch.Tensor,
-        use_gt_mask: Optional[torch.Tensor] = None,
-    ) -> Dict[str, torch.Tensor]:
+        upsample_to_input: bool = False,
+    ) -> torch.Tensor:
         """
-        Forward pass solo per EBC-head (Stage 2).
+        Restituisce solo la density map.
         
         Args:
-            x: Immagine [B, 3, H, W]
-            use_gt_mask: Se fornito, usa questa maschera invece di π
-        
+            x: Input image [B, 3, H, W]
+            upsample_to_input: Se fare upsample alla dimensione input
+            
         Returns:
-            dict con logit_bin_maps, lambda_maps, ecc.
+            density: [B, 1, H_out, W_out] o [B, 1, H, W] se upsample
         """
-        embed_features, proj_features, _ = self.get_feature_maps(x)
+        outputs = self.forward(x)
+        density = outputs["density"]
         
-        # Calcola π (ma non lo addestriamo)
-        with torch.no_grad():
-            logit_pi_maps = self.pi_head(embed_features)
-            pi_probs = F.softmax(logit_pi_maps, dim=1)
-            pi_prob = pi_probs[:, 1:2, :, :]
+        if upsample_to_input:
+            density = F.interpolate(
+                density,
+                size=x.shape[-2:],
+                mode="bilinear",
+                align_corners=False
+            )
         
-        # Usa GT mask se fornito, altrimenti usa π
-        if use_gt_mask is not None:
-            mask = use_gt_mask
-        else:
-            if self.training and self.pi_soft_gate:
-                mask = torch.clamp(pi_prob, min=self.pi_soft_min)
-            else:
-                mask = (pi_prob >= self.pi_thresh).float()
+        return density
+    
+    def count(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Restituisce solo il conteggio totale.
         
-        # Gate features
-        if self.gate_mode == "multiply":
-            gated_features = proj_features * mask
-        else:
-            gated_features = proj_features
-        
-        # EBC forward
-        ebc_outputs = self.ebc_head(gated_features)
-        
-        # Density map
-        density_map = pi_prob * ebc_outputs["lambda_maps"]
-        pred_count = density_map.sum(dim=[1, 2, 3])
-        
-        return {
-            "logit_pi_maps": logit_pi_maps,
-            "pi_prob": pi_prob,
-            "logit_bin_maps": ebc_outputs["logit_bin_maps"],
-            "lambda_maps": ebc_outputs["lambda_maps"],
-            "bin_probs": ebc_outputs["bin_probs"],
-            "density_map": density_map,
-            "pred_count": pred_count,
-            "gating_mask": mask,
-        }
+        Args:
+            x: Input image [B, 3, H, W]
+            
+        Returns:
+            count: [B] - conteggio per ogni immagine nel batch
+        """
+        return self.forward(x)["pred_count"]
+    
+    # ========================
+    # Metodi per Training a Stage
+    # ========================
     
     def freeze_backbone(self):
-        """Congela tutti i parametri del backbone."""
+        """Congela il backbone."""
         for param in self.backbone.parameters():
             param.requires_grad = False
         print("🧊 Backbone congelato")
     
-    def unfreeze_backbone(self, lr_scale: float = 0.1):
+    def unfreeze_backbone(self):
         """Scongela il backbone."""
         for param in self.backbone.parameters():
             param.requires_grad = True
-        print(f"🔓 Backbone scongelato")
+        print("🔓 Backbone scongelato")
     
-    def freeze_pi_head(self):
-        """Congela π-head."""
-        for param in self.pi_head.parameters():
+    def freeze_zip_head(self):
+        """Congela ZIP head."""
+        for param in self.zip_head.parameters():
             param.requires_grad = False
-        print("🧊 π-head congelato")
+        print("🧊 ZIP head congelata")
     
-    def unfreeze_pi_head(self):
-        """Scongela π-head."""
-        for param in self.pi_head.parameters():
+    def unfreeze_zip_head(self):
+        """Scongela ZIP head."""
+        for param in self.zip_head.parameters():
             param.requires_grad = True
-        print("🔓 π-head scongelato")
+        print("🔓 ZIP head scongelata")
     
     def freeze_ebc_head(self):
-        """Congela EBC-head."""
-        for param in self.ebc_head.parameters():
-            param.requires_grad = False
-        print("🧊 EBC-head congelato")
+        """Congela EBC head (escluso text encoder che è sempre congelato)."""
+        for name, param in self.ebc_head.named_parameters():
+            if "text_encoder" not in name:
+                param.requires_grad = False
+        print("🧊 EBC head congelata")
     
     def unfreeze_ebc_head(self):
-        """Scongela EBC-head."""
-        for param in self.ebc_head.parameters():
-            param.requires_grad = True
-        print("🔓 EBC-head scongelato")
+        """Scongela EBC head (escluso text encoder)."""
+        for name, param in self.ebc_head.named_parameters():
+            if "text_encoder" not in name:
+                param.requires_grad = True
+        print("🔓 EBC head scongelata")
+    
+    def get_trainable_params(self) -> int:
+        """Conta i parametri trainabili."""
+        return sum(p.numel() for p in self.parameters() if p.requires_grad)
     
     def get_param_groups(
         self,
-        lr_backbone: float,
-        lr_pi_head: float,
-        lr_ebc_head: float,
+        lr_backbone: float = 1e-5,
+        lr_zip_head: float = 1e-4,
+        lr_ebc_head: float = 1e-4,
     ) -> List[Dict]:
         """
-        Restituisce gruppi di parametri con LR differenziati.
+        Restituisce param groups per optimizer con LR differenziati.
         
         Args:
-            lr_backbone: LR per il backbone
-            lr_pi_head: LR per π-head
-            lr_ebc_head: LR per EBC-head
-        
+            lr_backbone: Learning rate per backbone
+            lr_zip_head: Learning rate per ZIP head
+            lr_ebc_head: Learning rate per EBC head (escluso text encoder)
+            
         Returns:
-            Lista di dicts per l'optimizer
+            Lista di dict per optimizer
         """
         param_groups = []
         
@@ -416,17 +340,20 @@ class ZIPCLIPEBCModel(nn.Module):
                 "name": "backbone",
             })
         
-        # π-head
-        pi_params = [p for p in self.pi_head.parameters() if p.requires_grad]
-        if pi_params:
+        # ZIP head
+        zip_params = [p for p in self.zip_head.parameters() if p.requires_grad]
+        if zip_params:
             param_groups.append({
-                "params": pi_params,
-                "lr": lr_pi_head,
-                "name": "pi_head",
+                "params": zip_params,
+                "lr": lr_zip_head,
+                "name": "zip_head",
             })
         
-        # EBC-head
-        ebc_params = [p for p in self.ebc_head.parameters() if p.requires_grad]
+        # EBC head (escludi text encoder)
+        ebc_params = []
+        for name, param in self.ebc_head.named_parameters():
+            if param.requires_grad and "text_encoder" not in name:
+                ebc_params.append(param)
         if ebc_params:
             param_groups.append({
                 "params": ebc_params,
@@ -437,92 +364,85 @@ class ZIPCLIPEBCModel(nn.Module):
         return param_groups
 
 
+# ============================================================
+# Factory Function
+# ============================================================
+
 def build_model(config: Dict) -> ZIPCLIPEBCModel:
-    """Costruisce il modello dalla configurazione."""
-    return ZIPCLIPEBCModel(config)
+    """
+    Costruisce il modello dalla configurazione.
+    
+    Args:
+        config: Dizionario di configurazione
+        
+    Returns:
+        ZIPCLIPEBCModel instance
+    """
+    model_cfg = config.get("MODEL", {})
+    dataset_name = config.get("DATASET", "sha")
+    bins_cfg = config.get("BINS_CONFIG", {}).get(dataset_name, {})
+    
+    return ZIPCLIPEBCModel(
+        backbone=model_cfg.get("BACKBONE", "vgg16_bn"),
+        pretrained_backbone=model_cfg.get("PRETRAINED_BACKBONE", True),
+        clip_model=model_cfg.get("CLIP_MODEL", "ViT-B-16"),
+        clip_pretrained=model_cfg.get("CLIP_PRETRAINED", "openai"),
+        bins=bins_cfg.get("bins"),
+        bin_centers=bins_cfg.get("bin_centers"),
+        zip_hidden_dim=model_cfg.get("ZIP_HIDDEN_DIM", 256),
+        zip_version=model_cfg.get("ZIP_VERSION", "v2"),
+        temperature=model_cfg.get("TEMPERATURE", 0.07),
+        learnable_temperature=model_cfg.get("LEARNABLE_TEMPERATURE", True),
+        prompt_type=model_cfg.get("PROMPT_TYPE", "word"),
+        density_mode=model_cfg.get("DENSITY_MODE", "zip_gated_ebc"),
+        freeze_backbone=model_cfg.get("FREEZE_BACKBONE", False),
+    )
 
 
 if __name__ == "__main__":
     # Test
-    import yaml
-    
     print("Testing ZIPCLIPEBCModel...")
     
-    # Config minimale per test
-    config = {
-        "DATASET": "sha",
-        "MODEL": {
-            "BACKBONE": "ViT-B-16",
-            "CLIP_PRETRAINED": "openai",
-            "PI_THRESH": 0.5,
-            "PI_SOFT_GATE": True,
-            "PI_SOFT_MIN": 0.1,
-            "GATE_MODE": "multiply",
-            "UPSAMPLE_TO_INPUT": False,
-        },
-        "PI_HEAD": {
-            "HIDDEN_DIM": 256,
-            "NUM_LAYERS": 2,
-        },
-        "EBC_HEAD": {
-            "TEMPERATURE": 0.07,
-            "LEARNABLE_TEMP": True,
-            "USE_REFINER": True,
-            "TEXT_PROMPTS": [
-                "one person", "two people", "three people",
-                "four people", "five people", "six people",
-                "seven people", "eight people", "nine people",
-                "ten people", "about eleven or twelve people",
-                "about thirteen or fourteen people",
-                "fifteen or more people",
-            ],
-        },
-        "BINS_CONFIG": {
-            "sha": {
-                "bins": [[0, 0]] + [[i, i] for i in range(1, 11)] + [[11, 12], [13, 14], [15, 9999]],
-                "bin_centers": [0.0] + [float(i) for i in range(1, 11)] + [11.5, 13.5, 17.0],
-            }
-        }
-    }
+    # Configura bins
+    bins = [(0, 0)] + [(i, i) for i in range(1, 11)] + [(11, 15), (16, 9999)]
+    bin_centers = [0.0] + [float(i) for i in range(1, 11)] + [13.0, 20.0]
     
     # Crea modello
-    model = build_model(config)
+    model = ZIPCLIPEBCModel(
+        backbone="vgg16_bn",
+        pretrained_backbone=True,
+        bins=bins,
+        bin_centers=bin_centers,
+        density_mode="zip_gated_ebc",
+    )
+    
+    # Move to GPU if available
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = model.to(device)
     
     # Test forward
-    x = torch.randn(2, 3, 256, 256)
+    x = torch.randn(2, 3, 256, 256).to(device)
     
     with torch.no_grad():
         outputs = model(x, return_intermediates=True)
     
     print("\nOutput shapes:")
-    for key, value in outputs.items():
-        if isinstance(value, torch.Tensor):
-            print(f"  {key}: {value.shape}")
+    for key, val in outputs.items():
+        if isinstance(val, torch.Tensor):
+            print(f"  {key}: {val.shape}")
+        elif isinstance(val, dict):
+            print(f"  {key}: <dict>")
     
-    print(f"\nPred counts: {outputs['pred_count']}")
+    print(f"\nPredicted counts: {outputs['pred_count']}")
+    print(f"Density sum: {outputs['density'].sum(dim=[1,2,3])}")
     
-    # Test forward separati per stage
-    print("\nTesting forward_pi_only...")
-    with torch.no_grad():
-        pi_out = model.forward_pi_only(x)
-    print(f"  logit_pi_maps: {pi_out['logit_pi_maps'].shape}")
-    print(f"  pi_prob range: [{pi_out['pi_prob'].min():.3f}, {pi_out['pi_prob'].max():.3f}]")
+    # Test param groups
+    param_groups = model.get_param_groups(lr_backbone=1e-5, lr_zip_head=1e-4, lr_ebc_head=1e-4)
+    print(f"\nParam groups:")
+    for g in param_groups:
+        n_params = sum(p.numel() for p in g["params"])
+        print(f"  {g['name']}: {n_params:,} params, lr={g['lr']}")
     
-    print("\nTesting forward_ebc_only...")
-    with torch.no_grad():
-        ebc_out = model.forward_ebc_only(x)
-    print(f"  logit_bin_maps: {ebc_out['logit_bin_maps'].shape}")
-    print(f"  lambda_maps range: [{ebc_out['lambda_maps'].min():.2f}, {ebc_out['lambda_maps'].max():.2f}]")
-    
-    # Test freeze/unfreeze
-    print("\nTesting freeze/unfreeze...")
-    model.freeze_backbone()
-    model.freeze_ebc_head()
-    model.unfreeze_pi_head()
-    
-    # Conta parametri trainabili
-    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    total = sum(p.numel() for p in model.parameters())
-    print(f"Parametri trainabili: {trainable:,} / {total:,} ({100*trainable/total:.1f}%)")
+    print(f"\nTotal trainable params: {model.get_trainable_params():,}")
     
     print("\n✅ Test completato!")

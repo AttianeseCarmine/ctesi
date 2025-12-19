@@ -1,254 +1,112 @@
 # ============================================================
-# ZIP-CLIP-EBC: π-Head Convoluzionale
+# ZIP-CLIP-EBC: ZIP Head (Zero-Inflated Poisson)
 # ============================================================
-# Classifica ogni blocco come vuoto (0) o contenente persone (1).
-# Architettura puramente convoluzionale, senza dipendenze da CLIP text.
+# Implementazione fedele al paper ZIP (Yiming-M/ZIP).
+#
+# La ZIP head modella il conteggio per blocco come:
+#   P(Y=0) = π + (1-π) * e^{-λ}
+#   P(Y=k) = (1-π) * (λ^k * e^{-λ}) / k!   per k > 0
+#
+# Dove:
+#   - π: probabilità che il blocco sia "strutturalmente vuoto"
+#   - λ: rate Poisson per blocchi non-vuoti (expected count)
+#
+# Output:
+#   - logit_pi: [B, 1, H, W] - logits per π (sigmoid → probabilità vuoto)
+#   - log_lambda: [B, 1, H, W] - log(λ) (exp → rate Poisson)
 # ============================================================
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Optional, Tuple
+from typing import Dict, Tuple, Optional
+import math
 
 
-class PiHead(nn.Module):
+class ZIPHead(nn.Module):
     """
-    π-Head convoluzionale per la classificazione vuoto/pieno dei blocchi.
+    Zero-Inflated Poisson Head per crowd counting.
     
-    Input: Feature map dal backbone [B, C, H, W]
-    Output: Logits per classificazione binaria [B, 2, H, W]
-            - Canale 0: logit per "vuoto"
-            - Canale 1: logit per "pieno" (contiene persone)
-    
-    L'architettura è semplice ma efficace:
-    - Convoluzioni 3x3 con BN e ReLU
-    - Nessun pooling (mantiene la risoluzione spaziale)
-    - Output a 2 canali per classificazione binaria
+    Architettura:
+    - Shared convolutional layers per feature extraction
+    - Due branch separati:
+      1. π-branch: classifica blocchi vuoti/non-vuoti
+      2. λ-branch: stima il rate Poisson per blocchi non-vuoti
     
     Args:
         in_channels: Numero di canali in input (dal backbone)
-        hidden_dim: Dimensione dei canali intermedi
-        num_layers: Numero di layer convoluzionali
+        hidden_dim: Dimensione dei canali nascosti
+        num_layers: Numero di layer convoluzionali condivisi
         dropout: Dropout rate
-        use_bn: Se usare BatchNorm
+        lambda_activation: Attivazione per λ ("softplus" o "exp")
+        lambda_bias_init: Valore iniziale del bias per λ (controlla scala iniziale)
     """
     
     def __init__(
         self,
-        in_channels: int,
+        in_channels: int = 512,
         hidden_dim: int = 256,
         num_layers: int = 2,
         dropout: float = 0.1,
-        use_bn: bool = True,
+        lambda_activation: str = "softplus",
+        lambda_bias_init: float = 0.0,
     ):
         super().__init__()
         
         self.in_channels = in_channels
         self.hidden_dim = hidden_dim
-        self.num_layers = num_layers
+        self.lambda_activation = lambda_activation
         
-        # Costruisci i layer
-        layers = []
+        # ========================
+        # Shared Feature Extractor
+        # ========================
+        shared_layers = []
+        current_channels = in_channels
         
-        # Primo layer: riduce i canali
-        layers.append(nn.Conv2d(in_channels, hidden_dim, kernel_size=3, padding=1, bias=not use_bn))
-        if use_bn:
-            layers.append(nn.BatchNorm2d(hidden_dim))
-        layers.append(nn.ReLU(inplace=True))
-        if dropout > 0:
-            layers.append(nn.Dropout2d(dropout))
+        for i in range(num_layers):
+            out_ch = hidden_dim if i == 0 else hidden_dim
+            shared_layers.extend([
+                nn.Conv2d(current_channels, out_ch, kernel_size=3, padding=1, bias=False),
+                nn.BatchNorm2d(out_ch),
+                nn.ReLU(inplace=True),
+            ])
+            if dropout > 0 and i < num_layers - 1:
+                shared_layers.append(nn.Dropout2d(dropout))
+            current_channels = out_ch
         
-        # Layer intermedi
-        for _ in range(num_layers - 1):
-            layers.append(nn.Conv2d(hidden_dim, hidden_dim, kernel_size=3, padding=1, bias=not use_bn))
-            if use_bn:
-                layers.append(nn.BatchNorm2d(hidden_dim))
-            layers.append(nn.ReLU(inplace=True))
-            if dropout > 0:
-                layers.append(nn.Dropout2d(dropout))
+        self.shared = nn.Sequential(*shared_layers)
         
-        self.features = nn.Sequential(*layers)
+        # ========================
+        # π-Branch (Zero-Inflation)
+        # ========================
+        # Output: probabilità che il blocco sia strutturalmente vuoto
+        self.pi_head = nn.Sequential(
+            nn.Conv2d(hidden_dim, hidden_dim // 2, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(hidden_dim // 2),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(hidden_dim // 2, 1, kernel_size=1),
+        )
         
-        # Layer di output: 2 canali (vuoto/pieno)
-        self.classifier = nn.Conv2d(hidden_dim, 2, kernel_size=1)
-        
-        # Inizializzazione
-        self._init_weights()
-        
-        print(f"✅ PiHead inizializzato:")
-        print(f"   In channels: {in_channels}")
-        print(f"   Hidden dim: {hidden_dim}")
-        print(f"   Num layers: {num_layers}")
-    
-    def _init_weights(self):
-        """Inizializza i pesi in modo appropriato."""
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
-            elif isinstance(m, nn.BatchNorm2d):
-                nn.init.constant_(m.weight, 1)
-                nn.init.constant_(m.bias, 0)
-        
-        # Inizializza il classificatore con bias verso "vuoto"
-        # Questo aiuta all'inizio del training dato che la maggior parte dei blocchi è vuota
-        if self.classifier.bias is not None:
-            # Bias per classe "vuoto" (canale 0) positivo
-            # Bias per classe "pieno" (canale 1) negativo
-            nn.init.constant_(self.classifier.bias[0], 1.0)   # Favorisce "vuoto"
-            nn.init.constant_(self.classifier.bias[1], -1.0)  # Sfavorisce "pieno"
-    
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Forward pass.
-        
-        Args:
-            x: Feature map [B, C, H, W]
-        
-        Returns:
-            logits: [B, 2, H, W] - logits per classificazione vuoto/pieno
-        """
-        # Estrai features
-        h = self.features(x)
-        
-        # Classifica
-        logits = self.classifier(h)
-        
-        return logits
-    
-    def get_pi_prob(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Calcola la probabilità che ogni blocco sia PIENO (contenga persone).
-        
-        Args:
-            x: Feature map [B, C, H, W]
-        
-        Returns:
-            pi_prob: [B, 1, H, W] - probabilità di essere pieno
-        """
-        logits = self.forward(x)  # [B, 2, H, W]
-        probs = F.softmax(logits, dim=1)  # [B, 2, H, W]
-        pi_prob = probs[:, 1:2, :, :]  # [B, 1, H, W] - prob di essere pieno
-        return pi_prob
-    
-    def get_mask(
-        self,
-        x: torch.Tensor,
-        threshold: float = 0.5,
-        soft: bool = False,
-        soft_min: float = 0.0,
-        soft_power: float = 1.0,
-    ) -> torch.Tensor:
-        """
-        Calcola la maschera per il gating delle features.
-        
-        Args:
-            x: Feature map [B, C, H, W]
-            threshold: Soglia per la maschera hard
-            soft: Se True, usa soft gating invece di hard threshold
-            soft_min: Valore minimo per soft gating (mantiene gradienti)
-            soft_power: Potenza per soft gating
-        
-        Returns:
-            mask: [B, 1, H, W] - maschera per il gating
-        """
-        pi_prob = self.get_pi_prob(x)  # [B, 1, H, W]
-        
-        if soft:
-            # Soft gating: usa direttamente le probabilità
-            mask = pi_prob
-            
-            # Applica soft_min per mantenere gradienti
-            if soft_min > 0:
-                mask = torch.clamp(mask, min=soft_min)
-            
-            # Applica potenza (opzionale)
-            if soft_power != 1.0:
-                mask = torch.pow(mask, soft_power)
-        else:
-            # Hard gating: soglia binaria
-            mask = (pi_prob >= threshold).float()
-        
-        return mask
-
-
-class PiHeadWithLambda(nn.Module):
-    """
-    Versione estesa del π-Head che produce anche una stima λ (Poisson rate).
-    
-    Questo è più vicino all'architettura ZIP originale dove:
-    - π: probabilità che il blocco sia vuoto
-    - λ: rate Poisson per il conteggio (usato quando il blocco non è vuoto)
-    
-    Nel nostro caso, λ viene stimato come valore atteso del conteggio
-    nel blocco, indipendentemente da CLIP (che invece classifica nei bins).
-    
-    Args:
-        in_channels: Numero di canali in input
-        hidden_dim: Dimensione dei canali intermedi
-        num_layers: Numero di layer convoluzionali
-        dropout: Dropout rate
-        use_bn: Se usare BatchNorm
-        lambda_max: Valore massimo per λ (clipping)
-    """
-    
-    def __init__(
-        self,
-        in_channels: int,
-        hidden_dim: int = 256,
-        num_layers: int = 2,
-        dropout: float = 0.1,
-        use_bn: bool = True,
-        lambda_max: float = 20.0,
-    ):
-        super().__init__()
-        
-        self.in_channels = in_channels
-        self.hidden_dim = hidden_dim
-        self.lambda_max = lambda_max
-        
-        # Feature extractor condiviso
-        layers = []
-        
-        # Primo layer
-        layers.append(nn.Conv2d(in_channels, hidden_dim, kernel_size=3, padding=1, bias=not use_bn))
-        if use_bn:
-            layers.append(nn.BatchNorm2d(hidden_dim))
-        layers.append(nn.ReLU(inplace=True))
-        if dropout > 0:
-            layers.append(nn.Dropout2d(dropout))
-        
-        # Layer intermedi
-        for _ in range(num_layers - 1):
-            layers.append(nn.Conv2d(hidden_dim, hidden_dim, kernel_size=3, padding=1, bias=not use_bn))
-            if use_bn:
-                layers.append(nn.BatchNorm2d(hidden_dim))
-            layers.append(nn.ReLU(inplace=True))
-            if dropout > 0:
-                layers.append(nn.Dropout2d(dropout))
-        
-        self.features = nn.Sequential(*layers)
-        
-        # Head per π (classificazione binaria)
-        self.pi_head = nn.Conv2d(hidden_dim, 2, kernel_size=1)
-        
-        # Head per λ (regressione del rate Poisson)
+        # ========================
+        # λ-Branch (Poisson Rate)
+        # ========================
+        # Output: rate Poisson (expected count per blocco non-vuoto)
         self.lambda_head = nn.Sequential(
-            nn.Conv2d(hidden_dim, hidden_dim // 2, kernel_size=1),
+            nn.Conv2d(hidden_dim, hidden_dim // 2, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(hidden_dim // 2),
             nn.ReLU(inplace=True),
             nn.Conv2d(hidden_dim // 2, 1, kernel_size=1),
         )
         
         # Inizializzazione
-        self._init_weights()
+        self._init_weights(lambda_bias_init)
         
-        print(f"✅ PiHeadWithLambda inizializzato:")
+        print(f"✅ ZIPHead inizializzato:")
         print(f"   In channels: {in_channels}")
         print(f"   Hidden dim: {hidden_dim}")
-        print(f"   Lambda max: {lambda_max}")
+        print(f"   Lambda activation: {lambda_activation}")
     
-    def _init_weights(self):
+    def _init_weights(self, lambda_bias_init: float):
         """Inizializza i pesi."""
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -259,119 +117,241 @@ class PiHeadWithLambda(nn.Module):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
         
-        # Bias π verso "vuoto"
-        if self.pi_head.bias is not None:
-            nn.init.constant_(self.pi_head.bias[0], 1.0)
-            nn.init.constant_(self.pi_head.bias[1], -1.0)
+        # Inizializza π-head con bias negativo (favorisce "non-vuoto" all'inizio)
+        # Questo aiuta perché la maggior parte dei blocchi È vuota, 
+        # ma vogliamo che il modello impari a riconoscerli, non assumere tutto vuoto
+        if self.pi_head[-1].bias is not None:
+            nn.init.constant_(self.pi_head[-1].bias, -1.0)  # sigmoid(-1) ≈ 0.27
+        
+        # Inizializza λ-head per output ragionevole
+        if self.lambda_head[-1].bias is not None:
+            nn.init.constant_(self.lambda_head[-1].bias, lambda_bias_init)
     
-    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, x: torch.Tensor) -> Dict[str, torch.Tensor]:
         """
         Forward pass.
         
         Args:
-            x: Feature map [B, C, H, W]
-        
+            x: Feature map dal backbone [B, C, H, W]
+            
         Returns:
-            pi_logits: [B, 2, H, W] - logits per π
-            lambda_map: [B, 1, H, W] - rate Poisson λ
+            dict con:
+                - logit_pi: [B, 1, H, W] - logits per π (pre-sigmoid)
+                - pi: [B, 1, H, W] - probabilità vuoto (post-sigmoid)
+                - log_lambda: [B, 1, H, W] - log(λ) raw
+                - lambda_: [B, 1, H, W] - rate Poisson (post-activation)
+                - expected_count: [B, 1, H, W] - (1-π) * λ
         """
-        h = self.features(x)
+        # Shared features
+        h = self.shared(x)
         
-        # π logits
-        pi_logits = self.pi_head(h)  # [B, 2, H, W]
+        # π-branch
+        logit_pi = self.pi_head(h)  # [B, 1, H, W]
+        pi = torch.sigmoid(logit_pi)  # P(blocco vuoto)
         
-        # λ (rate Poisson)
-        lambda_raw = self.lambda_head(h)  # [B, 1, H, W]
-        lambda_map = F.softplus(lambda_raw)  # Assicura positività
-        lambda_map = torch.clamp(lambda_map, min=1e-6, max=self.lambda_max)
+        # λ-branch
+        log_lambda = self.lambda_head(h)  # [B, 1, H, W]
         
-        return pi_logits, lambda_map
+        # Attivazione per λ (deve essere > 0)
+        if self.lambda_activation == "softplus":
+            lambda_ = F.softplus(log_lambda)
+        elif self.lambda_activation == "exp":
+            lambda_ = torch.exp(log_lambda.clamp(max=10))  # Clamp per stabilità
+        else:
+            lambda_ = F.relu(log_lambda) + 1e-6
+        
+        # Expected count: E[Y] = (1-π) * λ
+        expected_count = (1 - pi) * lambda_
+        
+        return {
+            "logit_pi": logit_pi,
+            "pi": pi,
+            "log_lambda": log_lambda,
+            "lambda_": lambda_,
+            "expected_count": expected_count,
+        }
     
-    def get_pi_prob(self, x: torch.Tensor) -> torch.Tensor:
-        """Probabilità che ogni blocco sia PIENO."""
-        pi_logits, _ = self.forward(x)
-        probs = F.softmax(pi_logits, dim=1)
-        return probs[:, 1:2, :, :]  # [B, 1, H, W]
-    
-    def get_expected_count(self, x: torch.Tensor) -> torch.Tensor:
+    def get_density_map(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Calcola il conteggio atteso per ogni blocco.
-        E[count] = P(pieno) * λ
+        Calcola la density map per l'immagine.
         
         Args:
-            x: Feature map [B, C, H, W]
-        
+            x: Feature map dal backbone [B, C, H, W]
+            
         Returns:
-            expected_count: [B, 1, H, W]
+            density: [B, 1, H, W] - expected count per blocco
         """
-        pi_logits, lambda_map = self.forward(x)
-        pi_prob = F.softmax(pi_logits, dim=1)[:, 1:2, :, :]  # P(pieno)
-        
-        expected_count = pi_prob * lambda_map
-        return expected_count
+        outputs = self.forward(x)
+        return outputs["expected_count"]
 
 
-def build_pi_head(config: dict, in_channels: int) -> PiHead:
+class ZIPHeadV2(nn.Module):
     """
-    Costruisce il π-Head dalla configurazione.
+    ZIP Head V2 con architettura migliorata.
+    
+    Differenze da V1:
+    - Usa classificazione binaria (2 classi) per π invece di regressione
+    - Aggiunge skip connection
+    - Supporto per multi-scale features
     
     Args:
-        config: Dizionario di configurazione
-        in_channels: Numero di canali in input
-    
-    Returns:
-        PiHead instance
+        in_channels: Canali input
+        hidden_dim: Dimensione hidden
+        use_skip: Se usare skip connections
     """
-    pi_cfg = config.get("PI_HEAD", {})
     
-    return PiHead(
-        in_channels=in_channels,
-        hidden_dim=pi_cfg.get("HIDDEN_DIM", 256),
-        num_layers=pi_cfg.get("NUM_LAYERS", 2),
-        dropout=pi_cfg.get("DROPOUT", 0.1),
-        use_bn=pi_cfg.get("USE_BN", True),
-    )
+    def __init__(
+        self,
+        in_channels: int = 512,
+        hidden_dim: int = 256,
+        use_skip: bool = True,
+        dropout: float = 0.1,
+    ):
+        super().__init__()
+        
+        self.use_skip = use_skip
+        
+        # Input projection
+        self.input_proj = nn.Sequential(
+            nn.Conv2d(in_channels, hidden_dim, kernel_size=1),
+            nn.BatchNorm2d(hidden_dim),
+            nn.ReLU(inplace=True),
+        )
+        
+        # Shared encoder
+        self.encoder = nn.Sequential(
+            nn.Conv2d(hidden_dim, hidden_dim, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(hidden_dim),
+            nn.ReLU(inplace=True),
+            nn.Dropout2d(dropout),
+            nn.Conv2d(hidden_dim, hidden_dim, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(hidden_dim),
+            nn.ReLU(inplace=True),
+        )
+        
+        # π-head: classificazione binaria [vuoto, non-vuoto]
+        self.pi_head = nn.Conv2d(hidden_dim, 2, kernel_size=1)
+        
+        # λ-head: regressione del rate Poisson
+        self.lambda_head = nn.Sequential(
+            nn.Conv2d(hidden_dim, hidden_dim // 2, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(hidden_dim // 2, 1, kernel_size=1),
+        )
+        
+        self._init_weights()
+    
+    def _init_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+        
+        # Bias π verso "non-vuoto" inizialmente
+        if self.pi_head.bias is not None:
+            nn.init.constant_(self.pi_head.bias[0], 0.5)   # logit vuoto
+            nn.init.constant_(self.pi_head.bias[1], -0.5)  # logit non-vuoto
+    
+    def forward(self, x: torch.Tensor) -> Dict[str, torch.Tensor]:
+        """
+        Forward pass.
+        
+        Args:
+            x: [B, C, H, W] feature map
+            
+        Returns:
+            dict con logit_pi, pi, lambda_, expected_count
+        """
+        # Project input
+        h = self.input_proj(x)
+        
+        # Encode
+        encoded = self.encoder(h)
+        
+        # Skip connection
+        if self.use_skip:
+            encoded = encoded + h
+        
+        # π: classificazione binaria
+        logit_pi = self.pi_head(encoded)  # [B, 2, H, W]
+        pi_probs = F.softmax(logit_pi, dim=1)
+        pi = pi_probs[:, 0:1, :, :]  # P(vuoto)
+        pi_not_empty = pi_probs[:, 1:2, :, :]  # P(non-vuoto)
+        
+        # λ: rate Poisson
+        log_lambda = self.lambda_head(encoded)
+        lambda_ = F.softplus(log_lambda)
+        
+        # Expected count
+        expected_count = pi_not_empty * lambda_
+        
+        return {
+            "logit_pi": logit_pi,  # [B, 2, H, W]
+            "pi": pi,  # P(vuoto)
+            "pi_not_empty": pi_not_empty,  # P(non-vuoto)
+            "log_lambda": log_lambda,
+            "lambda_": lambda_,
+            "expected_count": expected_count,
+        }
+
+
+def build_zip_head(
+    in_channels: int = 512,
+    hidden_dim: int = 256,
+    version: str = "v1",
+    **kwargs
+) -> nn.Module:
+    """
+    Factory function per costruire la ZIP head.
+    
+    Args:
+        in_channels: Canali input
+        hidden_dim: Dimensione hidden
+        version: "v1" o "v2"
+        
+    Returns:
+        ZIPHead module
+    """
+    if version.lower() == "v1":
+        return ZIPHead(in_channels=in_channels, hidden_dim=hidden_dim, **kwargs)
+    elif version.lower() == "v2":
+        return ZIPHeadV2(in_channels=in_channels, hidden_dim=hidden_dim, **kwargs)
+    else:
+        raise ValueError(f"Versione non supportata: {version}")
 
 
 if __name__ == "__main__":
     # Test
-    print("Testing PiHead...")
+    print("Testing ZIP Heads...")
     
-    # Input simulato (feature map dal backbone CLIP)
-    B, C, H, W = 2, 768, 16, 16  # CLIP ViT-B/16: 768 dim, 16x16 patches per 256x256 input
+    B, C, H, W = 2, 512, 16, 16
     x = torch.randn(B, C, H, W)
     
-    # Test PiHead base
-    pi_head = PiHead(in_channels=C, hidden_dim=256, num_layers=2)
+    # Test ZIPHead V1
+    print("\n--- ZIPHead V1 ---")
+    zip_head_v1 = ZIPHead(in_channels=C, hidden_dim=256)
+    out_v1 = zip_head_v1(x)
     
-    logits = pi_head(x)
-    print(f"Logits shape: {logits.shape}")  # [2, 2, 16, 16]
+    for key, val in out_v1.items():
+        print(f"  {key}: {val.shape}")
     
-    pi_prob = pi_head.get_pi_prob(x)
-    print(f"Pi prob shape: {pi_prob.shape}")  # [2, 1, 16, 16]
-    print(f"Pi prob range: [{pi_prob.min():.3f}, {pi_prob.max():.3f}]")
+    print(f"\n  π range: [{out_v1['pi'].min():.3f}, {out_v1['pi'].max():.3f}]")
+    print(f"  λ range: [{out_v1['lambda_'].min():.3f}, {out_v1['lambda_'].max():.3f}]")
+    print(f"  Expected count sum: {out_v1['expected_count'].sum(dim=[1,2,3])}")
     
-    # Test maschera soft
-    mask_soft = pi_head.get_mask(x, soft=True, soft_min=0.1)
-    print(f"Soft mask shape: {mask_soft.shape}")
-    print(f"Soft mask range: [{mask_soft.min():.3f}, {mask_soft.max():.3f}]")
+    # Test ZIPHead V2
+    print("\n--- ZIPHead V2 ---")
+    zip_head_v2 = ZIPHeadV2(in_channels=C, hidden_dim=256)
+    out_v2 = zip_head_v2(x)
     
-    # Test maschera hard
-    mask_hard = pi_head.get_mask(x, soft=False, threshold=0.5)
-    print(f"Hard mask shape: {mask_hard.shape}")
-    print(f"Hard mask unique values: {torch.unique(mask_hard)}")
+    for key, val in out_v2.items():
+        print(f"  {key}: {val.shape}")
     
-    # Test PiHeadWithLambda
-    print("\nTesting PiHeadWithLambda...")
-    pi_head_lambda = PiHeadWithLambda(in_channels=C, hidden_dim=256)
-    
-    pi_logits, lambda_map = pi_head_lambda(x)
-    print(f"Pi logits shape: {pi_logits.shape}")
-    print(f"Lambda map shape: {lambda_map.shape}")
-    print(f"Lambda range: [{lambda_map.min():.3f}, {lambda_map.max():.3f}]")
-    
-    expected = pi_head_lambda.get_expected_count(x)
-    print(f"Expected count shape: {expected.shape}")
-    print(f"Total expected count: {expected.sum(dim=[1,2,3])}")
+    print(f"\n  π (vuoto) range: [{out_v2['pi'].min():.3f}, {out_v2['pi'].max():.3f}]")
+    print(f"  λ range: [{out_v2['lambda_'].min():.3f}, {out_v2['lambda_'].max():.3f}]")
     
     print("\n✅ Test completato!")

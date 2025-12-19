@@ -1,198 +1,0 @@
-nohup: ignoring input
-========================================================
-🚀 AVVIO TRAINING ZIP-CLIP-EBC COMPLETO
-📅 Data: Sun Dec 14 17:32:25 UTC 2025
-📄 Config: config_qnrf.yaml
-========================================================
-
---------------------------------------------------------
-▶️  AVVIO STAGE 1: π-Head Training (Classificazione)
---------------------------------------------------------
-/user/cattianese/miniconda3/envs/ctesi/lib/python3.12/site-packages/open_clip/factory.py:450: UserWarning: QuickGELU mismatch between final model config (quick_gelu=False) and pretrained tag 'openai' (quick_gelu=True).
-  warnings.warn(
-🚀 Avvio Stage 1: Training Pi-Head (Zero-Inflation)
-   Config: config_qnrf.yaml
-✅ CLIPBackbone inizializzato:
-   Model: ViT-B-16 (openai)
-   Patch size: 16
-   Visual dim: 512
-   Embed dim: 768
-   Text dim: 512
-✅ PiHead inizializzato:
-   In channels: 768
-   Hidden dim: 256
-   Num layers: 2
-✅ EBCHead: Prompt generati automaticamente (23 bins)
-✅ EBCHeadWithBinLogits inizializzato:
-   Num EBC bins (escluso zero): 22
-   ℹ️ Auto-Generated Prompts (22):
-      Start: ['There are between zero and one people.', 'There is one person.']
-      End:   There are more than 201 people.
-   Text prompts: 22 inizializzati
-✅ ZIPCLIPEBCModel inizializzato:
-   Backbone: ViT-B-16
-   Patch size: 16
-   Gate mode: multiply
-   Soft gate: True
-🧊 EBC-head congelato
-🔓 Backbone SCONGELATO (Fine-tuning)
-🔓 Backbone scongelato
-🔓 π-head scongelato
-⚙️  Creazione optimizer: ADAMW (lr=5e-05, weight_decay=0.0001)
-📉 Scheduler attivo: COSINE (max_epochs=200)
-⏳ Costruzione Count Sampler (lettura annotazioni)...
-Scanning dataset:   0%|          | 0/1201 [00:00<?, ?it/s]Scanning dataset:   3%|▎         | 40/1201 [00:00<00:02, 398.92it/s]Scanning dataset:   7%|▋         | 80/1201 [00:00<00:03, 317.67it/s]Scanning dataset:  10%|▉         | 116/1201 [00:00<00:03, 333.36it/s]Scanning dataset:  13%|█▎        | 151/1201 [00:00<00:03, 333.63it/s]Scanning dataset:  16%|█▌        | 187/1201 [00:00<00:02, 342.17it/s]Scanning dataset:  19%|█▉        | 228/1201 [00:00<00:02, 360.48it/s]Scanning dataset:  22%|██▏       | 265/1201 [00:00<00:02, 361.57it/s]Scanning dataset:  25%|██▌       | 302/1201 [00:00<00:02, 350.85it/s]Scanning dataset:  28%|██▊       | 338/1201 [00:00<00:02, 326.85it/s]Scanning dataset:  31%|███       | 372/1201 [00:01<00:02, 308.54it/s]Scanning dataset:  34%|███▎      | 404/1201 [00:01<00:02, 304.23it/s]Scanning dataset:  37%|███▋      | 446/1201 [00:01<00:02, 336.16it/s]Scanning dataset:  40%|████      | 481/1201 [00:01<00:02, 329.12it/s]Scanning dataset:  43%|████▎     | 515/1201 [00:01<00:02, 315.53it/s]Scanning dataset:  46%|████▌     | 547/1201 [00:01<00:02, 306.15it/s]Scanning dataset:  48%|████▊     | 578/1201 [00:01<00:02, 304.93it/s]Scanning dataset:  51%|█████     | 613/1201 [00:01<00:01, 316.06it/s]Scanning dataset:  54%|█████▍    | 648/1201 [00:01<00:01, 321.13it/s]Scanning dataset:  57%|█████▋    | 684/1201 [00:02<00:01, 329.27it/s]Scanning dataset:  60%|█████▉    | 718/1201 [00:02<00:01, 325.54it/s]Scanning dataset:  63%|██████▎   | 751/1201 [00:02<00:01, 322.62it/s]Scanning dataset:  65%|██████▌   | 784/1201 [00:02<00:01, 307.98it/s]Scanning dataset:  68%|██████▊   | 815/1201 [00:02<00:01, 295.61it/s]Scanning dataset:  70%|███████   | 845/1201 [00:02<00:01, 270.66it/s]Scanning dataset:  73%|███████▎  | 873/1201 [00:02<00:01, 242.94it/s]Scanning dataset:  75%|███████▍  | 898/1201 [00:02<00:01, 233.83it/s]Scanning dataset:  77%|███████▋  | 922/1201 [00:03<00:01, 227.39it/s]Scanning dataset:  79%|███████▊  | 945/1201 [00:03<00:01, 218.00it/s]Scanning dataset:  81%|████████  | 967/1201 [00:03<00:01, 217.10it/s]Scanning dataset:  82%|████████▏ | 989/1201 [00:03<00:01, 200.71it/s]Scanning dataset:  85%|████████▌ | 1021/1201 [00:03<00:00, 231.86it/s]Scanning dataset:  87%|████████▋ | 1047/1201 [00:03<00:00, 238.91it/s]Scanning dataset:  90%|████████▉ | 1078/1201 [00:03<00:00, 257.27it/s]Scanning dataset:  94%|█████████▍| 1130/1201 [00:03<00:00, 329.57it/s]Scanning dataset:  99%|█████████▉| 1186/1201 [00:03<00:00, 395.13it/s]Scanning dataset: 100%|██████████| 1201/1201 [00:03<00:00, 303.18it/s]
-ℹ️ Count-aware sampler attivo: avg_w=49.655, max_count=2048.0
-✅ Ripreso l'addestramento da experiments/qnrf_baseline/stage1/last_stage1_model.pth (epoch=201)
-✅ Stage 1 Completato!
-✅ Stage 1 Completato in -1765733545 secondi.
-
---------------------------------------------------------
-▶️  AVVIO STAGE 2: EBC-Head Training (Conteggio)
---------------------------------------------------------
-/user/cattianese/miniconda3/envs/ctesi/lib/python3.12/site-packages/open_clip/factory.py:450: UserWarning: QuickGELU mismatch between final model config (quick_gelu=False) and pretrained tag 'openai' (quick_gelu=True).
-  warnings.warn(
-============================================================
-🚀 ZIP-CLIP-EBC: Stage 2 Training (EBC-Head)
-   Device: cuda
-   Output: experiments/qnrf_baseline/stage2
-============================================================
-✅ CLIPBackbone inizializzato:
-   Model: ViT-B-16 (openai)
-   Patch size: 16
-   Visual dim: 512
-   Embed dim: 768
-   Text dim: 512
-✅ PiHead inizializzato:
-   In channels: 768
-   Hidden dim: 256
-   Num layers: 2
-✅ EBCHead: Prompt generati automaticamente (23 bins)
-✅ EBCHeadWithBinLogits inizializzato:
-   Num EBC bins (escluso zero): 22
-   ℹ️ Auto-Generated Prompts (22):
-      Start: ['There are between zero and one people.', 'There is one person.']
-      End:   There are more than 201 people.
-   Text prompts: 22 inizializzati
-✅ ZIPCLIPEBCModel inizializzato:
-   Backbone: ViT-B-16
-   Patch size: 16
-   Gate mode: multiply
-   Soft gate: True
-📥 Caricamento pesi Stage 1 da: experiments/qnrf_baseline/stage1/best_stage1_model.pth
-🧊 Backbone congelato
-🧊 π-head congelato
-🔓 EBC-head scongelato
-ℹ️  Parametri trainabili (EBC only): 264,449
-🔧 Costruzione Loss Stage 2. Tipo: DISTRIBUTION_MATCHING
-📉 Scheduler attivo: COSINE (max_epochs=1500)
-🔄 Resume Stage 2 dall'epoca 1501
-✅ Stage 2 Completato!
-✅ Stage 2 Completato in 16 secondi.
-
---------------------------------------------------------
-▶️  AVVIO STAGE 3: Joint Fine-tuning
---------------------------------------------------------
-/user/cattianese/miniconda3/envs/ctesi/lib/python3.12/site-packages/open_clip/factory.py:450: UserWarning: QuickGELU mismatch between final model config (quick_gelu=False) and pretrained tag 'openai' (quick_gelu=True).
-  warnings.warn(
-============================================================
-🚀 ZIP-CLIP-EBC: Stage 3 (Joint Fine-tuning)
-   Device: cuda
-   Output: experiments/qnrf_baseline/stage3
-============================================================
-✅ CLIPBackbone inizializzato:
-   Model: ViT-B-16 (openai)
-   Patch size: 16
-   Visual dim: 512
-   Embed dim: 768
-   Text dim: 512
-✅ PiHead inizializzato:
-   In channels: 768
-   Hidden dim: 256
-   Num layers: 2
-✅ EBCHead: Prompt generati automaticamente (23 bins)
-✅ EBCHeadWithBinLogits inizializzato:
-   Num EBC bins (escluso zero): 22
-   ℹ️ Auto-Generated Prompts (22):
-      Start: ['There are between zero and one people.', 'There is one person.']
-      End:   There are more than 201 people.
-   Text prompts: 22 inizializzati
-✅ ZIPCLIPEBCModel inizializzato:
-   Backbone: ViT-B-16
-   Patch size: 16
-   Gate mode: multiply
-   Soft gate: True
-📥 Carico pesi STAGE 1 da: experiments/qnrf_baseline/stage1/best_stage1_model.pth
-📥 Carico pesi STAGE 2 da: experiments/qnrf_baseline/stage2/best_stage2_model.pth
-🔓 Scongelo TUTTO il modello (Backbone, Pi, EBC)...
-🔓 Backbone scongelato
-🔓 π-head scongelato
-🔓 EBC-head scongelato
-ℹ️  Parametri totali in training: 152,246,020
-⚙️  Creazione optimizer: ADAMW (lr=5e-05, weight_decay=0.0001)
-📉 Scheduler attivo: COSINE (max_epochs=600)
-🔧 Costruzione Loss Stage 3 (Joint). EBC Mode: DISTRIBUTION_MATCHING
-Epoch 1 (Joint):   0%|          | 0/75 [00:00<?, ?it/s]Epoch 1 (Joint):   0%|          | 0/75 [00:04<?, ?it/s]
-Traceback (most recent call last):
-  File "/user/cattianese/ctesi/train_stage3.py", line 289, in <module>
-    main(args.config)
-  File "/user/cattianese/ctesi/train_stage3.py", line 252, in main
-    train_loss = train_one_epoch(
-                 ^^^^^^^^^^^^^^^^
-  File "/user/cattianese/ctesi/train_stage3.py", line 61, in train_one_epoch
-    loss, loss_dict = criterion(outputs, gt_density)
-                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/user/cattianese/miniconda3/envs/ctesi/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1751, in _wrapped_call_impl
-    return self._call_impl(*args, **kwargs)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/user/cattianese/miniconda3/envs/ctesi/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1762, in _call_impl
-    return forward_call(*args, **kwargs)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/user/cattianese/ctesi/losses/losses.py", line 412, in forward
-    self.alpha_ebc * ebc_dict["ebc_ce_loss"] +
-                     ~~~~~~~~^^^^^^^^^^^^^^^
-KeyError: 'ebc_ce_loss'
-✅ Stage 3 Completato in 21 secondi.
-
-========================================================
-🏆 TRAINING COMPLETATO CON SUCCESSO!
-========================================================
- REALIZZO I GRAFICI DEI RISULTATI... 
-/user/cattianese/miniconda3/envs/ctesi/lib/python3.12/site-packages/open_clip/factory.py:450: UserWarning: QuickGELU mismatch between final model config (quick_gelu=False) and pretrained tag 'openai' (quick_gelu=True).
-  warnings.warn(
-🚀 Avvio Valutazione Stage 1
-   Config: config_sha.yaml
-✅ CLIPBackbone inizializzato:
-   Model: ViT-B-16 (openai)
-   Patch size: 16
-   Visual dim: 512
-   Embed dim: 768
-   Text dim: 512
-✅ PiHead inizializzato:
-   In channels: 768
-   Hidden dim: 256
-   Num layers: 2
-✅ EBCHead: Prompt generati automaticamente (19 bins)
-✅ EBCHeadWithBinLogits inizializzato:
-   Num EBC bins (escluso zero): 18
-   ℹ️ Auto-Generated Prompts (18):
-      Start: ['There are between zero and one people.', 'There is one person.']
-      End:   There are more than 61 people.
-   Text prompts: 18 inizializzati
-✅ ZIPCLIPEBCModel inizializzato:
-   Backbone: ViT-B-16
-   Patch size: 16
-   Gate mode: multiply
-   Soft gate: True
-✅ Caricamento checkpoint da: experiments/sha_zip_clip_ebc/stage1/last_stage1_model.pth
-Traceback (most recent call last):
-  File "/user/cattianese/ctesi/evaluate_stage1.py", line 196, in <module>
-    main(args.config, args.checkpoint)
-  File "/user/cattianese/ctesi/evaluate_stage1.py", line 154, in main
-    missing, unexpected = model.load_state_dict(state_dict, strict=False)
-                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/user/cattianese/miniconda3/envs/ctesi/lib/python3.12/site-packages/torch/nn/modules/module.py", line 2593, in load_state_dict
-    raise RuntimeError(
-RuntimeError: Error(s) in loading state_dict for ZIPCLIPEBCModel:
-	size mismatch for ebc_head.bin_centers_tensor: copying a param with shape torch.Size([17]) from checkpoint, the shape in current model is torch.Size([18]).
-	size mismatch for ebc_head.text_features: copying a param with shape torch.Size([17, 512]) from checkpoint, the shape in current model is torch.Size([18, 512]).
