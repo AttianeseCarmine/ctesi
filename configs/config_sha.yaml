@@ -3,14 +3,14 @@
 # OBIETTIVO: Risolvere la sottostima su IMG 160
 # ============================================================
 
-RUN_NAME: "sha_v3_aggressive"
+RUN_NAME: "sha"
 SEED: 42
 DEVICE: "cuda"
 
 # ============================================================
 # DATASET
 # ============================================================
-DATASET: "sha"
+DATASET: "shha"
 DATA:
   ROOT: "./data/sha/"
   TRAIN_SPLIT: "train"
@@ -77,7 +77,7 @@ DENSITY_MODE: "zip_gated_ebc" # Usa la maschera pi per filtrare EBC
 TRAIN_STAGE1:
   BATCH_SIZE: 32
   NUM_WORKERS: 8
-  EPOCHS: 200
+  EPOCHS: 13
   LR_PI_HEAD: 1.0e-4
   LR_BACKBONE: 1.0e-5
   OPTIMIZER: "adamw"
@@ -102,7 +102,7 @@ LOSS_STAGE1:
 TRAIN_STAGE2:
   BATCH_SIZE: 64
   NUM_WORKERS: 8
-  EPOCHS: 1500         # Epoche alte perché si allena solo la testa
+  EPOCHS: 13         # Epoche alte perché si allena solo la testa
   LR_EBC_HEAD: 1.0e-4
   LR_BACKBONE: 0.0     # Backbone congelato
   OPTIMIZER: "adamw"
@@ -125,7 +125,7 @@ LOSS_STAGE2:
 TRAIN_STAGE3:
   BATCH_SIZE: 16
   NUM_WORKERS: 8
-  EPOCHS: 200
+  EPOCHS: 15
   LR_BACKBONE: 1.0e-6  # LR bassissimo per preservare le feature
   LR_HEADS: 1.0e-5
   OPTIMIZER: "adamw"
