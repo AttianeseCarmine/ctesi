@@ -70,68 +70,42 @@ BINS:
 BIN_CENTERS: [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 8.0, 20.0]
 
 DENSITY_MODE: "zip_gated_ebc" # Usa la maschera pi per filtrare EBC
-
 # ============================================================
-# TRAINING STAGE 1: π-HEAD (Struttura Vuoto/Pieno)
+# STAGE 1: TRAINING PI-HEAD (Filtro Vuoti)
 # ============================================================
 TRAIN_STAGE1:
-  BATCH_SIZE: 32
-  NUM_WORKERS: 8
-  EPOCHS: 13
-  LR_PI_HEAD: 1.0e-4
-  LR_BACKBONE: 1.0e-5
+  EPOCHS: 50
+  BATCH_SIZE: 8
+  VAL_INTERVAL: 5       # Validazione ogni N epoche
+  
+  # Optimizer
   OPTIMIZER: "adamw"
-  SCHEDULER: "cosine"
-  WARMUP_EPOCHS: 5
-  VAL_INTERVAL: 10
-  RESUME_LAST: true
-  SAVE_BEST: true
-
-LOSS_STAGE1:
-  TYPE: "bce_with_logits"
-  POS_WEIGHT: 3.0      # Peso maggiore per i blocchi "pieni" (raro)
-  COUNT_WEIGHT: 0.05   # Piccola loss ausiliaria sul conteggio
-  PI_REG:
-    ENABLE: true
-    TARGET_MEAN: 0.25
-    WEIGHT: 1.0e-3
+  LR_BACKBONE: 1.0e-5   # Backbone molto lento
+  LR_HEAD: 1.0e-4       # Testa più veloce
+  WEIGHT_DECAY: 1.0e-4
+  
+  # Loss
+  POS_WEIGHT: 2.0       # Aumenta se hai troppi falsi negativi (persone perse)
+                        # Diminuisci se hai troppi falsi positivi (sfondo scambiato per gente)
 
 # ============================================================
-# TRAINING STAGE 2: CLIP-EBC HEAD (Conteggio Semantico)
+# STAGE 2: TRAINING CLIP-EBC (Conteggio)
 # ============================================================
 TRAIN_STAGE2:
-  BATCH_SIZE: 64
-  NUM_WORKERS: 8
-  EPOCHS: 13         # Epoche alte perché si allena solo la testa
-  LR_EBC_HEAD: 1.0e-4
-  LR_BACKBONE: 0.0     # Backbone congelato
-  OPTIMIZER: "adamw"
-  SCHEDULER: "cosine"
-  WARMUP_EPOCHS: 5
-  VAL_INTERVAL: 10
-  EARLY_STOPPING_PATIENCE: 100
-  CLIP_GRAD_NORM: 1.0
-  RESUME_LAST: true
-  SAVE_BEST: true
-
-LOSS_STAGE2:
-  TYPE: "distribution_matching"
-  SIGMA: 0.8           # Sigma per la ground truth gaussiana
-  COUNT_WEIGHT: 1.0    # Importanza del conteggio globale
-
-# ============================================================
-# TRAINING STAGE 3: JOINT FINE-TUNING
-# ============================================================
-TRAIN_STAGE3:
-  BATCH_SIZE: 16
-  NUM_WORKERS: 8
-  EPOCHS: 15
-  LR_BACKBONE: 1.0e-6  # LR bassissimo per preservare le feature
-  LR_HEADS: 1.0e-5
-  OPTIMIZER: "adamw"
-  SCHEDULER: "cosine"
+  EPOCHS: 100
+  BATCH_SIZE: 8
   VAL_INTERVAL: 5
-  SAVE_BEST: true
-
-LOSS_STAGE3:
-  JOINT_ALPHA: 1.0     # Bilanciamento tra loss struttura e loss conteggio
+  
+  # Optimizer
+  OPTIMIZER: "adamw"
+  LR_BACKBONE: 1.0e-5
+  LR_HEAD: 1.0e-4
+  WEIGHT_DECAY: 1.0e-4
+  
+  # Loss
+  LOSS_TYPE: "nll"      # Negative Log-Likelihood per EBC
+  
+# ============================================================
+# PATHS
+# ============================================================
+save_dir: "./checkpoints"
