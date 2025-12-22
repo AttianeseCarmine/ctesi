@@ -91,21 +91,31 @@ TRAIN_STAGE1:
 # ============================================================
 # STAGE 2: TRAINING CLIP-EBC (Conteggio)
 # ============================================================
+
 TRAIN_STAGE2:
-  EPOCHS: 100
-  BATCH_SIZE: 8
-  VAL_INTERVAL: 5
-  
-  # Optimizer
+  BATCH_SIZE: 64
+  NUM_WORKERS: 8
+  EPOCHS: 3000           # Aumentato da 1000 per far convergere meglio la testa
+  LR_EBC_HEAD: 1.0e-4
+  LR_BACKBONE: 0.0
   OPTIMIZER: "adamw"
-  LR_BACKBONE: 1.0e-5
-  LR_HEAD: 1.0e-4
-  WEIGHT_DECAY: 1.0e-4
-  
-  # Loss
-  LOSS_TYPE: "nll"      # Negative Log-Likelihood per EBC
+  SCHEDULER: "cosine"
+  WARMUP_EPOCHS: 5
+  VAL_INTERVAL: 10
+  EARLY_STOPPING_PATIENCE: 100
+  CLIP_GRAD_NORM: 1.0
+  RESUME_LAST: true
+  SAVE_BEST: true
+
+LOSS_STAGE2:
+  TYPE: "distribution_matching"
+  SIGMA: 0.8             # Ridotto da 1.0 -> Più precisione, meno spalmatura
+  COUNT_WEIGHT: 0.1
   
 # ============================================================
 # PATHS
 # ============================================================
-save_dir: "./checkpoints"
+EXP:
+  OUT_DIR: "./checkpoints"
+  SAVE_BEST: true
+  LOG_INTERVAL: 50
