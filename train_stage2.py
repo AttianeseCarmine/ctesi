@@ -13,7 +13,7 @@ import math
 
 # --- IMPORTS ---
 from models.zip_clip_ebc_model import ZIPCLIPEBCModel
-from datasets.shha import SHHA
+from datasets.sha import SHHA
 from datasets.transforms import build_transforms
 from losses.clip_ebc_loss import CLIPEBCLoss 
 from utils.train_utils import AverageMeter, seed_everything

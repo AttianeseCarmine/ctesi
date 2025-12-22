@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from models.zip_clip_ebc_model import ZIPCLIPEBCModel
-from datasets.shha import SHHA
+from datasets.sha import SHHA
 from datasets.transforms import build_transforms
 from utils.train_utils import AverageMeter, seed_everything
 
