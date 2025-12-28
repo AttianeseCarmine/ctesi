@@ -44,6 +44,8 @@ def denormalize_image(img_tensor, mean, std):
     std = torch.tensor(std).view(3, 1, 1)
     img = img_tensor.cpu() * std + mean
     img = img.clamp(0, 1).permute(1, 2, 0).numpy()
+    # Clip extra per evitare warning matplotlib (errori precisione float32)
+    img = np.clip(img, 0, 1)
     return img
 
 
@@ -103,11 +105,18 @@ def create_density_overlay(image, density_map, alpha=0.6, sigma=2):
     
     # Crea maschera per l'overlay (solo dove c'è densità)
     mask = density_norm > 0.01
-    mask_3d = np.stack([mask] * 3, axis=-1)
     
-    # Blend
-    overlay = image.copy()
-    overlay[mask_3d] = (1 - alpha) * image[mask_3d] + alpha * density_colored[mask]
+    # Blend usando np.where per evitare problemi di broadcasting
+    # Espandi la maschera a 3 canali per il broadcasting
+    mask_3d = mask[:, :, np.newaxis]
+    
+    # Blend: dove c'è densità, mischia; altrimenti mantieni l'originale
+    overlay = np.where(mask_3d, 
+                       (1 - alpha) * image + alpha * density_colored, 
+                       image)
+    
+    # Clip per evitare warning di matplotlib (errori di precisione float)
+    overlay = np.clip(overlay, 0, 1)
     
     return overlay, density_colored
 

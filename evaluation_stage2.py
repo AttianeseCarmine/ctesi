@@ -98,7 +98,7 @@ if __name__ == "__main__":
         ckpt_path = args.checkpoint
     else:
         dataset_name = config.get('DATASET', 'sha')
-        ckpt_path = f"./checkpoints/{dataset_name}/stage2/best_model.pth"
+        ckpt_path = f"./checkpoints/{dataset_name}/stage2/best_mae.pth"
 
     if os.path.exists(ckpt_path):
         checkpoint = torch.load(ckpt_path, map_location=device, weights_only=False)

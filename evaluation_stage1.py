@@ -29,7 +29,7 @@ def crowd_collate(batch):
     }
 
 
-def evaluate_stage1(model, dataloader, device, block_size=16, threshold=0.5):
+def evaluate_stage1(model, dataloader, device, block_size=16, threshold=0.3):
     model.eval()
     
     # Inizializzazione contatori per metriche
@@ -55,8 +55,9 @@ def evaluate_stage1(model, dataloader, device, block_size=16, threshold=0.5):
             outputs = model(imgs)
             
             # π è la probabilità di "VUOTO", quindi prob OCCUPATO = (1 - pi)
-            pi_vuoto = outputs['pi']
-            prob_occupied = 1.0 - pi_vuoto
+            # DOPO (corretto):
+            pi_logits = outputs['pi_logits']
+            prob_occupied = torch.sigmoid(pi_logits)  # Direttamente!
             
             # Allinea dimensioni se necessario
             if prob_occupied.shape[-2:] != gt_mask_occupied.shape[-2:]:

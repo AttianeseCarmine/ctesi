@@ -27,9 +27,9 @@ python train_stage1.py --config $CONFIG_FILE 2>&1 | tee "$LOG_DIR/stage1_train.l
 
 # --- STAGE 2: EBC-Head Training ---
 echo "▶️  STAGE 2: Training CLIP-EBC Head..."
-python train_stage2.py --config $CONFIG_FILE 2>&1 | tee "$LOG_DIR/stage2_train.log"
+#python train_stage2.py --config $CONFIG_FILE 2>&1 | tee "$LOG_DIR/stage2_train.log"
 
 # --- STAGE 3: Joint Fine-tuning ---
-echo "▶️  STAGE 3: Joint Fine-tuning End-to-End..."
-python train_stage3.py --config $CONFIG_FILE 2>&1 | tee "$LOG_DIR/stage3_train.log"
+#echo "▶️  STAGE 3: Joint Fine-tuning End-to-End..."
+#python train_stage3.py --config $CONFIG_FILE 2>&1 | tee "$LOG_DIR/stage3_train.log"
 

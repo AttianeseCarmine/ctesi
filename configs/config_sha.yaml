@@ -1,6 +1,7 @@
 # ============================================================
-# ZIP-CLIP-EBC: Configurazione "V3 - Aggressive Density"
-# OBIETTIVO: Risolvere la sottostima su IMG 160
+# ZIP-CLIP-EBC: Configurazione FIXED
+# ============================================================
+# FIX PRINCIPALE: pos_weight ora pesa i blocchi PIENI (minoranza)
 # ============================================================
 
 RUN_NAME: "sha"
@@ -34,7 +35,7 @@ DATA:
   # Sampling aggressivo per bilanciare dataset sparsi
   MIN_GT_COUNT: 0 
   MAX_ATTEMPTS: 10
-
+  
 # ============================================================
 # MODEL ARCHITECTURE
 # ============================================================
@@ -70,48 +71,74 @@ BINS:
 BIN_CENTERS: [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 8.0, 20.0]
 
 DENSITY_MODE: "zip_gated_ebc" # Usa la maschera pi per filtrare EBC
+
 # ============================================================
-# STAGE 1: TRAINING PI-HEAD (Filtro Vuoti)
+# STAGE 1: TRAINING PI-HEAD (FIXED!)
+# ============================================================
+# IMPORTANTE: Ora target=1 significa PIENO, target=0 significa VUOTO
+# Quindi pos_weight > 1 compensa lo sbilanciamento a FAVORE dei blocchi PIENI
+#
+# Dataset statistics (tipiche per ShanghaiTech A):
+#   - Blocchi PIENI: ~16%
+#   - Blocchi VUOTI: ~84%
+#   - Rapporto: ~5.25:1
+#
+# Quindi pos_weight dovrebbe essere ~5.0 per bilanciare
 # ============================================================
 TRAIN_STAGE1:
-  EPOCHS: 50
-  BATCH_SIZE: 8
-  VAL_INTERVAL: 5       # Validazione ogni N epoche
+  EPOCHS: 400
+  BATCH_SIZE: 32
+  NUM_WORKERS: 8
+  VAL_INTERVAL: 5
   
   # Optimizer
   OPTIMIZER: "adamw"
-  LR_BACKBONE: 1.0e-5   # Backbone molto lento
-  LR_HEAD: 1.0e-4       # Testa più veloce
+  LR_BACKBONE: 1.0e-5   # Backbone lento
+  LR_HEAD: 5.0e-4       # Testa più veloce (aumentato da 1e-4)
   WEIGHT_DECAY: 1.0e-4
   
-  # Loss
-  POS_WEIGHT: 2.0       # Aumenta se hai troppi falsi negativi (persone perse)
-                        # Diminuisci se hai troppi falsi positivi (sfondo scambiato per gente)
+  # ⭐ FIX PRINCIPALE: pos_weight ora pesa la classe PIENO
+  # Aumentato da 2.0 a 5.0 per compensare lo sbilanciamento
+  POS_WEIGHT: 5.0
+  
+  # Alternative: usa Focal Loss (run con --use_focal_loss)
+  # La Focal Loss è più robusta per sbilanciamenti estremi
 
 # ============================================================
-# STAGE 2: TRAINING CLIP-EBC (Conteggio)
+# STAGE 2: TRAINING CLIP-EBC (invariato)
 # ============================================================
-
 TRAIN_STAGE2:
-  BATCH_SIZE: 64
-  NUM_WORKERS: 8
-  EPOCHS: 3000           # Aumentato da 1000 per far convergere meglio la testa
-  LR_EBC_HEAD: 1.0e-4
-  LR_BACKBONE: 0.0
-  OPTIMIZER: "adamw"
-  SCHEDULER: "cosine"
-  WARMUP_EPOCHS: 5
-  VAL_INTERVAL: 10
-  EARLY_STOPPING_PATIENCE: 100
+  BATCH_SIZE: 32
+  NUM_WORKERS: 4
+  NUM_CROPS: 1
+  
+  TOTAL_EPOCHS: 2600
+  EVAL_START: 20
+  EVAL_FREQ: 10
+  SAVE_FREQ: 50
+  
+  # Optimizer
+  OPTIMIZER: "adam"
+  LR: 1.0e-4
+  WEIGHT_DECAY: 1.0e-4
+  
+  # Scheduler: CosineAnnealingWarmRestarts
+  WARMUP_EPOCHS: 50
+  WARMUP_LR: 1.0e-6
+  T_0: 5
+  T_MULT: 2
+  ETA_MIN: 1.0e-7
+  
+  # AMP
+  AMP: false
   CLIP_GRAD_NORM: 1.0
-  RESUME_LAST: true
-  SAVE_BEST: true
 
 LOSS_STAGE2:
-  TYPE: "distribution_matching"
-  SIGMA: 0.8             # Ridotto da 1.0 -> Più precisione, meno spalmatura
-  COUNT_WEIGHT: 0.1
-  
+  TYPE: "dace"
+  WEIGHT_COUNT_LOSS: 1.0
+  COUNT_LOSS: "dmcount"
+  WEIGHT_OT: 0.1
+  WEIGHT_TV: 0.01
 # ============================================================
 # PATHS
 # ============================================================

@@ -13,7 +13,7 @@ import scipy.io as sio
 from .base_dataset import BaseCrowdDataset
 
 
-class SHHA(BaseCrowdDataset):
+class SHA(BaseCrowdDataset):
     """
     ShanghaiTech Part A Dataset Loader.
     

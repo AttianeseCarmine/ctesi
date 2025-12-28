@@ -22,7 +22,7 @@ import argparse
 import os
 from PIL import Image
 
-from models import ZIPCLIPEBCModel
+from models.zip_clip_ebc_model import ZIPCLIPEBCModel
 from datasets.sha import SHA
 from datasets.transforms import build_transforms
 
