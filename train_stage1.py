@@ -400,7 +400,7 @@ def train_stage1_zip():
     device = torch.device(f'cuda:{args.gpu}' if torch.cuda.is_available() else 'cpu')
     
     dataset_name = config.get('DATASET', 'sha')
-    save_dir = os.path.join('./checkpoints', dataset_name, f'stage1_zip_{args.loss_mode}')
+    save_dir = os.path.join('./checkpoints', dataset_name, f'stage1')
     os.makedirs(save_dir, exist_ok=True)
     
     print(f"🚀 Stage 1 ZIP Training ({args.loss_mode})")

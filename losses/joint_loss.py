@@ -287,26 +287,11 @@ class Stage1ZIPLoss(nn.Module):
         }
         
         return loss, loss_dict
-
-
 class Stage2EBCLoss(nn.Module):
-    """
-    Loss per Stage 2: Training CLIP-EBC Head (con ZIP congelato).
-    
-    Solo CLIP-EBC loss, ZIP head è congelata.
-    """
-    
-    def __init__(
-        self,
-        bins: List[Tuple[int, int]],
-        bin_centers: List[float],
-        label_smoothing: float = 0.1,
-        count_weight: float = 0.1,
-        block_size: int = 16,
-    ):
+    def __init__(self, bins, bin_centers, label_smoothing=0.1, count_weight=0.1, block_size=16):
         super().__init__()
         self.block_size = block_size
-        
+        # Loss pura di CLIP-EBC
         self.clip_ebc_loss = CLIPEBCLoss(
             bins=bins,
             bin_centers=bin_centers,
@@ -314,25 +299,19 @@ class Stage2EBCLoss(nn.Module):
             count_weight=count_weight,
         )
     
-    def compute_block_counts(self, gt_density: torch.Tensor) -> torch.Tensor:
-        block_counts = F.avg_pool2d(
-            gt_density,
-            kernel_size=self.block_size,
-            stride=self.block_size
-        ) * (self.block_size ** 2)
-        return block_counts
+    def compute_block_counts(self, gt_density):
+        # Converte la density map in conteggi per blocco 16x16
+        return F.avg_pool2d(gt_density, self.block_size, stride=self.block_size) * (self.block_size**2)
     
-    def forward(
-        self,
-        predictions: Dict[str, torch.Tensor],
-        gt_density: torch.Tensor,
-    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
-        
+    def forward(self, predictions, gt_density):
         target_counts = self.compute_block_counts(gt_density)
         
-        logits = predictions["logits"]
-        bin_probs = predictions.get("bin_probs", None)
-        
-        loss, loss_dict = self.clip_ebc_loss(logits, target_counts, bin_probs)
+        # CALCOLA LOSS SU TUTTO (mask=None)
+        # Il modello deve imparare che Muro = "Zero persone"
+        loss, loss_dict = self.clip_ebc_loss(
+            logits=predictions['ebc_logits'],
+            target_counts=target_counts,
+            mask=None  # <--- Nessuna maschera!
+        )
         
         return loss, loss_dict

@@ -26,11 +26,15 @@ DATA:
   CROP_SCALE_STAGE1: [0.4, 2.0]
   
   CROP_SIZE_STAGE2: 448
-  CROP_SCALE_STAGE2: [0.4, 2.0]
+  CROP_SCALE_STAGE2: [1, 2.0]
   
+# CLIP usa normalizzazione specifica
   NORM_MEAN: [0.48145466, 0.4578275, 0.40821073]
   NORM_STD: [0.26862954, 0.26130258, 0.27577711]
+  
   IMG_EXTS: [".jpg", ".png"]
+  MIN_GT_COUNT: 0
+  MAX_ATTEMPTS: 10
   
   # Sampling aggressivo per bilanciare dataset sparsi
   MIN_GT_COUNT: 0 
@@ -49,7 +53,7 @@ ZIP_HEAD:
 
 # --- NUOVA SEZIONE: Configurazione CLIP-EBC ---
 CLIP_EBC_HEAD:
-  CLIP_MODEL: "ViT-B-16"
+  CLIP_MODEL: "RN50"
   PRETRAINED: "openai"
   PROMPT_TYPE: "word"
   WINDOW_SIZE: 16  # Corrisponde allo stride del VGG
@@ -57,20 +61,21 @@ CLIP_EBC_HEAD:
 # --- NUOVA SEZIONE: Definizione Bins ---
 # Fondamentale per il conteggio semantico.
 # Definisce i range [min, max] per ogni classe.
-BINS: 
-  - [0, 0]
-  - [1, 1]
-  - [2, 2]
-  - [3, 3]
-  - [4, 4]
-  - [5, 5]
-  - [6, 10]
-  - [11, 9999] # Bin "folla"
+# Opzione 1: Come il paper (5 bins) - RACCOMANDATO
+BINS:
+  - [0, 0]      # zero persone
+  - [1, 1]      # una persona
+  - [2, 2]      # due persone
+  - [3, 3]      # tre persone
+  - [4, 9999]   # quattro o più
 
-# Centri dei bin (valori attesi usati per la regressione)
-BIN_CENTERS: [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 8.0, 20.0]
-
-DENSITY_MODE: "zip_gated_ebc" # Usa la maschera pi per filtrare EBC
+# Anchor points
+# L'ultimo valore dovrebbe essere la media empirica dei blocchi con >=4 persone
+# Per block_size=16, questo sarà più alto che per block_size=8
+# Stima iniziale: ~17 (4.3 * 4 per area 4x)
+# NOTA: Calcola il valore esatto con analyze_block_distribution.py!
+NUM_BINS: 5
+BIN_CENTERS: [0.0, 1.0, 2.0, 3.0, 4.0]
 
 # ============================================================
 # STAGE 1: TRAINING PI-HEAD (FIXED!)
@@ -99,38 +104,40 @@ TRAIN_STAGE1:
   
   # ⭐ FIX PRINCIPALE: pos_weight ora pesa la classe PIENO
   # Aumentato da 2.0 a 5.0 per compensare lo sbilanciamento
-  POS_WEIGHT: 5.0
+  POS_WEIGHT: 15.0
   
   # Alternative: usa Focal Loss (run con --use_focal_loss)
   # La Focal Loss è più robusta per sbilanciamenti estremi
+
+# Valutazione stage1 
+EVAL_STAGE1:
+  THRESHOLD: 0.3  # La tua soglia ottimale trovata 
 
 # ============================================================
 # STAGE 2: TRAINING CLIP-EBC (invariato)
 # ============================================================
 TRAIN_STAGE2:
-  BATCH_SIZE: 32
-  NUM_WORKERS: 4
-  NUM_CROPS: 1
+  BATCH_SIZE: 32  # Se hai memoria, altrimenti 16
+  NUM_WORKERS: 8
   
-  TOTAL_EPOCHS: 2600
-  EVAL_START: 20
-  EVAL_FREQ: 10
-  SAVE_FREQ: 50
+  # Parametri standard per CLIP-EBC
+  TOTAL_EPOCHS: 800 # Non servono 2600 epoche se il setup è giusto, bastano meno
+  EVAL_START: 0
+  EVAL_FREQ: 5
   
-  # Optimizer
-  OPTIMIZER: "adam"
-  LR: 1.0e-4
+  # --- FIX FONDAMENTALE ---
+  OPTIMIZER: "adamw" # AdamW è lo standard per CLIP
+  LR: 1.0e-5      
+  # Learning Rate Differenziato
+  LR_BACKBONE: 1.0e-5  # Molto basso (1e-5) per non rompere i pesi di CLIP
+  LR_HEAD: 1.0e-4      # Normale (1e-4) per imparare a classificare i bin
   WEIGHT_DECAY: 1.0e-4
   
-  # Scheduler: CosineAnnealingWarmRestarts
-  WARMUP_EPOCHS: 50
-  WARMUP_LR: 1.0e-6
-  T_0: 5
-  T_MULT: 2
-  ETA_MIN: 1.0e-7
+  # Clip Grad Norm per stabilità
+  CLIP_MAX_NORM: 0.1
   
   # AMP
-  AMP: false
+  AMP: true
   CLIP_GRAD_NORM: 1.0
 
 LOSS_STAGE2:
