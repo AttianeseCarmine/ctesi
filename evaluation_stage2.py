@@ -1,25 +1,133 @@
 #!/usr/bin/env python3
 """
-ZIP-CLIP-EBC: Evaluation Script for Stage 2 (CLIP-EBC Head)
-Valuta MAE e RMSE sul conteggio.
+============================================================
+EVALUATION OFFICIAL STYLE (Sliding Window)
+============================================================
+Replica la logica di 'sliding_window_predict' del repo ufficiale.
+Gestisce immagini di grandi dimensioni e sovrapposizioni.
+
+Usage:
+    python evaluation_stage2.py --config configs/config_sha.yaml --checkpoint checkpoints/sha/stage2/best_model.pth
+============================================================
 """
 
 import torch
-from torch.utils.data import DataLoader
-from tqdm import tqdm
+import torch.nn as nn
+import numpy as np
 import yaml
 import argparse
 import os
+from tqdm import tqdm
+from torch.utils.data import DataLoader
 
-from models import ZIPCLIPEBCModel
+# Imports dai tuoi file
+from models.clip_ebc_model import CLIPEBCModel
 from datasets.sha import SHA
 from datasets.transforms import build_transforms
 
+# ============================================================
+# OFFICIAL UTILS (Adapted)
+# ============================================================
+
+def sliding_window_predict(
+    model: nn.Module,
+    image: torch.Tensor,
+    window_size: tuple,
+    stride: tuple,
+) -> torch.Tensor:
+    """
+    Genera la density map usando sliding window con media delle sovrapposizioni.
+    Adattato da utils/eval_utils.py del repo ufficiale.
+    """
+    assert len(image.shape) == 4, f"Image must be (1, c, h, w), got {image.shape}"
+    
+    image_height, image_width = image.shape[-2:]
+    window_height, window_width = window_size
+    stride_height, stride_width = stride
+    
+    # Calcola righe e colonne necessarie
+    num_rows = int(np.ceil((image_height - window_height) / stride_height) + 1)
+    num_cols = int(np.ceil((image_width - window_width) / stride_width) + 1)
+    
+    # Reduction factor del modello (es. 16)
+    reduction = model.reduction if hasattr(model, "reduction") else 16
+    
+    windows = []
+    # 1. Estrai tutte le finestre
+    for i in range(num_rows):
+        for j in range(num_cols):
+            x_start = i * stride_height
+            y_start = j * stride_width
+            x_end = x_start + window_height
+            y_end = y_start + window_width
+            
+            # Gestione bordi (se esce fuori, torna indietro)
+            if x_end > image_height:
+                x_start = image_height - window_height
+                x_end = image_height
+            if y_end > image_width:
+                y_start = image_width - window_width
+                y_end = image_width
+                
+            window = image[:, :, x_start:x_end, y_start:y_end]
+            windows.append(window)
+            
+    # 2. Batch Processing
+    # Attenzione: se l'immagine è enorme, potresti dover processare a chunk
+    # Qui assumiamo che le finestre stiano in memoria GPU
+    windows = torch.cat(windows, dim=0).to(image.device) # (num_windows, c, h, w)
+    
+    model.eval()
+    with torch.no_grad():
+        # Il tuo modello ritorna un dict
+        outputs = model(windows)
+        preds = outputs['ebc_density'] # [num_windows, 1, h/16, w/16]
+        
+    preds = preds.cpu().detach().numpy()
+    
+    # 3. Re-assemble Density Map
+    out_h = image_height // reduction
+    out_w = image_width // reduction
+    
+    pred_map = np.zeros((1, out_h, out_w), dtype=np.float32)
+    count_map = np.zeros((1, out_h, out_w), dtype=np.float32)
+    
+    idx = 0
+    for i in range(num_rows):
+        for j in range(num_cols):
+            x_start = i * stride_height
+            y_start = j * stride_width
+            x_end = x_start + window_height
+            y_end = y_start + window_width
+            
+            if x_end > image_height:
+                x_start = image_height - window_height
+                x_end = image_height
+            if y_end > image_width:
+                y_start = image_width - window_width
+                y_end = image_width
+            
+            # Coordinate nello spazio ridotto (feature map)
+            sx_start, sx_end = x_start // reduction, x_end // reduction
+            sy_start, sy_end = y_start // reduction, y_end // reduction
+            
+            # Accumula predizioni e conta sovrapposizioni
+            pred_map[:, sx_start:sx_end, sy_start:sy_end] += preds[idx, 0, :, :]
+            count_map[:, sx_start:sx_end, sy_start:sy_end] += 1.0
+            idx += 1
+            
+    # Media sulle sovrapposizioni
+    pred_map /= count_map
+    
+    return torch.tensor(pred_map).unsqueeze(0) # [1, 1, H, W]
+
+# ============================================================
+# MAIN EVALUATION
+# ============================================================
 
 def crowd_collate(batch):
     batch = [b for b in batch if b is not None]
-    if len(batch) == 0:
-        return None
+    if len(batch) == 0: return None
     return {
         'image': torch.stack([item['image'] for item in batch]),
         'density': torch.stack([item['density'] for item in batch]),
@@ -27,108 +135,86 @@ def crowd_collate(batch):
         'img_path': [item['img_path'] for item in batch]
     }
 
-
-def evaluate_stage2(model, val_loader, device):
-    model.eval()
-    mae, mse, total = 0, 0, 0
-    total_gt, total_pred = 0, 0
-
-    print(f"\nRunning Stage 2 Evaluation (CLIP-EBC Head)...")
-
-    with torch.no_grad():
-        for batch in tqdm(val_loader):
-            if batch is None:
-                continue
-                
-            imgs = batch['image'].to(device)
-            gt_density = batch['density'].to(device)
-            
-            # Ground truth count
-            gt_count = gt_density.sum().item()
-            
-            # Predizione EBC: usa forward_stage2 per avere solo l'output EBC
-            outputs = model.forward_stage2(imgs)
-            pred_count = outputs['ebc_density'].sum().item()
-            
-            # Accumula metriche
-            mae += abs(pred_count - gt_count)
-            mse += (pred_count - gt_count) ** 2
-            total += 1
-            
-            total_gt += gt_count
-            total_pred += pred_count
-
-    # Calcola metriche finali
-    mae = mae / total
-    rmse = (mse / total) ** 0.5
-
-    print("\n" + "="*50)
-    print("📊 STAGE 2 EVALUATION RESULTS")
-    print("="*50)
-    print(f"   Total GT Count:   {total_gt:.0f}")
-    print(f"   Total Pred Count: {total_pred:.0f}")
-    print(f"   MAE:  {mae:.2f}")
-    print(f"   RMSE: {rmse:.2f}")
-    print(f"   Num Images: {total}")
-    print("="*50)
-
-    return {"mae": mae, "rmse": rmse}
-
-
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--config', type=str, default='configs/config_sha.yaml')
-    parser.add_argument('--checkpoint', type=str, default=None,
-                        help='Path al checkpoint (default: auto-detect)')
-    parser.add_argument('--gpu', type=int, default=0)
+    parser.add_argument('--config', default='configs/config_sha.yaml')
+    parser.add_argument('--checkpoint', required=True, help='Path to checkpoint')
+    parser.add_argument('--gpu', default=0, type=int)
+    # Parametri Sliding Window (Default dal paper per VGG/ResNet)
+    parser.add_argument('--window_size', default=448, type=int) 
+    parser.add_argument('--stride', default=224, type=int, help="Stride < WindowSize crea sovrapposizione")
+    
     args = parser.parse_args()
+    
+    with open(args.config, 'r') as f: config = yaml.safe_load(f)
+    device = torch.device(f'cuda:{args.gpu}')
+    
+    print("🏗️  Building Model...")
+    model = CLIPEBCModel(config).to(device)
+    
+    print(f"📥 Loading Checkpoint: {args.checkpoint}")
+    ckpt = torch.load(args.checkpoint, map_location=device)
+    if 'model' in ckpt: ckpt = ckpt['model']
+    model.load_state_dict(ckpt, strict=False)
+    
+    # Dataset Val
+    val_dataset = SHA(config['DATA']['ROOT'], 'val', build_transforms(config['DATA'], False))
+    val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False, num_workers=4, collate_fn=crowd_collate)
+    
+    mae_acc = 0.0
+    mse_acc = 0.0
+    total_pred = 0.0
+    total_gt = 0.0
+    
+    print(f"\n🚀 Starting Sliding Window Evaluation")
+    print(f"   Window: {args.window_size}x{args.window_size}")
+    print(f"   Stride: {args.stride}x{args.stride} (Overlap: {args.window_size - args.stride})")
+    print("-" * 50)
+    
+    model.eval()
+    
+    for batch in tqdm(val_loader):
+        if batch is None: continue
+        
+        img = batch['image'].to(device)
+        points = batch['points'][0]
+        gt_count = len(points)
+        
+        # Gestione immagini piccole
+        _, _, H, W = img.shape
+        if H < args.window_size or W < args.window_size:
+            # Resize o pad minimo
+            pad_h = max(0, args.window_size - H)
+            pad_w = max(0, args.window_size - W)
+            if pad_h > 0 or pad_w > 0:
+                img = torch.nn.functional.pad(img, (0, pad_w, 0, pad_h))
+        
+        # Sliding Window Predict
+        # Nota: window_size e stride devono essere tuple
+        ws = (args.window_size, args.window_size)
+        st = (args.stride, args.stride)
+        
+        pred_map = sliding_window_predict(model, img, ws, st)
+        
+        pred_count = pred_map.sum().item()
+        
+        # Metriche
+        mae_acc += abs(pred_count - gt_count)
+        mse_acc += (pred_count - gt_count) ** 2
+        total_pred += pred_count
+        total_gt += gt_count
+        
+    final_mae = mae_acc / len(val_dataset)
+    final_rmse = (mse_acc / len(val_dataset)) ** 0.5
+    
+    print("\n" + "="*50)
+    print("📊 OFFICIAL STYLE RESULTS")
+    print("="*50)
+    print(f"   MAE:  {final_mae:.2f}")
+    print(f"   RMSE: {final_rmse:.2f}")
+    print(f"   Total GT:   {total_gt:.0f}")
+    print(f"   Total Pred: {total_pred:.0f}")
+    print("="*50)
 
-    # Config
-    with open(args.config, 'r') as f:
-        config = yaml.safe_load(f)
-
-    device = torch.device(f'cuda:{args.gpu}' if torch.cuda.is_available() else 'cpu')
-    print(f"🖥️  Device: {device}")
-
-    # Modello
-    model = ZIPCLIPEBCModel(config).to(device)
-
-    # Carica checkpoint (auto-detect basato su dataset)
-    if args.checkpoint:
-        ckpt_path = args.checkpoint
-    else:
-        dataset_name = config.get('DATASET', 'sha')
-        ckpt_path = f"./checkpoints/{dataset_name}/stage2/best_mae.pth"
-
-    if os.path.exists(ckpt_path):
-        checkpoint = torch.load(ckpt_path, map_location=device, weights_only=False)
-        # Gestisce diversi formati di salvataggio
-        if 'state_dict' in checkpoint:
-            model.load_state_dict(checkpoint['state_dict'], strict=False)
-        elif 'model' in checkpoint:
-            model.load_state_dict(checkpoint['model'], strict=False)
-        else:
-            model.load_state_dict(checkpoint, strict=False)
-        print(f"✅ Checkpoint caricato: {ckpt_path}")
-    else:
-        print(f"⚠️  Checkpoint non trovato: {ckpt_path}")
-
-    # Dataset di Validazione
-    data_cfg = config['DATA']
-    val_dataset = SHA(
-        root=data_cfg['ROOT'],
-        split='val',
-        transforms=build_transforms(data_cfg, is_train=False)
-    )
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=1,
-        shuffle=False,
-        num_workers=4,
-        collate_fn=crowd_collate
-    )
-
-    print(f"📂 Validation set: {len(val_dataset)} immagini")
-
-    # Valutazione
-    evaluate_stage2(model, val_loader, device)
+if __name__ == '__main__':
+    main()

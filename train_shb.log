@@ -1,0 +1,5 @@
+nohup: ignoring input
+  File "/user/cattianese/ctesi/./run_training.sh", line 10
+    echo "▶️  STAGE 1: Training π-Head..."
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+SyntaxError: invalid syntax

@@ -1,18 +1,18 @@
-# configs/config_sha.yaml
+# configs/config_shb.yaml
 # ============================================================
-# ZIP-CLIP-EBC: Configurazione STABILE (MAE ~84)
+# ZIP-CLIP-EBC: Configurazione per ShanghaiTech Part B (SHB)
 # ============================================================
 
-RUN_NAME: "sha"
+RUN_NAME: "shb"
 SEED: 42
 DEVICE: "cuda"
 
 # ============================================================
 # DATASET
 # ============================================================
-DATASET: "sha"
+DATASET: "shb"  # Cambiato da sha a shb
 DATA:
-  ROOT: "./data/sha/"
+  ROOT: "./data/shb/"  # Path corretto per SHB
   TRAIN_SPLIT: "train"
   VAL_SPLIT: "val"
   ZIP_BLOCK_SIZE: 16
@@ -24,7 +24,6 @@ DATA:
   CROP_SIZE_STAGE1: 448
   CROP_SCALE_STAGE1: [0.4, 2.0]
   
-  # Ripristinato a [1, 2.0] come nella versione stabile
   CROP_SIZE_STAGE2: 448
   CROP_SCALE_STAGE2: [1, 2.0]
   
@@ -52,7 +51,8 @@ CLIP_EBC_HEAD:
   PROMPT_TYPE: "word"
   WINDOW_SIZE: 16
 
-# --- CONFIGURAZIONE BIN ORIGINALE (8 Bins) ---
+# --- CONFIGURAZIONE BIN PER SHB (Sparso) ---
+# Basata sulla distribuzione reale di SHB (max count 15)
 BINS:
   - [0, 0]
   - [1, 1]
@@ -60,26 +60,28 @@ BINS:
   - [3, 3]
   - [4, 4]
   - [5, 5]
-  - [6, 7]      # Bin più ampio
-  - [8, 9999]   # Bin per folla estrema
+  - [6, 7]      
+  - [8, 9999]   
 
-BIN_CENTERS: [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.5, 12.0] # 12.0 è cruciale per le folle dense
 NUM_BINS: 8
-
+# Modificati per SHB: 
+# - 6.3 (media reale tra 6 e 7 in SHB)
+# - 9.2 (media reale per >8 in SHB, calcolata dai tuoi json)
+BIN_CENTERS: [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.3, 9.2] 
 
 # ============================================================
 # TRAINING STAGES
 # ============================================================
 TRAIN_STAGE1:
   EPOCHS: 400
-  BATCH_SIZE: 32
+  BATCH_SIZE: 32 # SHB ha immagini grandi, se la GPU soffre riduci a 16
   NUM_WORKERS: 8
   VAL_INTERVAL: 5
   OPTIMIZER: "adamw"
   LR_BACKBONE: 1.0e-5
   LR_HEAD: 5.0e-4
   WEIGHT_DECAY: 1.0e-4
-  POS_WEIGHT: 15.0
+  POS_WEIGHT: 15.0 # Va bene anche per SHB (molti zeri)
 
 EVAL_STAGE1:
   THRESHOLD: 0.3
@@ -87,7 +89,7 @@ EVAL_STAGE1:
 TRAIN_STAGE2:
   BATCH_SIZE: 32
   NUM_WORKERS: 8
-  TOTAL_EPOCHS: 1500
+  TOTAL_EPOCHS: 1500 # SHB è più piccolo/semplice, 1500 sono tante ma sicure
   EVAL_START: 0
   EVAL_FREQ: 5
   OPTIMIZER: "adamw"
@@ -105,7 +107,7 @@ LOSS_STAGE2:
   COUNT_LOSS: "dmcount"
   WEIGHT_OT: 0.1
   WEIGHT_TV: 0.01
-  LABEL_SMOOTHING: 0.0 # Ripristinato a 0.0
+  LABEL_SMOOTHING: 0.0
 
 TRAIN_STAGE3:
   EPOCHS: 200
