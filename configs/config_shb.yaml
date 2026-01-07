@@ -15,17 +15,17 @@ DATA:
   ROOT: "./data/shb/"  # Path corretto per SHB
   TRAIN_SPLIT: "train"
   VAL_SPLIT: "val"
-  ZIP_BLOCK_SIZE: 16
+  ZIP_BLOCK_SIZE: 8
   
-  # Augmentation
   CROP_SIZE: 448
   CROP_SCALE: [0.4, 2.0]
-  
+
   CROP_SIZE_STAGE1: 448
   CROP_SCALE_STAGE1: [0.4, 2.0]
-  
+
   CROP_SIZE_STAGE2: 448
   CROP_SCALE_STAGE2: [1, 2.0]
+
   
   NORM_MEAN: [0.48145466, 0.4578275, 0.40821073]
   NORM_STD: [0.26862954, 0.26130258, 0.27577711]
@@ -38,7 +38,7 @@ DATA:
 # MODEL ARCHITECTURE
 # ============================================================
 BACKBONE:
-  TYPE: "vgg16_bn"
+  TYPE: "resnet50"
   PRETRAINED: True
   FREEZE_BN: False
 
@@ -48,7 +48,7 @@ ZIP_HEAD:
 CLIP_EBC_HEAD:
   CLIP_MODEL: "RN50"
   PRETRAINED: "openai"
-  PROMPT_TYPE: "word"
+  PROMPT_TYPE: "template"
   WINDOW_SIZE: 16
 
 # --- CONFIGURAZIONE BIN PER SHB (Sparso) ---
@@ -58,16 +58,11 @@ BINS:
   - [1, 1]
   - [2, 2]
   - [3, 3]
-  - [4, 4]
-  - [5, 5]
-  - [6, 7]      
-  - [8, 9999]   
+  - [4, 9999]  # "There are more than 4 people"
 
-NUM_BINS: 8
-# Modificati per SHB: 
-# - 6.3 (media reale tra 6 e 7 in SHB)
-# - 9.2 (media reale per >8 in SHB, calcolata dai tuoi json)
-BIN_CENTERS: [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.3, 9.2] 
+NUM_BINS: 5
+# I centri vanno ricalcolati sul train set per il bin >4, ma per ora approssimiamo:
+BIN_CENTERS: [0.0, 1.0, 2.0, 3.0, 5.5]
 
 # ============================================================
 # TRAINING STAGES
@@ -81,7 +76,7 @@ TRAIN_STAGE1:
   LR_BACKBONE: 1.0e-5
   LR_HEAD: 5.0e-4
   WEIGHT_DECAY: 1.0e-4
-  POS_WEIGHT: 15.0 # Va bene anche per SHB (molti zeri)
+  POS_WEIGHT: 2.0 # Va bene anche per SHB (molti zeri)
 
 EVAL_STAGE1:
   THRESHOLD: 0.3
@@ -93,7 +88,7 @@ TRAIN_STAGE2:
   EVAL_START: 0
   EVAL_FREQ: 5
   OPTIMIZER: "adamw"
-  LR: 1.0e-5      
+  LR: 1.0e-4      
   LR_BACKBONE: 1.0e-5
   LR_HEAD: 1.0e-4
   WEIGHT_DECAY: 1.0e-4
@@ -113,7 +108,7 @@ TRAIN_STAGE3:
   EPOCHS: 200
   BATCH_SIZE: 16
   NUM_WORKERS: 8
-  LR: 1.0e-5            
+  LR: 1.0e-6         
   WEIGHT_DECAY: 1.0e-4
   LAMBDA_ZIP: 1.0
   LAMBDA_CLIP: 1.0

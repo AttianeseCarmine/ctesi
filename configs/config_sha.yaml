@@ -15,18 +15,17 @@ DATA:
   ROOT: "./data/sha/"
   TRAIN_SPLIT: "train"
   VAL_SPLIT: "val"
-  ZIP_BLOCK_SIZE: 16
+  ZIP_BLOCK_SIZE: 8
   
-  # Augmentation
   CROP_SIZE: 448
   CROP_SCALE: [0.4, 2.0]
-  
+
   CROP_SIZE_STAGE1: 448
   CROP_SCALE_STAGE1: [0.4, 2.0]
-  
-  # Ripristinato a [1, 2.0] come nella versione stabile
+
   CROP_SIZE_STAGE2: 448
   CROP_SCALE_STAGE2: [1, 2.0]
+
   
   NORM_MEAN: [0.48145466, 0.4578275, 0.40821073]
   NORM_STD: [0.26862954, 0.26130258, 0.27577711]
@@ -85,16 +84,16 @@ EVAL_STAGE1:
   THRESHOLD: 0.3
 
 TRAIN_STAGE2:
-  BATCH_SIZE: 32
+  BATCH_SIZE: 8
   NUM_WORKERS: 8
   TOTAL_EPOCHS: 1500
   EVAL_START: 0
   EVAL_FREQ: 5
   OPTIMIZER: "adamw"
-  LR: 1.0e-5      
+  LR: 1.0e-4      
   LR_BACKBONE: 1.0e-5
   LR_HEAD: 1.0e-4
-  WEIGHT_DECAY: 1.0e-4
+  WEIGHT_DECAY: 0.0
   CLIP_MAX_NORM: 0.1
   AMP: true
   CLIP_GRAD_NORM: 1.0

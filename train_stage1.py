@@ -1,193 +1,233 @@
 #!/usr/bin/env python3
 """
 ============================================================
-STAGE 1: ZIP FILTER TRAINING
+STAGE 1: ZIP HEAD TRAINING (Binary Segmentation)
 ============================================================
-Addestra il filtro ZIP (Zero-Inflated Poisson) per distinguere
-background (muro/alberi) da foreground (folla).
+Obiettivo: Addestrare SOLO la 'zip_head' (pi) a distinguere 
+background (vuoto) da foreground (folla).
 
-Backbone: VGG16 (Pretrained)
-Head: ZIPHead (stima pi e lambda)
-Loss: ZIP Negative Log Likelihood (zip_nll)
+Approccio Semplificato (Official Style):
+- Input: Immagine
+- Output: Mappa di probabilità (pi)
+- Target: Maschera binaria (1 se c'è gente, 0 se vuoto)
+- Loss: BCEWithLogitsLoss (pesata per sbilanciamento)
 ============================================================
 """
 
-import os
-import sys
-import yaml
 import argparse
-import time
-from datetime import datetime
+import yaml
+import os
+import shutil
 from pathlib import Path
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.optim as optim
 from torch.utils.data import DataLoader
 from torch.amp import GradScaler, autocast
-from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 from tqdm import tqdm
-import numpy as np
 
-# Imports dai tuoi modelli
-from models.zip_clip_ebc_model import ZIPCLIPEBCModel
+# Assicurati che questi import funzionino
+from models.zip_model import ZIPModel
 from datasets.sha import SHA
 from datasets.transforms import build_transforms
-from losses.zip_nll import zip_nll
+from utils.train_utils import seed_everything
 
+# =============================================================================
+# UTILS
+# =============================================================================
 def crowd_collate(batch):
     batch = [b for b in batch if b is not None]
     if len(batch) == 0: return None
     return {
         'image': torch.stack([item['image'] for item in batch]),
         'density': torch.stack([item['density'] for item in batch]),
-        'points': [item['points'] for item in batch],
         'img_path': [item['img_path'] for item in batch]
     }
 
-def train_epoch(model, loader, optimizer, scaler, device, epoch, config):
-    model.train()
-    
-    # Congeliamo l'EBC Head (Stage 2) perché qui alleniamo solo ZIP (Stage 1)
-    # FIX: Uso il nome corretto 'ebc_head'
-    if hasattr(model, 'ebc_head'):
-        for p in model.ebc_head.parameters():
-            p.requires_grad = False
-    
-    avg_loss = 0
-    steps = 0
-    pbar = tqdm(loader, desc=f"Epoch {epoch}")
-    
-    for batch in pbar:
-        if batch is None: continue
-        
-        images = batch['image'].to(device)
-        gt_density = batch['density'].to(device)
-        
-        # Generiamo i target per ZIP
-        # Downsampling densità a H/16, W/16 per matchare l'output VGG
-        # ZIP lavora a blocchi: somma della densità nel blocco = conteggio
-        B, C, H, W = images.shape
-        target_counts = F.avg_pool2d(gt_density, kernel_size=16, stride=16) * (16*16)
-        
-        optimizer.zero_grad()
-        
-        with autocast('cuda', enabled=True):
-            outputs = model(images)
-            
-            # Output del modello
-            # pi_logits -> Probabilità che il blocco sia VUOTO (o pieno, dipende dalla head)
-            # lambda_logits -> Rate Poisson
-            pi_logits = outputs['pi_logits']
-            lambda_logits = outputs['lambda_logits']
-            
-            # Calcolo Probabilità pi e Lambda
-            # ZIPHead usa Sigmoid internamente o logits?
-            # Solitamente la loss zip_nll prende probabilità e rate
-            pi = torch.sigmoid(pi_logits)
-            lam = torch.exp(lambda_logits)
-            
-            # Loss NLL
-            loss = zip_nll(pi, lam, target_counts)
-            
-        scaler.scale(loss).backward()
-        scaler.step(optimizer)
-        scaler.update()
-        
-        avg_loss += loss.item()
-        steps += 1
-        pbar.set_postfix({'loss': f"{loss.item():.4f}"})
-        
-    return avg_loss / steps if steps > 0 else 0
+def save_checkpoint(state, is_best, save_dir, filename='last_model.pth'):
+    last_path = os.path.join(save_dir, filename)
+    torch.save(state, last_path)
+    if is_best:
+        best_path = os.path.join(save_dir, 'best_model.pth')
+        shutil.copyfile(last_path, best_path)
 
+# =============================================================================
+# EVALUATION FUNCTION (Binary Metrics)
+# =============================================================================
 @torch.no_grad()
-def evaluate(model, loader, device, threshold=0.3):
+def evaluate(model, loader, device):
     model.eval()
     
-    # Metriche di classificazione binaria (Muro vs Folla)
     tp, tn, fp, fn = 0, 0, 0, 0
+    
+    # Soglia per decidere se è folla o no (0.5 su sigmoid = 0 su logits)
+    threshold = 0.3
     
     for batch in tqdm(loader, desc="Eval"):
         if batch is None: continue
+        
         images = batch['image'].to(device)
         gt_density = batch['density'].to(device)
         
+        # 1. Forward standard
         outputs = model(images)
-        pi = torch.sigmoid(outputs['pi_logits']) # Probabilità VUOTO (o PIENO?)
-        # Nota: Solitamente in ZIP: 
-        # pi = Probabilità che sia "Structural Zero" (VUOTO)
-        # Quindi 1 - pi = Probabilità che ci sia gente.
+        pi_logits = outputs['pi_logits'] # [B, 1, H/16, W/16]
+        probs = torch.sigmoid(pi_logits)
         
-        # Target Reali
-        target_counts = F.avg_pool2d(gt_density, kernel_size=16, stride=16) * (16*16)
-        is_empty_gt = (target_counts < 0.001).float() # 1 se vuoto, 0 se gente
+        # 2. Prepara Ground Truth Binaria (match dimensions)
+        h_out, w_out = pi_logits.shape[2:]
+        # Downsample della densità alla risoluzione dell'output (H/16)
+        # Usiamo adaptive_avg_pool2d * area per conservare il conteggio
+        scale_factor = (images.shape[2] * images.shape[3]) / (h_out * w_out)
+        gt_down = F.adaptive_avg_pool2d(gt_density, (h_out, w_out)) * scale_factor
         
-        # Predizioni
-        # Se pi > threshold -> Predetto Vuoto
-        is_empty_pred = (pi > threshold).float()
+        # Se nel blocco c'è anche solo mezza persona, è "Folla" (1)
+        # Nota: per SHB sparso, possiamo usare una soglia molto bassa (es. 0.001)
+        gt_binary = (gt_down > 0.001).float()
         
-        tp += ((is_empty_pred == 1) & (is_empty_gt == 1)).sum().item()
-        tn += ((is_empty_pred == 0) & (is_empty_gt == 0)).sum().item()
-        fp += ((is_empty_pred == 1) & (is_empty_gt == 0)).sum().item() # Predetto vuoto ma c'era gente (Grave!)
-        fn += ((is_empty_pred == 0) & (is_empty_gt == 1)).sum().item() # Predetto gente ma era vuoto (Meno grave)
+        # 3. Predizione Binaria
+        pred_binary = (probs > threshold).float()
         
-    accuracy = (tp + tn) / (tp + tn + fp + fn + 1e-6)
-    precision = tp / (tp + fp + 1e-6)
-    recall = tp / (tp + fn + 1e-6)
+        # 4. Metriche
+        tp += ((pred_binary == 1) & (gt_binary == 1)).sum().item()
+        tn += ((pred_binary == 0) & (gt_binary == 0)).sum().item()
+        fp += ((pred_binary == 1) & (gt_binary == 0)).sum().item()
+        fn += ((pred_binary == 0) & (gt_binary == 1)).sum().item()
+        
+    # Calcolo F1-Score (che bilancia Precision e Recall)
+    precision = tp / (tp + fp + 1e-8)
+    recall = tp / (tp + fn + 1e-8)
+    f1 = 2 * (precision * recall) / (precision + recall + 1e-8)
+    acc = (tp + tn) / (tp + tn + fp + fn + 1e-8)
     
-    return {'acc': accuracy, 'prec': precision, 'rec': recall}
+    return {'f1': f1, 'acc': acc, 'prec': precision, 'rec': recall}
 
-def main():
+# =============================================================================
+# TRAINING LOOP
+# =============================================================================
+def train_stage1_simple():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--config', default='configs/config_shb.yaml')
-    parser.add_argument('--gpu', default=0, type=int)
+    parser.add_argument('--config', type=str, default='configs/config_shb.yaml')
+    parser.add_argument('--gpu', type=int, default=0)
     args = parser.parse_args()
     
     with open(args.config, 'r') as f: config = yaml.safe_load(f)
+    seed_everything(config.get('SEED', 42))
     device = torch.device(f'cuda:{args.gpu}')
     
-    # Setup Paths
+    # Setup
     dataset_name = config.get('DATASET', 'sha')
-    out_dir = Path(f'checkpoints/{dataset_name}/stage1')
-    out_dir.mkdir(parents=True, exist_ok=True)
+    save_dir = os.path.join('./checkpoints', dataset_name, 'stage1')
+    os.makedirs(save_dir, exist_ok=True)
     
-    # Model
-    print("🏗️  Building ZIP Model...")
-    model = ZIPCLIPEBCModel(config).to(device)
+    print(f"🚀 Stage 1: Binary Classifier Training (Simple)")
+    print(f"   Dataset: {dataset_name} | Save to: {save_dir}")
     
-    # Optimizer (Allena solo Backbone + ZIPHead)
-    # EBC Head è congelata/ignorata
-    params = list(model.backbone.parameters()) + list(model.zip_head.parameters())
-    optimizer = torch.optim.AdamW(params, lr=float(config['TRAIN_STAGE1']['LR_HEAD']))
+    # Dataset
+    data_cfg = config['DATA']
+    train_dataset = SHA(data_cfg['ROOT'], 'train', build_transforms(data_cfg, True))
+    val_dataset = SHA(data_cfg['ROOT'], 'val', build_transforms(data_cfg, False))
+    
+    # Batch size ridotto se necessario per SHB (immagini grandi)
+    bs = config['TRAIN_STAGE1'].get('BATCH_SIZE', 16)
+    train_loader = DataLoader(train_dataset, batch_size=bs, shuffle=True, 
+                              num_workers=8, collate_fn=crowd_collate, drop_last=True)
+    val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False, 
+                            num_workers=4, collate_fn=crowd_collate)
+    
+    # Modello
+    model = ZIPModel(config).to(device)
+    
+    # --- FREEZE & UNFREEZE ---
+    # Congela tutto tranne ZIP Head e Backbone
+    for p in model.parameters(): p.requires_grad = False
+    
+    # Sblocca Backbone
+    for p in model.backbone.parameters(): p.requires_grad = True
+    
+    # Sblocca ZIP Head (Gestione nomi diversi)
+    if hasattr(model, 'zip_head'):
+        for p in model.zip_head.parameters(): p.requires_grad = True
+        head_params = model.zip_head.parameters()
+    elif hasattr(model, 'pi_head'):
+        for p in model.pi_head.parameters(): p.requires_grad = True
+        head_params = model.pi_head.parameters()
+    else:
+        raise AttributeError("Zip head non trovata (cercato 'zip_head' e 'pi_head')")
+
+    # Optimizer
+    lr = float(config['TRAIN_STAGE1']['LR_HEAD'])
+    optimizer = optim.AdamW([
+        {'params': model.backbone.parameters(), 'lr': lr * 0.1}, # Backbone più lento
+        {'params': head_params, 'lr': lr}
+    ], weight_decay=1e-4)
     
     scaler = GradScaler('cuda')
     
-    # Dataset
-    train_ds = SHA(config['DATA']['ROOT'], 'train', build_transforms(config['DATA'], True))
-    val_ds = SHA(config['DATA']['ROOT'], 'val', build_transforms(config['DATA'], False))
+    # Loss: BCEWithLogitsLoss pesata
+    # SHB è molto sparso (tanti 0). Diamo più peso ai pixel con folla (1).
+    pos_weight_val = float(config['TRAIN_STAGE1'].get('POS_WEIGHT', 15.0))
+    pos_weight_tensor = torch.tensor([pos_weight_val]).to(device)
+    criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight_tensor)
     
-    train_loader = DataLoader(train_ds, batch_size=config['TRAIN_STAGE1']['BATCH_SIZE'], shuffle=True, 
-                              num_workers=8, collate_fn=crowd_collate, drop_last=True)
-    val_loader = DataLoader(val_ds, batch_size=1, shuffle=False, num_workers=4, collate_fn=crowd_collate)
+    best_f1 = 0.0
+    epochs = config['TRAIN_STAGE1']['EPOCHS']
     
-    best_acc = 0.0
+    print("🔧 Training Start...")
     
-    print(f"🚀 Starting Stage 1 Training on {dataset_name}")
-    for epoch in range(config['TRAIN_STAGE1']['EPOCHS']):
-        loss = train_epoch(model, train_loader, optimizer, scaler, device, epoch, config)
-        print(f"Ep {epoch} | Loss: {loss:.4f}")
+    for epoch in range(epochs):
+        model.train()
+        avg_loss = 0
+        steps = 0
         
-        if epoch % config['TRAIN_STAGE1']['VAL_INTERVAL'] == 0:
-            metrics = evaluate(model, val_loader, device)
-            print(f"📊 Val Acc: {metrics['acc']:.4f} | Prec: {metrics['prec']:.4f} | Rec: {metrics['rec']:.4f}")
+        pbar = tqdm(train_loader, desc=f"Ep {epoch+1}/{epochs}")
+        for batch in pbar:
+            if batch is None: continue
             
-            if metrics['acc'] > best_acc:
-                best_acc = metrics['acc']
-                torch.save({'model': model.state_dict(), 'epoch': epoch, 'acc': best_acc}, out_dir / 'best_model.pth')
-                print("🌟 New Best Model Saved!")
+            images = batch['image'].to(device)
+            gt_density = batch['density'].to(device)
+            
+            optimizer.zero_grad()
+            
+            with autocast('cuda'):
+                # 1. Forward (Standard)
+                outputs = model(images)
+                pi_logits = outputs['pi_logits']
                 
-        # Save last
-        torch.save({'model': model.state_dict(), 'epoch': epoch}, out_dir / 'last_model.pth')
+                # 2. Target Binario
+                h_out, w_out = pi_logits.shape[2:]
+                # Adatta la density map alla dimensione dell'output
+                # Sum pooling approssimato (avg * area) per vedere se c'è gente
+                scale = (images.shape[2] * images.shape[3]) / (h_out * w_out)
+                gt_down = F.adaptive_avg_pool2d(gt_density, (h_out, w_out)) * scale
+                
+                # Maschera: 1 se > 0.001 (c'è gente), 0 altrimenti
+                target_binary = (gt_down > 0.001).float()
+                
+                # 3. Loss
+                loss = criterion(pi_logits, target_binary)
+                
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+            
+            avg_loss += loss.item()
+            steps += 1
+            pbar.set_postfix({'loss': f"{loss.item():.4f}"})
+            
+        # Validation
+        if (epoch + 1) % config['TRAIN_STAGE1']['VAL_INTERVAL'] == 0:
+            metrics = evaluate(model, val_loader, device)
+            print(f"\n📊 Val Ep {epoch+1}: F1={metrics['f1']:.2%} | Acc={metrics['acc']:.2%} | Prec={metrics['prec']:.2%} | Rec={metrics['rec']:.2%}")
+            
+            if metrics['f1'] > best_f1:
+                best_f1 = metrics['f1']
+                save_checkpoint(model.state_dict(), True, save_dir, 'last_model.pth')
+                print("🌟 New Best Saved!")
+            else:
+                save_checkpoint(model.state_dict(), False, save_dir, 'last_model.pth')
 
 if __name__ == '__main__':
-    main()
+    train_stage1_simple()

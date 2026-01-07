@@ -15,7 +15,7 @@ import argparse
 import os
 from PIL import Image
 
-from models.zip_clip_ebc_model import ZIPCLIPEBCModel
+from models.zip_model import ZIPModel
 from datasets.sha import SHA
 from datasets.transforms import build_transforms
 
@@ -196,7 +196,7 @@ if __name__ == "__main__":
 
     device = torch.device(f'cuda:{args.gpu}' if torch.cuda.is_available() else 'cpu')
     
-    model = ZIPCLIPEBCModel(config).to(device)
+    model = ZIPModel(config).to(device)
     
     if args.checkpoint:
         ckpt_path = args.checkpoint

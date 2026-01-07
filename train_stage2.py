@@ -1,16 +1,14 @@
 #!/usr/bin/env python3
 """
 ============================================================
-CLIP-EBC Stage 2 Training Script
+CLIP-EBC Stage 2 Training Script - Dynamic Path Version
 ============================================================
 Replica il training del repository ufficiale CLIP-EBC.
-
-Usa:
-- CLIPEBCModel (CLIP ResNet50 visual encoder)
-- DACELoss (Cross-Entropy + Count Loss)
+Salva automaticamente i checkpoint nella cartella corretta
+basandosi sul parametro 'DATASET' del file config.
 
 Usage:
-    python train_stage2.py --config configs/config_sha.yaml
+    python train_stage2.py --config configs/config_shb.yaml
 ============================================================
 """
 import os
@@ -182,8 +180,15 @@ def main():
     
     with open(args.config, 'r') as f: config = yaml.safe_load(f)
     device = torch.device(f'cuda:{args.gpu}')
-    out_dir = Path('./checkpoints/sha/stage2')
+    
+    # --- MODIFICA DINAMICA DEL PERCORSO ---
+    dataset_name = config.get('DATASET', 'sha')
+    base_out_dir = config.get('EXP', {}).get('OUT_DIR', './checkpoints')
+    out_dir = Path(base_out_dir) / dataset_name / 'stage2'
+    
     out_dir.mkdir(parents=True, exist_ok=True)
+    print(f"📁 Checkpoints will be saved to: {out_dir}")
+    # -------------------------------------
     
     model = CLIPEBCModel(config).to(device)
     
@@ -196,9 +201,10 @@ def main():
     val_loader = DataLoader(val_ds, batch_size=1, shuffle=False, num_workers=2, collate_fn=crowd_collate)
     
     loss_cfg = config.get('LOSS_STAGE2', {})
-    criterion = DACELoss(config['BINS'], config['BIN_CENTERS'], weight_count=loss_cfg.get('WEIGHT_COUNT_LOSS', 1.0)).to(device)
-    
-    optimizer = torch.optim.AdamW(model.parameters(), lr=config['TRAIN_STAGE2']['LR'], weight_decay=config['TRAIN_STAGE2']['WEIGHT_DECAY'])
+    criterion = DACELoss(config['BINS'], config['BIN_CENTERS'], weight_count=loss_cfg.get('WEIGHT_COUNT_LOSS', 1.0), label_smoothing=loss_cfg.get('LABEL_SMOOTHING', 0.0), block_size=config['DATA']['ZIP_BLOCK_SIZE']).to(device)
+
+    optimizer = torch.optim.AdamW(model.parameters(),lr=config['TRAIN_STAGE2']['LR'],weight_decay=config['TRAIN_STAGE2']['WEIGHT_DECAY'])
+
     scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=2)
     scaler = GradScaler('cuda', enabled=config['TRAIN_STAGE2'].get('AMP', True))
     

@@ -38,7 +38,7 @@ class CLIPVisualEncoder(nn.Module):
         
         # Carica modello CLIP completo
         clip_model, _, _ = open_clip.create_model_and_transforms(
-            model_name, pretrained=pretrained
+        model_name, pretrained=pretrained, force_quick_gelu=True
         )
         
         self.model_name = model_name
@@ -65,12 +65,16 @@ class CLIPVisualEncoder(nn.Module):
     
     def _setup_resnet(self):
         """Setup per CLIP ModifiedResNet."""
-        if self.output_layer == 'layer3':
+        if self.output_layer == 'layer2':
+            self.out_channels = 512
+            self.reduction = 8
+        elif self.output_layer == 'layer3':
             self.out_channels = 1024
             self.reduction = 16
-        else:
+        else:  # layer4
             self.out_channels = 2048
             self.reduction = 32
+
     
     def _setup_vit(self):
         """Setup per CLIP ViT."""
@@ -103,13 +107,15 @@ class CLIPVisualEncoder(nn.Module):
         x = F.relu(visual.bn3(visual.conv3(x)), inplace=True)
         x = visual.avgpool(x)
         
-        # ResNet layers
         x = visual.layer1(x)
         x = visual.layer2(x)
-        x = visual.layer3(x)
-        
+
+        if self.output_layer in ['layer3', 'layer4']:
+            x = visual.layer3(x)
+
         if self.output_layer == 'layer4':
             x = visual.layer4(x)
+
         
         return x
     
@@ -182,7 +188,14 @@ class CLIPEBCModel(nn.Module):
         
         # Determina output layer
         block_size = config.get('DATA', {}).get('ZIP_BLOCK_SIZE', 16)
-        output_layer = 'layer3' if block_size == 16 else 'layer4'
+
+        if block_size == 8:
+            output_layer = 'layer2'   # stride 8
+        elif block_size == 16:
+            output_layer = 'layer3'   # stride 16
+        else:
+            output_layer = 'layer4'   # stride 32 (fallback)
+
         
         # 1. Visual Encoder (Frozen o no)
         self.visual_encoder = CLIPVisualEncoder(
@@ -197,7 +210,7 @@ class CLIPEBCModel(nn.Module):
         
         # 2. Text Encoder (Frozen)
         self.clip_model_full, _, _ = open_clip.create_model_and_transforms(
-            clip_model, pretrained=clip_pretrained
+        clip_model, pretrained=clip_pretrained, force_quick_gelu=True
         )
         self.tokenizer = open_clip.get_tokenizer(clip_model)
         

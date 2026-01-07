@@ -8,6 +8,7 @@ Gestisce immagini di grandi dimensioni e sovrapposizioni.
 
 Usage:
     python evaluation_stage2.py --config configs/config_sha.yaml --checkpoint checkpoints/sha/stage2/best_model.pth
+        python evaluation_stage2.py --config configs/config_shb.yaml --checkpoint checkpoints/shb/stage2/best_model.pth
 ============================================================
 """
 
