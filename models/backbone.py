@@ -2,86 +2,107 @@
 import torch
 import torch.nn as nn
 from torchvision import models
-from typing import Tuple
 
 class VGG16Backbone(nn.Module):
-    def __init__(self, pretrained=True, freeze_bn=False):
+    def __init__(self, pretrained=True, freeze_bn=True):
         super().__init__()
         weights = models.VGG16_BN_Weights.IMAGENET1K_V1 if pretrained else None
         vgg = models.vgg16_bn(weights=weights)
         
-        # --- MODIFICA CRITICA PER CROWD COUNTING ---
-        # VGG Standard:
-        # Layer 0-23: Output stride 8 (dopo il 3° MaxPool)
-        # Layer 24-33: Output stride 16 (dopo il 4° MaxPool)
-        # Layer 34-43: Output stride 32 (dopo il 5° MaxPool)
-        
-        # Per ottenere risultati competitivi (SOTA), usiamo solo i primi 4 blocchi
-        # e rimuoviamo l'ultimo pooling per fermarci a Stride 8.
-        # Indice 33 è il MaxPool che porta a stride 16. Noi ci fermiamo prima.
-        
-        self.features = nn.Sequential(*list(vgg.features.children())[:33])
+        # VGG16 standard ha stride 32 alla fine.
+        # Per crowd counting spesso si rimuove l'ultimo pooling o si usano solo i primi layer.
+        # Qui prendiamo le features complete (stride 32).
+        self.features = vgg.features
         
         self.out_channels = 512
-        self.stride = 8  # Ora lo stride è 8 (Standard per Crowd Counting)
+        self.stride = 32 
         
-        if freeze_bn: 
+        if freeze_bn:
             self._freeze_bn()
 
     def _freeze_bn(self):
         for m in self.modules():
             if isinstance(m, nn.BatchNorm2d):
                 m.eval()
-                for p in m.parameters(): 
+                for p in m.parameters():
                     p.requires_grad = False
-
+    
     def forward(self, x):
         return self.features(x)
 
 class ResNetBackbone(nn.Module):
-    def __init__(self, backbone_name='resnet50', pretrained=True, freeze_bn=False):
+    def __init__(self, backbone_name='resnet50', pretrained=True, freeze_bn=True):
         super().__init__()
-        if backbone_name == 'resnet50':
-            weights = models.ResNet50_Weights.IMAGENET1K_V1 if pretrained else None
-            resnet = models.resnet50(weights=weights)
-        elif backbone_name == 'resnet101':
-            weights = models.ResNet101_Weights.IMAGENET1K_V1 if pretrained else None
-            resnet = models.resnet101(weights=weights)
-        else:
-            raise ValueError(f"ResNet non supportato: {backbone_name}")
-
-        # Rimuoviamo FC e AvgPool finali.
-        # Layer 4 di ResNet ha stride 32. 
-        # Se vogliamo stride 16 (come VGG) dobbiamo modificare la dilatazione o stride, 
-        # ma per ora teniamo standard ResNet (stride 32).
-        self.features = nn.Sequential(
-            resnet.conv1, resnet.bn1, resnet.relu, resnet.maxpool,
-            resnet.layer1, resnet.layer2, resnet.layer3, resnet.layer4
-        )
-        self.out_channels = 2048
-        self.stride = 32 # ResNet standard riduce di 32x
         
-        if freeze_bn: self._freeze_bn()
+        # Pesi
+        if 'resnet50' in backbone_name:
+            weights = models.ResNet50_Weights.IMAGENET1K_V1 if pretrained else None
+            # --- MODIFICA CRITICA SOTA: STRIDE 16 ---
+            # Usiamo la dilatazione nell'ultimo blocco invece dello stride.
+            # Questo mantiene la risoluzione alta (64x64 su img 1024) per matchare CLIP.
+            self.resnet = models.resnet50(
+                weights=weights,
+                replace_stride_with_dilation=[False, False, True] 
+            )
+            self.out_channels = 2048
+        elif 'resnet101' in backbone_name:
+            weights = models.ResNet101_Weights.IMAGENET1K_V1 if pretrained else None
+            self.resnet = models.resnet101(
+                weights=weights,
+                replace_stride_with_dilation=[False, False, True]
+            )
+            self.out_channels = 2048
+        else:
+            # Fallback per resnet18/34 (che non supportano dilation array facilmente)
+            weights = models.ResNet18_Weights.IMAGENET1K_V1 if pretrained else None
+            self.resnet = models.resnet18(weights=weights)
+            self.out_channels = 512
+
+        # Costruiamo il backbone senza FC e AvgPool
+        self.features = nn.Sequential(
+            self.resnet.conv1,
+            self.resnet.bn1,
+            self.resnet.relu,
+            self.resnet.maxpool,
+            self.resnet.layer1,
+            self.resnet.layer2,
+            self.resnet.layer3,
+            self.resnet.layer4
+        )
+        
+        self.stride = 16  # <--- ORA E' 16 GRAZIE ALLA DILATAZIONE!
+        
+        if freeze_bn:
+            self._freeze_bn()
 
     def _freeze_bn(self):
         for m in self.modules():
             if isinstance(m, nn.BatchNorm2d):
                 m.eval()
-                for p in m.parameters(): p.requires_grad = False
+                for p in m.parameters():
+                    p.requires_grad = False
 
     def forward(self, x):
         return self.features(x)
 
 def build_backbone(config):
     """Costruisce il backbone in base al config."""
-    bk_conf = config.get('BACKBONE', {})
-    bk_type = bk_conf.get('TYPE', 'vgg16_bn').lower()
-    pretrained = bk_conf.get('PRETRAINED', True)
-    freeze_bn = bk_conf.get('FREEZE_BN', False)
+    # Recuperiamo il tipo dal config, default a resnet50
+    if 'BACKBONE' in config:
+        bk_type = config['BACKBONE'].get('TYPE', 'resnet50').lower()
+        pretrained = config['BACKBONE'].get('PRETRAINED', True)
+        freeze_bn = config['BACKBONE'].get('FREEZE_BN', True)
+    else:
+        # Fallback se la struttura del config è diversa
+        bk_type = 'resnet50'
+        pretrained = True
+        freeze_bn = True
+
+    print(f"🏗️  Building Backbone: {bk_type} (Pretrained={pretrained})")
 
     if 'vgg' in bk_type:
-        return VGG16Backbone(pretrained, freeze_bn)
+        return VGG16Backbone(pretrained=pretrained, freeze_bn=freeze_bn)
     elif 'resnet' in bk_type:
-        return ResNetBackbone(bk_type, pretrained, freeze_bn)
+        return ResNetBackbone(backbone_name=bk_type, pretrained=pretrained, freeze_bn=freeze_bn)
     else:
-        raise ValueError(f"Backbone sconosciuto: {bk_type}")
+        raise ValueError(f"Backbone {bk_type} non supportato.")

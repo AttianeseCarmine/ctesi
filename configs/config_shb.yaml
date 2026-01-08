@@ -78,7 +78,7 @@ TRAIN_STAGE1:
   LR_BACKBONE: 1.0e-5
   LR_HEAD: 5.0e-4
   WEIGHT_DECAY: 1.0e-4
-  POS_WEIGHT: 15.0 # Ripristinato a 15 (Standard sicuro per training mask)
+  POS_WEIGHT: 3 # Ripristinato a 15 (Standard sicuro per training mask)
 
 EVAL_STAGE1:
   THRESHOLD: 0.3
@@ -110,7 +110,7 @@ TRAIN_STAGE3:
   EPOCHS: 400
   BATCH_SIZE: 16
   NUM_WORKERS: 8
-  LR: 1.0e-6       # <--- LR Basso per Stage 3 (Fine Tuning)
+  LR: 1.0e-5       # <--- LR Basso per Stage 3 (Fine Tuning)
   WEIGHT_DECAY: 1.0e-4
   LAMBDA_ZIP: 1.0
   LAMBDA_CLIP: 1.0
