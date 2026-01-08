@@ -228,3 +228,21 @@ def save_checkpoint(model, optimizer, epoch, val_metric, best_metric, exp_dir, i
         torch.save(model.state_dict(), os.path.join(exp_dir, best_name))
         
     print(f"💾 Checkpoint salvato: epoch={epoch}, best_val={best_metric:.2f} ({'best' if is_best else 'last'})")
+
+
+class AverageMeter(object):
+    """Calcola e memorizza la media e il valore corrente."""
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.val = 0
+        self.avg = 0
+        self.sum = 0
+        self.count = 0
+
+    def update(self, val, n=1):
+        self.val = val
+        self.sum += val * n
+        self.count += n
+        self.avg = self.sum / self.count

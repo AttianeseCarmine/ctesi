@@ -2,7 +2,7 @@ from .backbone import VGG16Backbone, ResNetBackbone
 from .pi_head import ZIPHead, build_zip_head
 from .clip_ebc_model import CLIPEBCModel
 from .zip_model import ZIPModel
-from .joint_model import ZIPCLIPJointModel, DivideAndConquerStage3
+from .joint_model import ZIPCLIPJointModel
 
 __all__ = [
     'VGG16Backbone', 
@@ -12,5 +12,4 @@ __all__ = [
     'CLIPEBCModel',
     'ZIPModel',
     'ZIPCLIPJointModel',
-    'DivideAndConquerStage3'
 ]

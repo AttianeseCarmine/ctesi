@@ -4,96 +4,119 @@ import torch.nn.functional as F
 
 class ZIPCLIPJointModel(nn.Module):
     """
-    Modello congiunto per lo Stage 3.
-    Esegue sia il modello ZIP (Stage 1) che CLIP-EBC (Stage 2)
-    e unisce i loro output in un unico dizionario.
+    Modello Unificato ZIP-CLIP.
+    - Training: Soft Gating (i gradienti fluiscono ovunque).
+    - Inference: Hard Filtering (risparmia calcoli e rimuove falsi positivi).
     """
-    def __init__(self, stage1_model, stage2_model):
-        super().__init__()
-        self.stage1 = stage1_model
-        self.stage2 = stage2_model
-        
-    def forward(self, x):
-        # 1. Forward Stage 1 (ZIP - ResNet50)
-        # Restituisce: {'pi_logits': ..., 'features': ...}
-        out1 = self.stage1(x)
-        
-        # 2. Forward Stage 2 (CLIP - EBC)
-        # Restituisce: {'ebc_density': ..., 'ebc_logits': ..., 'bin_probs': ...}
-        out2 = self.stage2(x)
-        
-        # 3. Merge dei risultati
-        outputs = {}
-        outputs.update(out1)  # Inserisce pi_logits
-        outputs.update(out2)  # Inserisce ebc_density
-        
-        return outputs
-
-class DivideAndConquerStage3(nn.Module):
-    def __init__(self, zip_model, clip_ebc_model, tile_size=224, threshold=0.5):
-        """
-        Args:
-            zip_model: Modello Stage 1 (Filtro).
-            clip_ebc_model: Modello Stage 2 (Contatore).
-            tile_size: Dimensione del blocco (default 224 per CLIP).
-            threshold: Soglia di probabilità ZIP (0-1). Se prob < threshold, il blocco è scartato.
-        """
+    def __init__(self, zip_model, clip_ebc_model, patch_size=224, stride=224, threshold=0.5):
         super().__init__()
         self.zip_model = zip_model
         self.clip_ebc_model = clip_ebc_model
-        self.tile_size = tile_size
-        self.threshold = threshold
         
-        # Impostiamo i sottomodelli in eval (Stage 3 Gate è solo inferenza)
-        self.zip_model.eval()
-        self.clip_ebc_model.eval()
+        # Parametri per inferenza Hard
+        self.patch_size = patch_size
+        self.stride = stride
+        self.threshold = threshold
 
     def forward(self, x):
+        # Decide automaticamente la modalità in base a model.train() o model.eval()
+        if self.training:
+            return self._forward_soft_train(x)
+        else:
+            return self._forward_hard_inference(x)
+
+    def _forward_soft_train(self, x):
         """
-        x: Immagine intera (Batch, C, H, W). Il batch size deve essere 1 per ora.
-        Return: (Conteggio totale, Numero blocchi tenuti, Numero blocchi totali)
+        Flow differenziabile per il training.
+        Densità Finale = Densità CLIP * Probabilità ZIP
+        """
+        # 1. ZIP (Filtro)
+        zip_out = self.zip_model(x)
+        pi_logits = zip_out['pi_logits']
+        prob_presence = torch.sigmoid(pi_logits) # [0, 1]
+
+        # 2. CLIP (Contatore)
+        clip_out = self.clip_ebc_model(x)
+        
+        # --- FIX: RECUPERO ROBUSTO DELLE CHIAVI (Risolve il crash) ---
+        # Cerca la densità con varie chiavi possibili
+        raw_density = None
+        for key in ['ebc_density', 'pred_density', 'final_density', 'density']:
+            if key in clip_out:
+                raw_density = clip_out[key]
+                break
+        if raw_density is None:
+            raise KeyError(f"Nessuna chiave di densità valida trovata in CLIP output. Chiavi presenti: {clip_out.keys()}")
+
+        # Cerca i logits con varie chiavi possibili
+        ebc_logits = None
+        for key in ['ebc_logits', 'logits']:
+            if key in clip_out:
+                ebc_logits = clip_out[key]
+                break
+        
+        # 3. Allineamento Dimensioni (se necessario)
+        if prob_presence.shape[-2:] != raw_density.shape[-2:]:
+            prob_presence = F.interpolate(prob_presence, size=raw_density.shape[-2:], mode='bilinear', align_corners=False)
+
+        # 4. Soft Gating
+        refined_density = raw_density * prob_presence
+
+        return {
+            'pi_logits': pi_logits,           # Per ZIP Loss
+            'ebc_logits': ebc_logits,         # Per CLIP Loss
+            'final_density': refined_density, # Per Count Loss
+            'raw_density': raw_density        # Debug
+        }
+
+    def _forward_hard_inference(self, x):
+        """
+        Flow "Divide et Impera" per l'inferenza.
+        Taglia l'immagine -> Filtra i blocchi vuoti -> Conta solo su quelli pieni.
         """
         B, C, H, W = x.shape
         
-        # 1. Padding: Rende l'immagine perfettamente divisibile per tile_size
-        pad_h = (self.tile_size - H % self.tile_size) % self.tile_size
-        pad_w = (self.tile_size - W % self.tile_size) % self.tile_size
+        # 1. Pad per rendere l'immagine divisibile per il patch_size
+        pad_h = (self.patch_size - H % self.patch_size) % self.patch_size
+        pad_w = (self.patch_size - W % self.patch_size) % self.patch_size
         x_padded = F.pad(x, (0, pad_w, 0, pad_h))
         
-        # 2. DIVIDE: Estrazione Patches (Unfold)
-        # Stride = Tile Size -> Nessuna sovrapposizione tra i blocchi
-        patches = x_padded.unfold(2, self.tile_size, self.tile_size).unfold(3, self.tile_size, self.tile_size)
-        # Shape: (B, C, Rows, Cols, Tile, Tile)
+        # 2. Unfold (Tiling dell'immagine)
+        patches = F.unfold(x_padded, kernel_size=self.patch_size, stride=self.stride)
+        # Reshape: [N_patches, C, H_patch, W_patch]
+        patches = patches.permute(0, 2, 1).contiguous().view(-1, C, self.patch_size, self.patch_size)
         
-        patches = patches.permute(0, 2, 3, 1, 4, 5).contiguous()
-        patches = patches.view(-1, C, self.tile_size, self.tile_size)
-        # Ora patches è un batch di "mini-immagini": (N_Blocchi, 3, 224, 224)
-
-        # 3. FILTER (ZIP): Passiamo tutto al filtro
+        # 3. ZIP Filter (Decisione Hard)
         with torch.no_grad():
-            zip_output = self.zip_model(patches) 
+            zip_out = self.zip_model(patches)
+            pi_logits = zip_out['pi_logits']
             
-            # Calcoliamo uno score per ogni blocco (max probability all'interno del blocco)
-            # zip_output è (N, 1, H_out, W_out). Adaptive Max Pool lo riduce a (N, 1, 1, 1)
-            block_scores = F.adaptive_max_pool2d(zip_output, (1, 1)).view(-1)
+            # Score del patch: c'è almeno un punto con alta probabilità?
+            # Usiamo Max Pooling sulla mappa di probabilità del patch
+            patch_scores = torch.sigmoid(pi_logits).amax(dim=(1, 2, 3))
             
-            # Maschera binaria: Chi passa il test?
-            keep_mask = block_scores > self.threshold
+            # Decisione: Tengo o butto?
+            mask_keep = patch_scores > self.threshold
             
-            num_kept = keep_mask.sum().item()
-            num_total = patches.size(0)
+        valid_patches = patches[mask_keep]
+        total_count = 0.0
+        
+        # 4. CLIP Counter (Solo sui sopravvissuti)
+        if valid_patches.size(0) > 0:
+            clip_out = self.clip_ebc_model(valid_patches)
             
-            # Caso limite: Se nessun blocco passa, restituiamo 0
-            if num_kept == 0:
-                return torch.tensor(0.0, device=x.device), 0, num_total
-
-            # Selezioniamo solo i blocchi "promossi"
-            valid_patches = patches[keep_mask]
-
-        # 4. COUNT (CLIP-EBC): Passiamo al contatore solo i sopravvissuti
-        with torch.no_grad():
-            clip_output = self.clip_ebc_model(valid_patches)
-            # clip_output è la density map o il count dei blocchi. Sommiamo tutto.
-            final_count = clip_output.sum()
+            # Anche qui usiamo la ricerca robusta della chiave
+            densities = None
+            for key in ['ebc_density', 'pred_density', 'final_density', 'density']:
+                if key in clip_out:
+                    densities = clip_out[key]
+                    break
             
-        return final_count, num_kept, num_total
+            if densities is not None:
+                total_count = densities.sum().item()
+            
+        return {
+            'pred_count': torch.tensor([total_count], device=x.device),
+            'n_patches_total': patches.size(0),
+            'n_patches_kept': valid_patches.size(0)
+        }

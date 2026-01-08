@@ -109,17 +109,30 @@ LOSS_STAGE2:
   LABEL_SMOOTHING: 0.0 # Ripristinato a 0.0
 
 TRAIN_STAGE3:
-  EPOCHS: 200
-  LR: 5.0e-6                # Partiamo bassi per non rovinare il MAE 28
-  WEIGHT_DECAY: 1.0e-5
-  ACCUMULATION_STEPS: 4     # Alta stabilità
-  PATIENCE: 10               # Se non migliora per 3 epoche...
-  FACTOR: 0.5               # ...dimezza il learning rate
-  LAMBDA_ZIP: 1.0
-  LAMBDA_CLIP: 1.0
-  LAMBDA_COUNT: 10.0
-  EVAL_FREQ: 1
-  SAVE_FREQ: 5
+  EPOCHS: 50
+  BATCH_SIZE: 4          # Basso perché carichiamo 2 modelli in VRAM
+  NUM_WORKERS: 4
+  
+  # Optimizer params (Learning Rate molto basso per non rovinare CLIP)
+  LR: 1.0e-5             
+  WEIGHT_DECAY: 1.0e-4
+  
+  # Pesi della Loss Congiunta
+  LAMBDA_ZIP: 1.0        # Peso maschera binaria
+  LAMBDA_CLIP: 1.0       # Peso classificazione EBC
+  LAMBDA_COUNT: 10.0     # Peso errore conteggio finale (L1)
+
+  # PERCORSI DEI PESI PRE-ADDESTRATI (Fondamentale!)
+  # Sostituisci con i percorsi reali dei tuoi .pth migliori
+  CHECKPOINT_STAGE1: "checkpoints/sha/stage1/best_model.pth" 
+  CHECKPOINT_STAGE2: "checkpoints/sha/stage2/best_model.pth"
+
+EVAL_STAGE3:
+  # Parametri per la strategia "Hard" (Divide et Impera)
+  PATCH_SIZE: 224        # Dimensione del blocco analizzato
+  STRIDE: 224            # 224 = Nessuna sovrapposizione (taglio netto)
+  THRESHOLD: 0.5         # Se prob. presenza < 0.5, il blocco viene ignorato
+
 
 EXP:
   OUT_DIR: "./checkpoints"
