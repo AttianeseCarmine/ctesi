@@ -9,17 +9,31 @@ class VGG16Backbone(nn.Module):
         super().__init__()
         weights = models.VGG16_BN_Weights.IMAGENET1K_V1 if pretrained else None
         vgg = models.vgg16_bn(weights=weights)
-        # Prendi feature fino a prima dell'ultimo maxpool (stride 16)
-        self.features = nn.Sequential(*list(vgg.features.children())[:34])
+        
+        # --- MODIFICA CRITICA PER CROWD COUNTING ---
+        # VGG Standard:
+        # Layer 0-23: Output stride 8 (dopo il 3° MaxPool)
+        # Layer 24-33: Output stride 16 (dopo il 4° MaxPool)
+        # Layer 34-43: Output stride 32 (dopo il 5° MaxPool)
+        
+        # Per ottenere risultati competitivi (SOTA), usiamo solo i primi 4 blocchi
+        # e rimuoviamo l'ultimo pooling per fermarci a Stride 8.
+        # Indice 33 è il MaxPool che porta a stride 16. Noi ci fermiamo prima.
+        
+        self.features = nn.Sequential(*list(vgg.features.children())[:33])
+        
         self.out_channels = 512
-        self.stride = 16
-        if freeze_bn: self._freeze_bn()
+        self.stride = 8  # Ora lo stride è 8 (Standard per Crowd Counting)
+        
+        if freeze_bn: 
+            self._freeze_bn()
 
     def _freeze_bn(self):
         for m in self.modules():
             if isinstance(m, nn.BatchNorm2d):
                 m.eval()
-                for p in m.parameters(): p.requires_grad = False
+                for p in m.parameters(): 
+                    p.requires_grad = False
 
     def forward(self, x):
         return self.features(x)

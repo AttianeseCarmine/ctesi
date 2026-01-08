@@ -119,8 +119,8 @@ def train_stage1_simple():
     
     # Setup
     dataset_name = config.get('DATASET', 'sha')
-    save_dir = os.path.join('./checkpoints', dataset_name, 'stage1')
-    os.makedirs(save_dir, exist_ok=True)
+    save_dir = Path('./checkpoints') / dataset_name / 'stage1'
+    save_dir.mkdir(parents=True, exist_ok=True)
     
     print(f"🚀 Stage 1: Binary Classifier Training (Simple)")
     print(f"   Dataset: {dataset_name} | Save to: {save_dir}")
@@ -140,6 +140,13 @@ def train_stage1_simple():
     # Modello
     model = ZIPModel(config).to(device)
     
+    ckpt_path = save_dir / 'best_model.pth'
+    if ckpt_path.exists():
+        print(f"🔄 Riprendo il training dal checkpoint: {ckpt_path}")
+        model.load_state_dict(torch.load(ckpt_path))
+    else:
+        print("🚀 Nessun checkpoint trovato, inizio da zero.")
+
     # --- FREEZE & UNFREEZE ---
     # Congela tutto tranne ZIP Head e Backbone
     for p in model.parameters(): p.requires_grad = False

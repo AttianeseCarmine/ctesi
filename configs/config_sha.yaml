@@ -15,7 +15,7 @@ DATA:
   ROOT: "./data/sha/"
   TRAIN_SPLIT: "train"
   VAL_SPLIT: "val"
-  ZIP_BLOCK_SIZE: 8
+  ZIP_BLOCK_SIZE: 16
   
   CROP_SIZE: 448
   CROP_SCALE: [0.4, 2.0]
@@ -52,25 +52,27 @@ CLIP_EBC_HEAD:
   WINDOW_SIZE: 16
 
 # --- CONFIGURAZIONE BIN ORIGINALE (8 Bins) ---
+# Nuovi Bins per SHA
 BINS:
   - [0, 0]
   - [1, 1]
   - [2, 2]
-  - [3, 3]
-  - [4, 4]
-  - [5, 5]
-  - [6, 7]      # Bin più ampio
-  - [8, 9999]   # Bin per folla estrema
+  - [3, 4]
+  - [5, 7]
+  - [8, 12]
+  - [13, 20]
+  - [21, 9999] # Bin "Ultra Denso"
 
-BIN_CENTERS: [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.5, 12.0] # 12.0 è cruciale per le folle dense
 NUM_BINS: 8
+# Centri approssimativi per questi range
+BIN_CENTERS: [0.0, 1.0, 2.0, 3.5, 6.0, 10.0, 16.5, 45.0]
 
 
 # ============================================================
 # TRAINING STAGES
 # ============================================================
 TRAIN_STAGE1:
-  EPOCHS: 400
+  EPOCHS: 600
   BATCH_SIZE: 32
   NUM_WORKERS: 8
   VAL_INTERVAL: 5
@@ -78,10 +80,10 @@ TRAIN_STAGE1:
   LR_BACKBONE: 1.0e-5
   LR_HEAD: 5.0e-4
   WEIGHT_DECAY: 1.0e-4
-  POS_WEIGHT: 15.0
+  POS_WEIGHT: 1
 
 EVAL_STAGE1:
-  THRESHOLD: 0.3
+  THRESHOLD: 0.15
 
 TRAIN_STAGE2:
   BATCH_SIZE: 8
@@ -110,7 +112,7 @@ TRAIN_STAGE3:
   EPOCHS: 200
   BATCH_SIZE: 16
   NUM_WORKERS: 8
-  LR: 1.0e-5            
+  LR: 1.0e-6            
   WEIGHT_DECAY: 1.0e-4
   LAMBDA_ZIP: 1.0
   LAMBDA_CLIP: 1.0

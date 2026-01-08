@@ -11765,3 +11765,14 @@ models/__pycache__/pi_head.cpython-312.pyc
 models/__pycache__/utils.cpython-312.pyc
 models/__pycache__/zip_clip_ebc_model.cpython-312.pyc
 visualizations/*
+training_sha.log
+models/__pycache__/zip_model.cpython-312.pyc
+models/__pycache__/clip_ebc_model.cpython-312.pyc
+training_shb.log
+training_shb.log
+training_stage1_sha.log
+training_stage2_sha.log
+training_stage3_sha.log
+training_stage3_shb.log
+models/__pycache__/clip_ebc_model.cpython-312.pyc
+models/__pycache__/zip_model.cpython-312.pyc
