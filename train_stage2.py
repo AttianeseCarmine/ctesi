@@ -14,58 +14,7 @@ from tqdm import tqdm
 from models.clip_ebc_model import CLIPEBCModel
 from datasets.sha import SHA
 from datasets.transforms import build_transforms
-
-# --- DACELoss (Invariata) ---
-class DACELoss(nn.Module):
-    def __init__(self, bins, bin_centers, weight_count=1.0, label_smoothing=0.0, block_size=16):
-        super().__init__()
-        self.bins = [tuple(b) for b in bins]
-        self.num_bins = len(bins)
-        self.weight_count = weight_count
-        self.block_size = block_size
-        self.ce_loss = nn.CrossEntropyLoss(label_smoothing=label_smoothing, reduction="mean")
-        self.register_buffer("bin_centers", torch.tensor(bin_centers, dtype=torch.float32))
-    
-    def _get_bin_labels(self, block_counts):
-        if block_counts.dim() == 4: block_counts = block_counts.squeeze(1)
-        labels = torch.zeros_like(block_counts, dtype=torch.long)
-        for idx, (low, high) in enumerate(self.bins):
-            high_val = float('inf') if high > 9000 else high
-            mask = (block_counts >= low) & (block_counts <= high_val)
-            labels[mask] = idx
-        return labels
-    
-    def _density_to_blocks(self, density, target_size):
-        B, C, H, W = density.shape
-        tH, tW = target_size
-        if H == tH and W == tW: return density
-        scale_h, scale_w = H // tH, W // tW
-        if scale_h > 0 and scale_w > 0 and H % tH == 0 and W % tW == 0:
-            return F.avg_pool2d(density, kernel_size=(scale_h, scale_w)) * (scale_h * scale_w)
-        else:
-            return F.adaptive_avg_pool2d(density, (tH, tW)) * (H * W) / (tH * tW)
-    
-    def forward(self, outputs, gt_density, points=None):
-        logits = outputs['ebc_logits']
-        B, C, H, W = logits.shape
-        gt_blocks = self._density_to_blocks(gt_density, (H, W))
-        target_labels = self._get_bin_labels(gt_blocks)
-        logits_flat = logits.permute(0, 2, 3, 1).reshape(-1, C)
-        labels_flat = target_labels.reshape(-1)
-        ce_loss = self.ce_loss(logits_flat, labels_flat)
-        bin_probs = outputs.get('bin_probs', F.softmax(logits, dim=1))
-        centers = self.bin_centers.view(1, -1, 1, 1).to(logits.device)
-        pred_density = (bin_probs * centers).sum(dim=1, keepdim=True)
-        pred_count = pred_density.sum(dim=(1, 2, 3))
-        if points is not None:
-            gt_count = torch.tensor([len(p) for p in points], dtype=torch.float32, device=logits.device)
-        else:
-            gt_count = gt_blocks.sum(dim=(1, 2, 3))
-        count_loss = F.l1_loss(pred_count, gt_count)
-        total_loss = ce_loss + self.weight_count * count_loss
-        with torch.no_grad():
-            mae = torch.abs(pred_count - gt_count).mean()
-        return total_loss, {'total_loss': total_loss.item(), 'mae': mae.item()}
+from losses.clip_ebc_loss import CLIPEBCLoss, DACELoss
 
 def crowd_collate(batch):
     batch = [b for b in batch if b is not None]

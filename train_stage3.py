@@ -7,89 +7,26 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from torch.optim import AdamW
+from torch.amp import GradScaler, autocast
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 from tqdm import tqdm
+from pathlib import Path
 
-# --- IMPORT DAI TUOI SCRIPT ESISTENTI ---
+# --- IMPORT DAI TUOI SCRIPT ---
 from models.zip_model import ZIPModel
 from models.clip_ebc_model import CLIPEBCModel
 from losses.joint_loss import JointLoss
-from losses.clip_ebc_loss import CLIPEBCLoss
+from losses.clip_ebc_loss import CLIPEBCLoss # Usa la loss unificata
 from datasets.sha import SHA
 from datasets.transforms import build_transforms
+from eval_patchwise import patchwise_count
 
 # ==============================================================================
 # 1. MODELLO CONGIUNTO (WRAPPER)
 # ==============================================================================
-class ZIPCLIPJointModel(nn.Module):
-    def __init__(self, config, s1_path, s2_path):
-        super().__init__()
-        
-        # 1. Carica i Modelli Base
-        print("🏗️  Building Base Models...")
-        self.stage1 = ZIPModel(config)
-        self.stage2 = CLIPEBCModel(config)
-        
-        # 2. Carica i Pesi
-        print(f"📥 Loading Stage 1: {s1_path}")
-        s1_ckpt = torch.load(s1_path, map_location='cpu')
-        st1 = s1_ckpt['model'] if 'model' in s1_ckpt else s1_ckpt
-        self.stage1.load_state_dict(st1, strict=False)
-        
-        print(f"📥 Loading Stage 2: {s2_path}")
-        s2_ckpt = torch.load(s2_path, map_location='cpu')
-        st2 = s2_ckpt['model'] if 'model' in s2_ckpt else s2_ckpt
-        self.stage2.load_state_dict(st2, strict=False)
-
-        # 3. Gestione Gradienti (Refined Strategy)
-        # Stage 1: Sblocchiamo la testa e il backbone (per adattarsi alla risoluzione)
-        for p in self.stage1.parameters(): p.requires_grad = True
-        
-        # Stage 2: Blocchiamo il backbone CLIP (prezioso), sblocchiamo solo le teste
-        for p in self.stage2.parameters(): p.requires_grad = False
-        for p in self.stage2.projection.parameters(): p.requires_grad = True
-        if hasattr(self.stage2, 'image_decoder'):
-            for p in self.stage2.image_decoder.parameters(): p.requires_grad = True
-
-    def forward(self, x):
-        # --- Stage 1: Maschera ---
-        out1 = self.stage1(x)
-        # Probabilità di Sfondo (pi)
-        if 'pi' in out1:
-            pi = out1['pi']
-        else:
-            pi = torch.sigmoid(out1['pi_logits'])
-        
-        # Probabilità di "Persona" (Foreground)
-        prob_fg = 1.0 - pi 
-
-        # --- Stage 2: Densità ---
-        out2 = self.stage2(x)
-        density_raw = out2['ebc_density'] # [B, 1, H_out, W_out]
-        logits_ebc = out2['ebc_logits']
-        
-        # --- Stage 3: Soft Refinement & Interpolazione ---
-        # Allinea risoluzione Stage 1 (32x32) a Stage 2 (64x64 o 28x28) se diverse
-        if prob_fg.shape[-2:] != density_raw.shape[-2:]:
-            prob_fg = F.interpolate(
-                prob_fg, 
-                size=density_raw.shape[-2:], 
-                mode='bilinear', 
-                align_corners=False
-            )
-            # Aggiorniamo 'pi' interpolato per la loss ZIP
-            pi = 1.0 - prob_fg
-
-        # Soft Masking: Densità * Probabilità Presenza
-        final_density = density_raw * prob_fg
-        
-        return {
-            'pi_logits': torch.logit(pi + 1e-6), # Riconverte in logits per BCEWithLogits
-            'pi': pi,
-            'ebc_logits': logits_ebc,
-            'final_density': final_density,
-            'prob_fg': prob_fg
-        }
+# (Il codice di joint_model.py va bene, lo importiamo o lo incolliamo qui)
+# Assumo che tu abbia il file joint_model.py nella cartella models/
+from models.joint_model import ZIPCLIPJointModel 
 
 # ==============================================================================
 # 2. UTILS
@@ -97,10 +34,12 @@ class ZIPCLIPJointModel(nn.Module):
 def crowd_collate(batch):
     batch = [b for b in batch if b is not None]
     if len(batch) == 0: return None
-    images = torch.stack([item['image'] for item in batch])
-    points = [item['points'] for item in batch]
-    densities = torch.stack([item['density'] for item in batch])
-    return {'image': images, 'points': points, 'density': densities}
+    return {
+        'image': torch.stack([item['image'] for item in batch]),
+        'density': torch.stack([item['density'] for item in batch]),
+        'points': [item['points'] for item in batch], # <--- Cruciale per OT Loss
+        'img_path': [item['img_path'] for item in batch]
+    }
 
 # ==============================================================================
 # 3. MAIN
@@ -108,11 +47,11 @@ def crowd_collate(batch):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', type=str, default="configs/config_shb.yaml")
-    parser.add_argument('--s1', type=str, required=True, help="Checkpoint Stage 1")
-    parser.add_argument('--s2', type=str, required=True, help="Checkpoint Stage 2")
+    parser.add_argument('--s1', type=str, required=True, help="Path best_model Stage 1")
+    parser.add_argument('--s2', type=str, required=True, help="Path best_model Stage 2")
     parser.add_argument('--out', type=str, default="checkpoints/shb/stage3_final")
-    parser.add_argument('--epochs', type=int, default=100)
-    parser.add_argument('--lr', type=float, default=1e-5)
+    # Rimuoviamo il default hardcoded delle epoche qui, lo prendiamo dal config se possibile
+    parser.add_argument('--epochs', type=int, default=None) 
     parser.add_argument('--gpu', type=int, default=0)
     args = parser.parse_args()
     
@@ -122,126 +61,151 @@ def main():
     print(f"🔧 Config: {args.config} | Device: {device}")
     with open(args.config, 'r') as f: config = yaml.safe_load(f)
     
+    # --- LETTURA PARAMETRI DAL YAML (FIX) ---
+    t3_conf = config.get('TRAIN_STAGE3', {})
+    
+    # Priorità: Argomento da riga di comando > Config YAML > Default
+    epochs = args.epochs if args.epochs is not None else t3_conf.get('EPOCHS', 50)
+    lr = float(t3_conf.get('LR', 1e-6))
+    l_zip = float(t3_conf.get('LAMBDA_ZIP', 1.0))
+    l_clip = float(t3_conf.get('LAMBDA_CLIP', 1.0))
+    l_count = float(t3_conf.get('LAMBDA_COUNT', 1.0))
+    
+    print(f"⚙️  Params: LR={lr} | λ_Zip={l_zip} | λ_Clip={l_clip} | λ_Count={l_count}")
+
     # --- 1. MODELLO ---
     model = ZIPCLIPJointModel(config, args.s1, args.s2).to(device)
     
-    # --- 2. CONFIGURAZIONE LOSS (Fix Lettura Config) ---
-    # Legge direttamente dalla root (config_shb.yaml style)
-    if 'BINS' in config:
-        bins = config['BINS']
-        centers = config['BIN_CENTERS']
-    else:
-        # Fallback (config_sha.yaml style o BINS_CONFIG)
-        ds_name = config.get('DATASET', 'shb')
-        bins = config['BINS_CONFIG'][ds_name]['bins']
-        centers = config['BINS_CONFIG'][ds_name]['bin_centers']
-        
-    print(f"✅ Loss Config: {len(bins)} bins caricati.")
+    # --- 2. CONFIGURAZIONE LOSS ---
+    crop_size = config['DATA'].get('CROP_SIZE', 448)
+    reduction = config['CLIP_EBC_HEAD'].get('REDUCTION', 16)
 
     # A) Loss CLIP
     clip_loss_fn = CLIPEBCLoss(
-        bins=bins, 
-        bin_centers=centers,
-        count_weight=0.1
+        bins=config['BINS'],
+        input_size=crop_size,
+        reduction=reduction,
+        weight_ot=0.1,
+        weight_tv=0.01
     ).to(device)
     
-    # B) Loss Congiunta
-    loss_cfg = config.get('LOSS_STAGE3', {})
+    # B) Loss Congiunta (ORA COLLEGATA AL YAML!)
     criterion = JointLoss(
         clip_loss_fn=clip_loss_fn,
-        lambda_zip=loss_cfg.get('ALPHA_PI', 1.0),
-        lambda_clip=loss_cfg.get('ALPHA_EBC', 1.0),
-        lambda_count=loss_cfg.get('COUNT_WEIGHT', 1.0)
+        lambda_zip=l_zip,      # <--- Preso dal config
+        lambda_clip=l_clip,    # <--- Preso dal config
+        lambda_count=l_count   # <--- Preso dal config
     ).to(device)
     
-    # Optimizer
-    optimizer = AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=1e-6, weight_decay=1e-4)
+    # Optimizer (ORA COLLEGATO AL YAML!)
+    optimizer = AdamW(filter(lambda p: p.requires_grad, model.parameters()), 
+                      lr=lr, # <--- Preso dal config
+                      weight_decay=1e-4)
+                      
+    scaler = GradScaler('cuda', enabled=True)
     scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=2)
     
     # Dataloaders
     train_ds = SHA(config['DATA']['ROOT'], 'train', build_transforms(config['DATA'], True))
     val_ds = SHA(config['DATA']['ROOT'], 'val', build_transforms(config['DATA'], False))
-    train_loader = DataLoader(train_ds, batch_size=4, shuffle=True, num_workers=4, collate_fn=crowd_collate, drop_last=True)
+    
+    train_loader = DataLoader(train_ds, batch_size=t3_conf.get('BATCH_SIZE', 4), shuffle=True, num_workers=4, collate_fn=crowd_collate, drop_last=True)
     val_loader = DataLoader(val_ds, batch_size=1, shuffle=False, num_workers=2, collate_fn=crowd_collate)
     
     best_mae = float('inf')
     
-    print("🚀 Start Training Stage 3...")
+    print(f"🚀 Start Training Stage 3 for {epochs} epochs...")
     
-    for epoch in range(args.epochs):
+    for epoch in range(epochs): # Usa la variabile epochs corretta
         model.train()
-        loss_epoch = 0
         pbar = tqdm(train_loader, desc=f"Ep {epoch+1}")
         
         for batch in pbar:
             if batch is None: continue
             
-            images = batch['image'].to(device)     # [B, 3, 448, 448]
-            gt_density = batch['density'].to(device) # [B, 1, 448, 448]
+            images = batch['image'].to(device)
+            gt_density = batch['density'].to(device)
+            points = [p.to(device) for p in batch['points']] 
             
             optimizer.zero_grad()
             
-            # Forward
-            outputs = model(images) # Output ha size ridotta (es. 28x28)
-            
-            # --- FIX CRITICO: RIDIMENSIONAMENTO TARGET ---
-            # Ridimensioniamo la Ground Truth per matchare l'output del modello
-            out_h, out_w = outputs['pi_logits'].shape[-2:]
-            
-            if gt_density.shape[-1] != out_w:
-                # Interpoliamo la densità GT
-                gt_density_resized = F.interpolate(
-                    gt_density, 
-                    size=(out_h, out_w), 
-                    mode='bilinear', 
-                    align_corners=False
-                )
-                # Conserviamo la somma (il conteggio) moltiplicando per il fattore di scala quadrato
-                scale_factor = (gt_density.shape[-1] / out_w) ** 2
-                gt_density_resized = gt_density_resized * scale_factor
+            with autocast('cuda', enabled=True):
+                outputs = model(images)
                 
-                # Creiamo la maschera target sulla versione ridotta
-                target_mask = (gt_density_resized > 0.001).float()
-            else:
-                gt_density_resized = gt_density
-                target_mask = (gt_density > 0.001).float()
-            # ---------------------------------------------
+                # --- PREPARAZIONE TARGET ---
+                # Dobbiamo creare la maschera target per lo Stage 1
+                # Ridimensioniamo la densità GT alla dimensione dell'output di Stage 1
+                out_h, out_w = outputs['pi_logits'].shape[-2:]
+                
+                if gt_density.shape[-1] != out_w:
+                     # Interpolazione per creare maschera corretta
+                     gt_resized = F.interpolate(gt_density, size=(out_h, out_w), mode='bilinear', align_corners=False)
+                     # Scala valore per mantenere somma (approssimata)
+                     scale = (gt_density.shape[-1] / out_w)**2
+                     gt_resized = gt_resized * scale
+                else:
+                     gt_resized = gt_density
+
+                # Maschera binaria: 1 dove c'è almeno un po' di densità
+                mask_gt = (gt_resized > 0.001).float()
+                
+                targets = {
+                    'mask': mask_gt,            # Target per ZIP (Stage 1)
+                    'density': gt_density,      # Target per CLIP (Full Resolution)
+                    'points': points            # Target per OT
+                }
+                
+                # Calcolo Loss
+                loss, loss_dict = criterion(outputs, targets)
             
-            targets = {
-                'mask': target_mask,          # Per ZIP
-                'counts': gt_density,         # Per CLIP (usa pooling interno, ok full res)
-                'density': gt_density_resized # Per Count Loss (L1) -> DEVE essere resized
-            }
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
             
-            loss, loss_dict = criterion(outputs, targets)
-            
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-            optimizer.step()
-            
-            loss_epoch += loss.item()
-            pbar.set_postfix({'Loss': f"{loss.item():.2f}"})
-            
+            pbar.set_postfix({
+                'L': f"{loss.item():.2f}", 
+                'Zip': f"{loss_dict.get('loss_zip',0):.2f}",
+                'MAE': f"{loss_dict.get('count_loss',0):.1f}"
+            })
+        
         scheduler.step()
         
         # --- VALIDATION ---
         model.eval()
         mae = 0
         count = 0
+
+        # prendi config eval (se esiste)
+        eval_cfg = config.get("EVAL_STAGE3", {})
+        use_patch_eval = bool(eval_cfg.get("ENABLED", True))  # se vuoi, metti False di default
+
+        patch_size = int(eval_cfg.get("PATCH_SIZE", 448))
+        stride     = int(eval_cfg.get("STRIDE", patch_size))
+        thr        = float(eval_cfg.get("THRESHOLD", 0.35))
+
         with torch.no_grad():
             for batch in val_loader:
                 img = batch['image'].to(device)
                 gt = len(batch['points'][0])
-                
-                out = model(img)
-                # Somma sulla mappa finale per il conteggio
-                pred = out['final_density'].sum().item()
-                
+
+                if use_patch_eval:
+                    pred, dbg = patchwise_count(
+                        model,
+                        img,
+                        patch_size=patch_size,
+                        stride=stride,
+                        threshold=thr,
+                        presence_reduce="max",   # "max" = più sicuro
+                    )
+                else:
+                    out = model(img)
+                    pred = out['final_density'].sum().item()
+
                 mae += abs(pred - gt)
                 count += 1
-        
+
         val_mae = mae / count
-        print(f"📊 Ep {epoch+1} | Val MAE: {val_mae:.4f} (Best: {best_mae:.4f})")
+        print(f"📊 Ep {epoch+1} | Val MAE: {val_mae:.2f} (Best: {best_mae:.2f})")
         
         if val_mae < best_mae:
             best_mae = val_mae
@@ -254,3 +218,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+ #   python3 train_stage3.py --config configs/config_shb.yaml --s1 checkpoints/shb/stage1/best_model.pth --s2 checkpoints/shb/stage2/best_model.pth --out checkpoints/shb/stage3_final --epochs 150 --gpu 0

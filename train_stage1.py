@@ -238,3 +238,6 @@ def train_stage1_simple():
 
 if __name__ == '__main__':
     train_stage1_simple()
+
+
+# nohup python train_stage1.py --config configs/config_shb.yaml > train_shb_stage1.out 2>&1 &
