@@ -63,7 +63,7 @@ def evaluate(model, loader, device):
     tp, tn, fp, fn = 0, 0, 0, 0
     
     # Soglia per decidere se è folla o no (0.5 su sigmoid = 0 su logits)
-    threshold = 0.3
+    threshold = 0.2
     
     for batch in tqdm(loader, desc="Eval"):
         if batch is None: continue
@@ -115,7 +115,9 @@ def train_stage1_simple():
     
     with open(args.config, 'r') as f: config = yaml.safe_load(f)
     seed_everything(config.get('SEED', 42))
-    device = torch.device(f'cuda:{args.gpu}')
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    use_cuda = device.type == "cuda"
+    print("Using device:", device)
     
     # Setup
     dataset_name = config.get('DATASET', 'sha')
@@ -143,7 +145,7 @@ def train_stage1_simple():
     ckpt_path = save_dir / 'best_model.pth'
     if ckpt_path.exists():
         print(f"🔄 Riprendo il training dal checkpoint: {ckpt_path}")
-        model.load_state_dict(torch.load(ckpt_path))
+        model.load_state_dict(torch.load(ckpt_path, map_location=device))
     else:
         print("🚀 Nessun checkpoint trovato, inizio da zero.")
 
@@ -171,8 +173,7 @@ def train_stage1_simple():
         {'params': head_params, 'lr': lr}
     ], weight_decay=1e-4)
     
-    scaler = GradScaler('cuda')
-    
+    scaler = GradScaler(enabled=use_cuda)
     # Loss: BCEWithLogitsLoss pesata
     # SHB è molto sparso (tanti 0). Diamo più peso ai pixel con folla (1).
     pos_weight_val = float(config['TRAIN_STAGE1'].get('POS_WEIGHT', 15.0))
@@ -198,7 +199,7 @@ def train_stage1_simple():
             
             optimizer.zero_grad()
             
-            with autocast('cuda'):
+            with autocast(device_type="cuda", enabled=use_cuda):
                 # 1. Forward (Standard)
                 outputs = model(images)
                 pi_logits = outputs['pi_logits']

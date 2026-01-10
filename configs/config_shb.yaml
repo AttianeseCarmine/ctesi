@@ -70,7 +70,7 @@ BIN_CENTERS: [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.3, 9.2]
 # TRAINING STAGES
 # ============================================================
 TRAIN_STAGE1:
-  EPOCHS: 400
+  EPOCHS: 600
   BATCH_SIZE: 32
   NUM_WORKERS: 8
   VAL_INTERVAL: 5
@@ -110,7 +110,7 @@ LOSS_STAGE2:
 # STAGE 3: JOINT REFINEMENT (ZIP + CLIP Collaboration)
 # ============================================================
 TRAIN_STAGE3:
-  EPOCHS: 50
+  EPOCHS: 300
   BATCH_SIZE: 4          # Basso perché carichiamo 2 modelli in VRAM
   NUM_WORKERS: 4
   
@@ -132,7 +132,7 @@ EVAL_STAGE3:
   # Parametri per la strategia "Hard" (Divide et Impera)
   PATCH_SIZE: 224        # Dimensione del blocco analizzato
   STRIDE: 224            # 224 = Nessuna sovrapposizione (taglio netto)
-  THRESHOLD: 0.5         # Se prob. presenza < 0.5, il blocco viene ignorato
+  THRESHOLD: 0.3       # Se prob. presenza < 0.5, il blocco viene ignorato
 
 EXP:
   OUT_DIR: "./checkpoints"
