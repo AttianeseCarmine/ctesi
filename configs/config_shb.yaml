@@ -15,43 +15,25 @@ DATA:
   ROOT: "./data/shb/"
   TRAIN_SPLIT: "train"
   VAL_SPLIT: "val"
-  ZIP_BLOCK_SIZE: 16   # <--- CORRETTO: Riportato a 16 per matchare CLIP
-  
-  CROP_SIZE: 448
-  CROP_SCALE: [0.4, 2.0]
-
-  CROP_SIZE_STAGE1: 448
-  CROP_SCALE_STAGE1: [0.4, 2.0]
-
-  CROP_SIZE_STAGE2: 448
-  CROP_SCALE_STAGE2: [1, 2.0]
-  
+  # CLIP-EBC usa standard ImageNet mean/std per RN50
   NORM_MEAN: [0.485, 0.456, 0.406]
   NORM_STD: [0.229, 0.224, 0.225]
-  
+  CROP_SIZE: 448
+  CROP_SCALE: [0.5, 2.0] # Scale ufficiale
   IMG_EXTS: [".jpg", ".png"]
-  MIN_GT_COUNT: 0
-  MAX_ATTEMPTS: 10
 
 # ============================================================
-# MODEL ARCHITECTURE
+# MODEL: CLIP RN50 (ResNet50)
 # ============================================================
-BACKBONE:
-  TYPE: "resnet50" # O "vgg16_bn" a seconda di cosa supporta il tuo codice models.py
-  PRETRAINED: True
-  FREEZE_BN: False
-
-ZIP_HEAD:
-  HIDDEN_DIM: 256
-
 CLIP_EBC_HEAD:
-  CLIP_MODEL: "RN50"
+  CLIP_MODEL: "RN50"       # ResNet50
   PRETRAINED: "openai"
-  PROMPT_TYPE: "word"
-  WINDOW_SIZE: 16 # Match con ZIP_BLOCK_SIZE
+  PROMPT_TYPE: "word"      # Usa "one", "two", "three"...
+  WINDOW_SIZE: 16          # Finestra di attenzione
+  REDUCTION: 16            # RN50 riduce di 32x, ma con dilation diventa 16x
 
-# --- CONFIGURAZIONE BIN PER SHB (Sparso ma sicuro) ---
-# Usiamo 8 bin per gestire meglio la varianza anche su SHB
+# BIN UFFICIALI PER SHANGHAITECH (Estratti da configs/reduction_16.json)
+# Nota: [start, end] inclusivi.
 BINS:
   - [0, 0]
   - [1, 1]
@@ -59,12 +41,12 @@ BINS:
   - [3, 3]
   - [4, 4]
   - [5, 5]
-  - [6, 7]      
-  - [8, 9999]   
-
+  - [6, 7]
+  - [8, 9999] # L'ultimo bin cattura tutto il resto
 NUM_BINS: 8
-# Centri calcolati per SHB
-BIN_CENTERS: [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.3, 9.2] 
+
+# 👇 AGGIUNGI QUESTA RIGA FONDAMENTALE 👇
+BIN_CENTERS: [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.314, 9.233]
 
 # ============================================================
 # TRAINING STAGES
@@ -78,50 +60,53 @@ TRAIN_STAGE1:
   LR_BACKBONE: 1.0e-5
   LR_HEAD: 5.0e-4
   WEIGHT_DECAY: 1.0e-4
-  POS_WEIGHT: 3 # Ripristinato a 15 (Standard sicuro per training mask)
+  POS_WEIGHT: 1
 
 EVAL_STAGE1:
   THRESHOLD: 0.3
-
+# ============================================================
+# TRAINING (Stage 2)
+# ============================================================
 TRAIN_STAGE2:
-  BATCH_SIZE: 32
+  TOTAL_EPOCHS: 1000       # Il paper dice 300-500
+  BATCH_SIZE: 16          # 16 o 32 a seconda della VRAM
   NUM_WORKERS: 8
-  TOTAL_EPOCHS: 1500 # Va bene
-  EVAL_START: 0
-  EVAL_FREQ: 5
+  EVAL_FREQ: 1
+  
+  # Strategia Learning Rate Ufficiale
   OPTIMIZER: "adamw"
-  LR: 1.0e-4       # <--- LR Standard per Stage 2
-  LR_BACKBONE: 1.0e-5
-  LR_HEAD: 1.0e-4
+  LR_BACKBONE: 1.0e-5     # Basso per CLIP Visual Encoder
+  LR_HEAD: 1.0e-4         # Alto per il Decoder
   WEIGHT_DECAY: 1.0e-4
-  CLIP_MAX_NORM: 0.1
+  WARMUP_EPOCHS: 5        # FONDAMENTALE!
+  
   AMP: true
-  CLIP_GRAD_NORM: 1.0
+  CLIP_GRAD_NORM: 10.0    # Il repo ufficiale usa 10.0, non 1.0
 
 LOSS_STAGE2:
   TYPE: "dace"
-  WEIGHT_COUNT_LOSS: 10.0
-  COUNT_LOSS: "mse"
+  WEIGHT_COUNT_LOSS: 1.0  # Peso per MAE loss ausiliaria
+  COUNT_LOSS: "dmcount"   # Usa DM Count (OT Based)
   WEIGHT_OT: 0.1
   WEIGHT_TV: 0.01
   LABEL_SMOOTHING: 0.0
-
 # ============================================================
 # STAGE 3: JOINT REFINEMENT (ZIP + CLIP Collaboration)
 # ============================================================
 TRAIN_STAGE3:
-  EPOCHS: 300
-  BATCH_SIZE: 4          # Basso perché carichiamo 2 modelli in VRAM
+  EPOCHS: 400            # Ridotto da 300: è un fine-tuning, non serve tantissimo
+  BATCH_SIZE: 4
   NUM_WORKERS: 4
-  
-  # Optimizer params (Learning Rate molto basso per non rovinare CLIP)
-  LR: 1.0e-5             
+
+  # Learning Rates differenziati (Strategia Partial Unfreeze)
+  LR: 1.0e-5        # Per ZIP Head e CLIP Decoder (normale)
+  LR_BACKBONE: 1.0e-6    # MOLTO BASSO! Per non distruggere le feature pre-addestrate
   WEIGHT_DECAY: 1.0e-4
   
   # Pesi della Loss Congiunta
-  LAMBDA_ZIP: 1.0        # Peso maschera binaria
-  LAMBDA_CLIP: 1.0       # Peso classificazione EBC
-  LAMBDA_COUNT: 10.0     # Peso errore conteggio finale (L1)
+  LAMBDA_ZIP: 0.1        # <--- MODIFICA: Abbassato da 1.0 a 0.1 (Mantieni struttura, non forzare)
+  LAMBDA_CLIP: 1.0       # Peso pieno per la regressione di densità
+  LAMBDA_COUNT: 1.0      # <--- MODIFICA: Abbassato da 10.0 (Troppa enfasi sul count totale causa overfitting)
 
   # PERCORSI DEI PESI PRE-ADDESTRATI (Fondamentale!)
   # Sostituisci con i percorsi reali dei tuoi .pth migliori

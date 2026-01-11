@@ -15,6 +15,9 @@ data/*
 *.out
 *.cpython-3*
 *.pyo
+*.err   
+*.out
+*.pyc
 logs_pipeline/stage1.log
 logs_pipeline/stage2.log
 logs_pipeline/stage3.log
@@ -11783,3 +11786,10 @@ training_stage3_sha.log
 training_stage3_shb.log
 models/__pycache__/clip_ebc_model.cpython-312.pyc
 models/__pycache__/zip_model.cpython-312.pyc
+.nfs00000001447f8772000064ae
+logs/stage1_147334_shb.err
+logs/stage1_147338_shb.err
+logs/stage1_147342.err
+logs/stage1_147347.err
+logs/stage2_147355_sha.err
+models/__pycache__/clip_ebc_model.cpython-312.pyc

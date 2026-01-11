@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 """
-Train Stage 3: ZIP-CLIP Joint Fine-Tuning (FIXED & FINAL)
-=========================================================
-Fix del bug "Generator Consumed" nell'Optimizer.
-Ora i parametri vengono passati correttamente come liste persistenti.
+Train Stage 3: ZIP-CLIP Joint Fine-Tuning (FINAL CORRECTED)
+===========================================================
+Strategia: P2R-ZIP Style (Soft Gating + Partial Unfreeze).
+Usa le classi originali del tuo progetto (ZIPModel, CLIPEBCModel).
 """
 
 import os
-import sys
 import yaml
 import argparse
 import torch
@@ -16,76 +15,70 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from torch.optim import AdamW
 from torch.amp import GradScaler, autocast
-from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 from tqdm import tqdm
 
-# Aggiungi path corrente
-sys.path.append(os.getcwd())
-
-# --- IMPORTAZIONI MODELLI ---
+# --- IMPORT MODELLI CORRETTI ---
 from models.joint_model import ZIPCLIPJointModel
 from models.clip_ebc_model import CLIPEBCModel
-from models.backbone import build_backbone
-from models.pi_head import ZIPHead
-from losses.joint_loss import JointLoss
+from models.zip_model import ZIPModel  # <--- USIAMO QUESTA! Esiste già nel tuo progetto.
 from losses.clip_ebc_loss import CLIPEBCLoss 
+from losses.zip_nll import ZIPNLLLoss
 from datasets.sha import SHA
 from datasets.transforms import build_transforms
-from eval_patchwise import patchwise_count
-
-# --- CLASSE WRAPPER SICURA ---
-class SafeZIPModel(nn.Module):
-    """Assicura compatibilità chiavi (pi_logits)."""
-    def __init__(self, config):
-        super().__init__()
-        self.backbone = build_backbone(config)
-        
-        if hasattr(self.backbone, 'out_channels'):
-            in_channels = self.backbone.out_channels
-        else:
-            with torch.no_grad():
-                dummy = torch.zeros(1, 3, 256, 256)
-                in_channels = self.backbone(dummy).shape[1]
-
-        zip_cfg = config.get('ZIP_HEAD', {})
-        hidden_dim = zip_cfg.get('HIDDEN_DIM', 256)
-        self.pi_head = ZIPHead(in_channels=in_channels, hidden_dim=hidden_dim)
-
-    def forward(self, x):
-        features = self.backbone(x)
-        out = self.pi_head(features)
-        
-        if isinstance(out, dict):
-            if 'pi_logits' in out: return out
-            # Adattatori per chiavi diverse
-            if 'logit_pi' in out: out['pi_logits'] = out['logit_pi']
-            elif 'logits' in out: out['pi_logits'] = out['logits']
-            else: out['pi_logits'] = list(out.values())[0]
-            return out
-        return {'pi_logits': out}
 
 # ==============================================================================
-# UTILITIES
+# UTILS
 # ==============================================================================
-def smart_load_state_dict(model, checkpoint_path, device):
-    if not os.path.exists(checkpoint_path):
-        print(f"⚠️  Checkpoint non trovato: {checkpoint_path}")
-        return False
+def freeze_parameters(model, mode="p2r_style"):
+    """
+    Congela i parametri per il fine-tuning delicato.
+    """
+    print("\n🔒 Freezing Strategy: P2R-ZIP Style")
+    
+    # 1. Congela TUTTO inizialmente
+    for param in model.parameters():
+        param.requires_grad = False
 
-    print(f"📂 Loading: {checkpoint_path}")
-    ckpt = torch.load(checkpoint_path, map_location=device)
-    state_dict = ckpt['model'] if isinstance(ckpt, dict) and 'model' in ckpt else ckpt
+    trainable_params = []
 
-    new_state_dict = {}
-    for k, v in state_dict.items():
-        name = k.replace('module.', '')
-        if 'clip_model_full' in name:
-            name = name.replace('clip_model_full', 'clip_model')
-        new_state_dict[name] = v
+    # --- A. Sblocca ALIGNER (Fondamentale per allineare le feature) ---
+    for p in model.mask_aligner.parameters():
+        p.requires_grad = True
+    trainable_params.append({'params': model.mask_aligner.parameters(), 'lr_mult': 10.0}) # LR alto
+    print("   ✅ Aligner: Unfrozen")
 
-    model.load_state_dict(new_state_dict, strict=False)
-    print("   ✅ Weights loaded.")
-    return True
+    # --- B. Sblocca ZIP HEAD (Stage 1 Head) ---
+    # zip_head è dentro model.stage1 (che è un ZIPModel)
+    for p in model.stage1.zip_head.parameters():
+        p.requires_grad = True
+    trainable_params.append({'params': model.stage1.zip_head.parameters(), 'lr_mult': 1.0})
+    print("   ✅ ZIP Head: Unfrozen")
+
+    # --- C. Sblocca CLIP DECODER (Stage 2 Head) ---
+    # Nel CLIPEBCModel, le parti allenabili sono image_decoder, projection, ecc.
+    # Il backbone (visual_encoder) resta congelato o sbloccato parzialmente.
+    clip_model = model.stage2
+    
+    # Sblocca Decoder e Proiezione
+    for module_name in ['image_decoder', 'projection', 'logit_scale']:
+        if hasattr(clip_model, module_name):
+            mod = getattr(clip_model, module_name)
+            if isinstance(mod, torch.Tensor): # logit_scale a volte è un parametro diretto
+                mod.requires_grad = True
+                trainable_params.append({'params': [mod], 'lr_mult': 1.0})
+            else:
+                for p in mod.parameters():
+                    p.requires_grad = True
+                trainable_params.append({'params': mod.parameters(), 'lr_mult': 1.0})
+            print(f"   ✅ CLIP {module_name}: Unfrozen")
+
+    # --- D. Backbone (Opzionale: Partial Unfreeze) ---
+    # P2R suggerisce di sbloccare solo gli ultimissimi layer del backbone se necessario.
+    # Per ora lo lasciamo congelato per stabilità, dato che SHA è piccolo.
+    print("   🔒 Backbones: Frozen (Safety for small datasets)")
+    
+    return trainable_params
 
 def crowd_collate(batch):
     batch = [b for b in batch if b is not None]
@@ -94,211 +87,163 @@ def crowd_collate(batch):
         'image': torch.stack([item['image'] for item in batch]),
         'density': torch.stack([item['density'] for item in batch]),
         'points': [item['points'] for item in batch],
-        'img_path': [item['img_path'] for item in batch]
     }
-
-def validate_sliding_window(model, loader, device, window_size=448, stride=448):
-    model.eval()
-    mae_sum = 0
-    count = 0
-    
-    with torch.no_grad():
-        for batch in tqdm(loader, desc="Validation", leave=False):
-            if batch is None: continue
-            img_full = batch['image'].to(device)
-            gt_points = len(batch['points'][0])
-            B, C, H, W = img_full.shape
-            
-            density_map = torch.zeros((H, W), device=device)
-            count_map = torch.zeros((H, W), device=device)
-            
-            for y in range(0, H, stride):
-                for x in range(0, W, stride):
-                    y_end = min(y + window_size, H)
-                    x_end = min(x + window_size, W)
-                    y_start = max(y_end - window_size, 0)
-                    x_start = max(x_end - window_size, 0)
-                    
-                    crop = img_full[:, :, y_start:y_end, x_start:x_end]
-                    out = model(crop)
-                    crop_d = out['final_density'] if isinstance(out, dict) else out
-                    
-                    if crop_d.shape[-2:] != crop.shape[-2:]:
-                        crop_d = F.interpolate(crop_d, size=crop.shape[-2:], mode='bilinear', align_corners=False)
-                    
-                    density_map[y_start:y_end, x_start:x_end] += crop_d.squeeze()
-                    count_map[y_start:y_end, x_start:x_end] += 1.0
-            
-            final_pred = (density_map / count_map).sum().item()
-            mae_sum += abs(final_pred - gt_points)
-            count += 1
-            
-    return mae_sum / count
 
 # ==============================================================================
 # MAIN
 # ==============================================================================
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--config', type=str, default="configs/config_shb.yaml")
-    parser.add_argument('--s1', type=str, required=True)
-    parser.add_argument('--s2', type=str, required=True)
-    parser.add_argument('--out', type=str, default="checkpoints/shb/stage3_final")
-    parser.add_argument('--epochs', type=int, default=None) 
+    parser.add_argument('--config', type=str, default="configs/config_sha.yaml")
+    parser.add_argument('--s1', type=str, required=True, help="Path best model Stage 1")
+    parser.add_argument('--s2', type=str, required=True, help="Path best model Stage 2")
+    parser.add_argument('--out', type=str, default="checkpoints/sha/stage3_final")
     parser.add_argument('--gpu', type=int, default=0)
     args = parser.parse_args()
     
     device = torch.device(f'cuda:{args.gpu}')
     os.makedirs(args.out, exist_ok=True)
     
-    print(f"🔧 Config: {args.config} | GPU: {args.gpu}")
     with open(args.config, 'r') as f: config = yaml.safe_load(f)
+
+
+    base_lr = config['TRAIN_STAGE3']['LR']
+    zip_w = config['TRAIN_STAGE3']['LAMBDA_ZIP']  # Basso per mantenere struttura
+    clip_w = config['TRAIN_STAGE3']['LAMBDA_CLIP']  # Alto per precisione conteggio
     
-    t3_conf = config.get('TRAIN_STAGE3', {})
-    epochs = args.epochs if args.epochs is not None else t3_conf.get('EPOCHS', 50)
+    print(f"🚀 Stage 3 Joint Training | Config: {args.config}")
     
-    # Parametri
-    l_zip = float(t3_conf.get('LAMBDA_ZIP', 1.0))
-    l_clip = float(t3_conf.get('LAMBDA_CLIP', 1.0))
-    l_count = float(t3_conf.get('LAMBDA_COUNT', 100.0))
-    lr_base = float(t3_conf.get('LR', 1e-5))
-    lr_clip = float(t3_conf.get('LR_CLIP', 1e-6))
-    lr_aligner = float(t3_conf.get('LR_ALIGNER', 1e-4))
-    wd = float(t3_conf.get('WEIGHT_DECAY', 1e-4))
+    # --- 1. CARICAMENTO MODELLI ---
+    print("📦 Loading Models...")
+    
+    # Stage 1: ZIPModel (Usa la classe dal file zip_model.py)
+    stage1 = ZIPModel(config).to(device)
+    ckpt1 = torch.load(args.s1, map_location=device)
+    stage1.load_state_dict(ckpt1['model'] if 'model' in ckpt1 else ckpt1, strict=False)
+    print("   -> Stage 1 Loaded")
 
-    print(f"⚙️  PARAMS: Ep={epochs} | LR_Aligner={lr_aligner} | L_Count={l_count}")
-
-    # --- 1. BUILD MODELS ---
-    # Gestione VGG/ResNet mismatch nel config
-    if config['BACKBONE']['TYPE'] == 'vgg16_bn':
-        print("      ⚠️ Config VGG rilevato. Se usi checkpoint ResNet, questo verrà gestito.")
-        # Non forziamo qui, lasciamo che Smart Load provi a caricare
-        
-    stage1_full = SafeZIPModel(config).to(device)
-    smart_load_state_dict(stage1_full, args.s1, device)
-
-    # Forziamo Decoder 2048 per Stage 2
+    # Stage 2: CLIPEBCModel (Usa la classe dal file clip_ebc_model.py)
+    # Forziamo parametri se necessario
     if 'CLIP_EBC_HEAD' not in config: config['CLIP_EBC_HEAD'] = {}
     config['CLIP_EBC_HEAD']['DECODER_DIM'] = 2048 
     
-    stage2_model = CLIPEBCModel(config).to(device)
-    smart_load_state_dict(stage2_model, args.s2, device)
+    stage2 = CLIPEBCModel(config).to(device)
+    ckpt2 = torch.load(args.s2, map_location=device)
+    stage2.load_state_dict(ckpt2['model'] if 'model' in ckpt2 else ckpt2, strict=False)
+    print("   -> Stage 2 Loaded")
 
-    # Joint Model
-    model = ZIPCLIPJointModel(stage1_full, stage2_model, steepness=10.0).to(device)
+    # Joint Model (Wrapper)
+    # Iniziamo con steepness=1.0 per Soft Gating
+    model = ZIPCLIPJointModel(stage1, stage2, steepness=1.0).to(device)
+
+    # --- 2. OPTIMIZER & FREEZING ---
+    # Ottimizziamo solo le teste e l'aligner
+    optim_groups = freeze_parameters(model)
     
-    # --- 2. OPTIMIZER (CORRETTO) ---
-    print("🔓 Sblocco parametri e creazione gruppi...")
-    for param in model.parameters():
-        param.requires_grad = True
+    # Costruiamo lista piatta per l'optimizer
+    final_groups = []
+    for g in optim_groups:
+        final_groups.append({'params': g['params'], 'lr': base_lr * g['lr_mult']})
 
-    # [FIX] Usiamo list() per consumare i generatori e renderli liste vere
-    p_aligner = list(model.mask_aligner.parameters()) if hasattr(model, 'mask_aligner') else []
-    p_stage1 = list(model.stage1.parameters())
-    p_stage2 = list(model.stage2.parameters())
+    optimizer = AdamW(final_groups, weight_decay=1e-4)
+    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
+    scaler = GradScaler('cuda')
 
-    optimizer_grouped_parameters = [
-        {'params': p_aligner, 'lr': lr_aligner},
-        {'params': p_stage1, 'lr': lr_base},
-        {'params': p_stage2, 'lr': lr_clip}
-    ]
-    # Filtriamo i gruppi vuoti basandoci sulle liste
-    optimizer_grouped_parameters = [g for g in optimizer_grouped_parameters if len(g['params']) > 0]
-
-    optimizer = AdamW(optimizer_grouped_parameters, weight_decay=wd)
-    scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=2)
-    scaler = GradScaler('cuda', enabled=True)
-
-    # --- 3. LOSS & DATA ---
-    crop_size = config['DATA'].get('CROP_SIZE', 448)
-    reduction = config['CLIP_EBC_HEAD'].get('REDUCTION', 16)
-
+    # --- 3. LOSSES ---
     clip_loss_fn = CLIPEBCLoss(
         bins=config['BINS'],
-        input_size=crop_size,
-        reduction=reduction,
-        weight_ot=0.1,
-        weight_tv=0.01
+        input_size=config['DATA']['CROP_SIZE'],
+        reduction=config['CLIP_EBC_HEAD']['REDUCTION'], # Spesso 16 o 8
+        weight_ot=0.1, weight_tv=0.01, weight_count=1.0
     ).to(device)
     
-    criterion = JointLoss(
-        clip_loss_fn=clip_loss_fn,
-        lambda_zip=l_zip,
-        lambda_clip=l_clip,
-        lambda_count=l_count
-    ).to(device)
-    
+    # ZIP Loss: BCE semplice sulla maschera è più stabile della NLL in questa fase
+    zip_loss_fn = nn.BCEWithLogitsLoss()
+
+    # --- 4. DATA ---
     train_ds = SHA(config['DATA']['ROOT'], 'train', build_transforms(config['DATA'], True))
     val_ds = SHA(config['DATA']['ROOT'], 'val', build_transforms(config['DATA'], False))
     
-    train_loader = DataLoader(train_ds, batch_size=t3_conf.get('BATCH_SIZE', 4), shuffle=True, num_workers=4, collate_fn=crowd_collate, drop_last=True)
-    val_loader = DataLoader(val_ds, batch_size=1, shuffle=False, num_workers=2, collate_fn=crowd_collate)
-    
-    # --- 4. TRAIN LOOP ---
+    train_loader = DataLoader(train_ds, batch_size=4, shuffle=True, num_workers=4, collate_fn=crowd_collate, drop_last=True)
+    val_loader = DataLoader(val_ds, batch_size=1, shuffle=False, num_workers=4, collate_fn=crowd_collate)
+
+    # --- 5. LOOP ---
     best_mae = float('inf')
-    print("🚀 Inizio Training Stage 3...")
-    
-    for epoch in range(epochs):
+    epochs = config['TRAIN_STAGE3']['EPOCHS']
+    for epoch in range(epochs): # 100 Epoche bastano per fine-tuning
         model.train()
-        pbar = tqdm(train_loader, desc=f"Ep {epoch+1}/{epochs}")
+        model.steepness = 1.0 # Soft Gating in training
+        
+        pbar = tqdm(train_loader, desc=f"Ep {epoch}")
+        epoch_loss = 0
         
         for batch in pbar:
             if batch is None: continue
-            
-            images = batch['image'].to(device)
+            imgs = batch['image'].to(device)
             gt_density = batch['density'].to(device)
-            points = [p.to(device) for p in batch['points']] 
+            points = [p.to(device) for p in batch['points']]
             
             optimizer.zero_grad()
             
-            with autocast('cuda', enabled=True):
-                outputs = model(images)
+            with autocast('cuda'):
+                # Forward Joint
+                out = model(imgs) 
                 
-                # Maschera ZIP Target
-                out_h, out_w = outputs['pi_logits'].shape[-2:]
-                if gt_density.shape[-1] != out_w:
-                     gt_resized = F.interpolate(gt_density, size=(out_h, out_w), mode='bilinear', align_corners=False)
-                     scale = (gt_density.shape[-1] / out_w)**2
-                     gt_resized = gt_resized * scale
-                else:
-                     gt_resized = gt_density
-                mask_gt = (gt_resized > 0.001).float()
+                # A. Loss CLIP (Density)
+                # Usa 'final_density' che è già filtrata dal gating
+                l_clip, _ = clip_loss_fn(
+                    out['ebc_logits'], 
+                    out['final_density'], 
+                    gt_density, 
+                    points
+                )
                 
-                targets = {
-                    'mask': mask_gt,
-                    'density': gt_density,
-                    'points': points,
-                    'counts': gt_resized # Uso la density ridimensionata come count proxy
-                }
+                # B. Loss ZIP (Mask maintenance)
+                # Creiamo target binario ridimensionato
+                pi_logits = out['pi_logits']
+                h, w = pi_logits.shape[-2:]
+                gt_resized = F.interpolate(gt_density, size=(h, w), mode='bilinear')
+                # Scala per conservare la somma approssimativa (density/area)
+                gt_resized = gt_resized * ((gt_density.shape[-1]/w)**2)
+                mask_target = (gt_resized > 0.001).float()
                 
-                loss, loss_dict = criterion(outputs, targets)
-            
+                l_zip = zip_loss_fn(pi_logits, mask_target)
+                
+                # Totale
+                loss = (clip_w * l_clip) + (zip_w * l_zip)
+
             scaler.scale(loss).backward()
-            
-            # [FIX EXTRA] Unscale prima di clip e step per sicurezza
-            scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            
             scaler.step(optimizer)
             scaler.update()
             
-            l_cnt = loss_dict.get('l_count', loss_dict.get('l_final', 0.0))
-            pbar.set_postfix({'L': f"{loss.item():.2f}", 'Count': f"{l_cnt:.2f}"})
+            epoch_loss += loss.item()
+            pbar.set_postfix({'L': f"{loss.item():.2f}", 'L_ZIP': f"{l_zip.item():.2f}"})
+
+        # --- VALIDATION ---
+        model.eval()
+        model.steepness = 20.0 # Hard Gating in validation (Pulisce tutto il background)
         
-        scheduler.step()
+        val_mae = 0
+        with torch.no_grad():
+            for batch in val_loader:
+                imgs = batch['image'].to(device)
+                points = batch['points']
+                out = model(imgs)
+                
+                # Somma della mappa finale
+                pred = out['final_density'].sum().item()
+                gt = len(points[0])
+                val_mae += abs(pred - gt)
+                
+        val_mae /= len(val_loader)
+        scheduler.step(val_mae)
         
-        # Validation
-        val_mae = validate_sliding_window(model, val_loader, device)
-        print(f"📊 Ep {epoch+1} | Val MAE: {val_mae:.2f} (Best: {best_mae:.2f})")
+        print(f"📊 Val MAE: {val_mae:.2f} (Best: {best_mae:.2f})")
         
         if val_mae < best_mae:
             best_mae = val_mae
-            torch.save({
-                'epoch': epoch,
-                'model': model.state_dict(),
-                'mae': best_mae
-            }, os.path.join(args.out, "best_model.pth"))
-            print("🌟 Saved Best!")
+            torch.save(model.state_dict(), os.path.join(args.out, "best_model.pth"))
+            print("🌟 Saved Best")
 
 if __name__ == "__main__":
     main()

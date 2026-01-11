@@ -1,20 +1,43 @@
 #!/usr/bin/env python3
+"""
+Train Stage 2: CLIP-EBC Official Replica
+"""
 import os
 import yaml
 import argparse
-from pathlib import Path
+import math
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch.utils.data import DataLoader
+from torch.optim import AdamW
 from torch.amp import GradScaler, autocast
-from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 from tqdm import tqdm
 
 from models.clip_ebc_model import CLIPEBCModel
-from datasets.sha import SHA
+from datasets.sha import SHA # O SHB, assicurati di usare la classe giusta
 from datasets.transforms import build_transforms
-from losses.clip_ebc_loss import CLIPEBCLoss, DACELoss
+from losses.clip_ebc_loss import DACELoss
+
+# --- SCHEDULER UFFICIALE (Warmup + Cosine) ---
+def adjust_learning_rate(optimizer, epoch, args):
+    """Decay the learning rate based on schedule"""
+    lr = args['lr_head']
+    # Warmup
+    if epoch < args['warmup_epochs']:
+        lr_ratio = (epoch + 1) / (args['warmup_epochs'] + 1e-8)
+    else:
+        # Cosine Decay
+        progress = (epoch - args['warmup_epochs']) / (args['epochs'] - args['warmup_epochs'])
+        lr_ratio = 0.5 * (1. + math.cos(math.pi * progress))
+    
+    # Applica i learning rate differenziati
+    for param_group in optimizer.param_groups:
+        if "backbone" in param_group['name']:
+            param_group['lr'] = args['lr_backbone'] * lr_ratio
+        else:
+            param_group['lr'] = args['lr_head'] * lr_ratio
+            
+    return optimizer.param_groups[0]['lr']
 
 def crowd_collate(batch):
     batch = [b for b in batch if b is not None]
@@ -23,143 +46,128 @@ def crowd_collate(batch):
         'image': torch.stack([item['image'] for item in batch]),
         'density': torch.stack([item['density'] for item in batch]),
         'points': [item['points'] for item in batch],
-        'img_path': [item['img_path'] for item in batch]
     }
-
-@torch.no_grad()
-def evaluate(model, val_loader, device):
-    model.eval()
-    mae = 0
-    num_images = 0
-    for batch in tqdm(val_loader, desc="Evaluating"):
-        if batch is None: continue
-        images = batch['image'].to(device)
-        points = batch['points']
-        outputs = model(images)
-        pred_counts = outputs['final_count']
-        for i, pts in enumerate(points):
-            mae += abs(pred_counts[i].item() - len(pts))
-            num_images += 1
-    return {'mae': mae / num_images if num_images > 0 else 0}
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--config', type=str, required=True)
+    parser.add_argument('--config', type=str, default="configs/config_sha.yaml")
     parser.add_argument('--gpu', type=int, default=0)
-    args = parser.parse_args()
+    parser.add_argument('--out_dir', type=str, default="checkpoints/sha/stage2")
+    cmd_args = parser.parse_args()
+
+    device = torch.device(f'cuda:{cmd_args.gpu}')
+    os.makedirs(cmd_args.out_dir, exist_ok=True)
     
-    with open(args.config, 'r') as f: config = yaml.safe_load(f)
-    device = torch.device(f'cuda:{args.gpu}')
-    
-    # --- PATH DINAMICI ---
-    dataset_name = config.get('DATASET', 'unknown')
-    base_out_dir = config.get('EXP', {}).get('OUT_DIR', './checkpoints')
-    out_dir = Path(base_out_dir) / dataset_name / 'stage2'
-    out_dir.mkdir(parents=True, exist_ok=True)
-    
-    print(f"🚀 Stage 2 Training | Dataset: {dataset_name}")
-    print(f"📂 Saving to: {out_dir}")
-    
+    with open(cmd_args.config, 'r') as f: config = yaml.safe_load(f)
+    print(f"🚀 Training Stage 2 on {config['DATASET']} (Official Replica)")
+
+    # 1. Model
     model = CLIPEBCModel(config).to(device)
+
+    # 2. Optimizer Groups (Split Backbone vs Head)
+    backbone_params = []
+    head_params = []
     
-    # =========================================================================
-    # CARICAMENTO AUTOMATICO STAGE 1 (QUESTO MANCAVA NELLA TUA VERSIONE!)
-    # =========================================================================
-    if config['TRAIN_STAGE2'].get('PRETRAINED_STAGE1', False):
-        path_cfg = config['TRAIN_STAGE2'].get('STAGE1_PATH', 'auto')
-        
-        if path_cfg == 'auto':
-            stage1_ckpt = Path(base_out_dir) / dataset_name / 'stage1' / 'best_model.pth'
+    # Identifica i parametri del backbone (visual_encoder di CLIP)
+    for name, param in model.named_parameters():
+        if "visual_encoder" in name or "clip_model" in name:
+            backbone_params.append(param)
         else:
-            stage1_ckpt = Path(path_cfg)
+            head_params.append(param) # Decoder, Projections, Logit Scale
             
-        if stage1_ckpt.exists():
-            print(f"🔄 Loading Stage 1 from: {stage1_ckpt}")
-            ckpt = torch.load(stage1_ckpt, map_location=device)
-            state_dict = ckpt if 'model' not in ckpt else ckpt['model']
-            # strict=False è essenziale perché Stage 2 ha più teste di Stage 1
-            model.load_state_dict(state_dict, strict=False)
-            print("✅ Weights loaded successfully.")
-        else:
-            print(f"⚠️ Warning: Stage 1 checkpoint not found at {stage1_ckpt}")
-            print("   Training will start from random weights (Not recommended for ZIP-CLIP).")
-    # =========================================================================
-    
-    # Dataset e Training (Standard)
+    optimizer = AdamW([
+        {'params': backbone_params, 'lr': config['TRAIN_STAGE2']['LR_BACKBONE'], 'name': 'backbone'},
+        {'params': head_params, 'lr': config['TRAIN_STAGE2']['LR_HEAD'], 'name': 'head'}
+    ], weight_decay=config['TRAIN_STAGE2']['WEIGHT_DECAY'])
+
+    scaler = GradScaler('cuda', enabled=config['TRAIN_STAGE2']['AMP'])
+
+    # 3. Loss
+    criterion = DACELoss(
+        bins=config['BINS'],
+        reduction=config['CLIP_EBC_HEAD']['REDUCTION'],
+        weight_count=config['LOSS_STAGE2']['WEIGHT_COUNT_LOSS'],
+        weight_ot=config['LOSS_STAGE2']['WEIGHT_OT'],
+        weight_tv=config['LOSS_STAGE2']['WEIGHT_TV']
+    ).to(device)
+
+    # 4. Data
+    # Nota: Assicurati che SHA/SHB dataset carichi i dati correttamente
     train_ds = SHA(config['DATA']['ROOT'], 'train', build_transforms(config['DATA'], True))
     val_ds = SHA(config['DATA']['ROOT'], 'val', build_transforms(config['DATA'], False))
     
     train_loader = DataLoader(train_ds, batch_size=config['TRAIN_STAGE2']['BATCH_SIZE'], 
-                              shuffle=True, num_workers=8, collate_fn=crowd_collate, drop_last=True)
-    val_loader = DataLoader(val_ds, batch_size=1, shuffle=False, 
-                            num_workers=2, collate_fn=crowd_collate)
-    
-    loss_cfg = config.get('LOSS_STAGE2', {})
-    criterion = DACELoss(config['BINS'], config['BIN_CENTERS'], 
-                         weight_count=loss_cfg.get('WEIGHT_COUNT_LOSS', 1.0),
-                         label_smoothing=loss_cfg.get('LABEL_SMOOTHING', 0.0)).to(device)
-    
-    optimizer = torch.optim.AdamW(model.parameters(), lr=float(config['TRAIN_STAGE2']['LR']), weight_decay=1e-4)
-    scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=2)
-    scaler = GradScaler('cuda', enabled=config['TRAIN_STAGE2'].get('AMP', True))
-    
-    best_mae = float('inf')
-    
-    resume_ckpt = out_dir / 'last_model.pth'
-    start_epoch = 0
-    if resume_ckpt.exists():
-        print(f"🔄 Resuming training from: {resume_ckpt}")
-        checkpoint = torch.load(resume_ckpt, map_location=device)
-        model.load_state_dict(checkpoint['model'])
-        
-        # Usa .get() per sicurezza se il file è vecchio
-        if 'optimizer_state_dict' in checkpoint:
-            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        if 'scheduler_state_dict' in checkpoint:
-            scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
-            
-        start_epoch = checkpoint['epoch'] + 1
-        print(f"✅ Resumed from epoch {start_epoch}")
+                              shuffle=True, num_workers=config['TRAIN_STAGE2']['NUM_WORKERS'], 
+                              collate_fn=crowd_collate, drop_last=True)
+    val_loader = DataLoader(val_ds, batch_size=1, shuffle=False, num_workers=4, collate_fn=crowd_collate)
 
-    for epoch in range(start_epoch, config['TRAIN_STAGE2']['TOTAL_EPOCHS']):
+    # Scheduler Args
+    sched_args = {
+        'lr_head': config['TRAIN_STAGE2']['LR_HEAD'],
+        'lr_backbone': config['TRAIN_STAGE2']['LR_BACKBONE'],
+        'epochs': config['TRAIN_STAGE2']['TOTAL_EPOCHS'],
+        'warmup_epochs': config['TRAIN_STAGE2']['WARMUP_EPOCHS']
+    }
+
+    best_mae = float('inf')
+
+    # --- TRAIN LOOP ---
+    for epoch in range(config['TRAIN_STAGE2']['TOTAL_EPOCHS']):
+        # Adjust LR
+        curr_lr = adjust_learning_rate(optimizer, epoch, sched_args)
+        
         model.train()
-        pbar = tqdm(train_loader, desc=f"Ep {epoch}")
+        pbar = tqdm(train_loader, desc=f"Ep {epoch+1} | LR {curr_lr:.2e}")
+        
+        loss_avg = 0
         
         for batch in pbar:
             if batch is None: continue
             images = batch['image'].to(device)
-            density = batch['density'].to(device)
-            points = batch['points']
-            
+            gt_density = batch['density'].to(device)
+            points = batch['points'] # Lista di tensori
+
             optimizer.zero_grad()
-            with autocast('cuda', enabled=config['TRAIN_STAGE2'].get('AMP', True)):
-                outputs = model(images)
-                loss, metrics = criterion(outputs, density, points)
+            
+            with autocast('cuda', enabled=config['TRAIN_STAGE2']['AMP']):
+                out = model(images)
+                # out['ebc_logits'] -> [B, N_bins, H, W]
+                # out['ebc_density'] -> [B, 1, H, W]
                 
+                loss, loss_dict = criterion(out['ebc_logits'], out['ebc_density'], gt_density, points)
+            
             scaler.scale(loss).backward()
+            
+            # Gradient Clipping (Importante per CLIP)
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), config['TRAIN_STAGE2']['CLIP_GRAD_NORM'])
+            
             scaler.step(optimizer)
             scaler.update()
             
-            pbar.set_postfix({'mae': f"{metrics['mae']:.1f}"})
-        
-        scheduler.step()
-        
-        if epoch % config['TRAIN_STAGE2']['EVAL_FREQ'] == 0:
-            val_metrics = evaluate(model, val_loader, device)
-            print(f"📊 Val MAE: {val_metrics['mae']:.2f}")
-            
-            if val_metrics['mae'] < best_mae:
-                best_mae = val_metrics['mae']
-                torch.save({'epoch': epoch, 'model': model.state_dict(), 'best_model': best_mae}, out_dir / 'best_model.pth')
-                print("🌟 Saved Best")
+            loss_avg += loss.item()
+            pbar.set_postfix({'Loss': f"{loss.item():.2f}"})
 
-            
-            torch.save({
-                'epoch': epoch, 
-                'model': model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(), # <--- AGGIUNTO
-                'scheduler_state_dict': scheduler.state_dict(), # <--- AGGIUNTO
-            }, out_dir / 'last_model.pth')
+        # --- VALIDATION ---
+        model.eval()
+        val_mae = 0
+        with torch.no_grad():
+            for batch in val_loader:
+                img = batch['image'].to(device)
+                gt_count = len(batch['points'][0])
+                
+                out = model(img)
+                pred_count = out['final_count'].item() # CLIP-EBC restituisce final_count nel dict
+                
+                val_mae += abs(pred_count - gt_count)
+        
+        val_mae /= len(val_loader)
+        print(f"📊 Ep {epoch+1} | Val MAE: {val_mae:.2f} (Best: {best_mae:.2f})")
+        
+        if val_mae < best_mae:
+            best_mae = val_mae
+            torch.save(model.state_dict(), os.path.join(cmd_args.out_dir, "best_model.pth"))
+            print("🌟 Saved Best Model")
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

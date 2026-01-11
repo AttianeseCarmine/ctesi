@@ -15,57 +15,38 @@ DATA:
   ROOT: "./data/sha/"
   TRAIN_SPLIT: "train"
   VAL_SPLIT: "val"
-  ZIP_BLOCK_SIZE: 16
-  
+  # CLIP-EBC usa standard ImageNet mean/std per RN50
+  NORM_MEAN: [0.485, 0.456, 0.406]
+  NORM_STD: [0.229, 0.224, 0.225]
   CROP_SIZE: 448
-  CROP_SCALE: [0.4, 2.0]
-
-  CROP_SIZE_STAGE1: 448
-  CROP_SCALE_STAGE1: [0.4, 2.0]
-
-  CROP_SIZE_STAGE2: 448
-  CROP_SCALE_STAGE2: [1, 2.0]
-
-  
-  NORM_MEAN: [0.48145466, 0.4578275, 0.40821073]
-  NORM_STD: [0.26862954, 0.26130258, 0.27577711]
-  
+  CROP_SCALE: [0.5, 2.0]
   IMG_EXTS: [".jpg", ".png"]
-  MIN_GT_COUNT: 0
-  MAX_ATTEMPTS: 10
 
 # ============================================================
-# MODEL ARCHITECTURE
+# MODEL: CLIP RN50 (ResNet50)
 # ============================================================
-BACKBONE:
-  TYPE: "vgg16_bn"
-  PRETRAINED: True
-  FREEZE_BN: False
-
-ZIP_HEAD:
-  HIDDEN_DIM: 256
-
 CLIP_EBC_HEAD:
-  CLIP_MODEL: "RN50"
+  CLIP_MODEL: "RN50"       # ResNet50
   PRETRAINED: "openai"
-  PROMPT_TYPE: "word"
-  WINDOW_SIZE: 16
+  PROMPT_TYPE: "word"      # Usa "one", "two", "three"...
+  WINDOW_SIZE: 16          # Finestra di attenzione
+  REDUCTION: 16            # RN50 riduce di 32x, ma con dilation diventa 16x
 
-# --- CONFIGURAZIONE BIN ORIGINALE (8 Bins) ---
-# Nuovi Bins per SHA
+# BIN UFFICIALI PER SHANGHAITECH (Estratti da configs/reduction_16.json)
+# Nota: [start, end] inclusivi.
 BINS:
   - [0, 0]
   - [1, 1]
   - [2, 2]
-  - [3, 4]
-  - [5, 7]
-  - [8, 12]
-  - [13, 20]
-  - [21, 9999] # Bin "Ultra Denso"
+  - [3, 3]
+  - [4, 4]
+  - [5, 5]
+  - [6, 7]      
+  - [8, 9999]   
 
 NUM_BINS: 8
-# Centri approssimativi per questi range
-BIN_CENTERS: [0.0, 1.0, 2.0, 3.5, 6.0, 10.0, 16.5, 45.0]
+
+BIN_CENTERS: [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.5, 12.0]
 
 
 # ============================================================
@@ -83,38 +64,42 @@ TRAIN_STAGE1:
   POS_WEIGHT: 1
 
 EVAL_STAGE1:
-  THRESHOLD: 0.15
-
+  THRESHOLD: 0.3
+# ============================================================
+# TRAINING (Stage 2)
+# ============================================================
 TRAIN_STAGE2:
-  BATCH_SIZE: 8
+  TOTAL_EPOCHS: 1000       # Il paper dice 300-500
+  BATCH_SIZE: 16          # 16 o 32 a seconda della VRAM
   NUM_WORKERS: 8
-  TOTAL_EPOCHS: 1500
-  EVAL_START: 0
-  EVAL_FREQ: 5
+  EVAL_FREQ: 10
+  
+  # Strategia Learning Rate Ufficiale
   OPTIMIZER: "adamw"
-  LR: 1.0e-4      
-  LR_BACKBONE: 1.0e-5
-  LR_HEAD: 1.0e-4
-  WEIGHT_DECAY: 0.0
-  CLIP_MAX_NORM: 0.1
+  LR_BACKBONE: 1.0e-5     # Basso per CLIP Visual Encoder
+  LR_HEAD: 1.0e-4         # Alto per il Decoder
+  WEIGHT_DECAY: 5.0e-4
+  WARMUP_EPOCHS: 5        # FONDAMENTALE!
+  
   AMP: true
-  CLIP_GRAD_NORM: 1.0
+  CLIP_GRAD_NORM: 10.0    # Il repo ufficiale usa 10.0, non 1.0
 
 LOSS_STAGE2:
   TYPE: "dace"
-  WEIGHT_COUNT_LOSS: 1.0
-  COUNT_LOSS: "dmcount"
+  WEIGHT_COUNT_LOSS: 1.0  # Peso per MAE loss ausiliaria
+  COUNT_LOSS: "dmcount"   # Usa DM Count (OT Based)
   WEIGHT_OT: 0.1
   WEIGHT_TV: 0.01
-  LABEL_SMOOTHING: 0.0 # Ripristinato a 0.0
+  LABEL_SMOOTHING: 0.0
 
 TRAIN_STAGE3:
-  EPOCHS: 50
+  EPOCHS: 400
   BATCH_SIZE: 4          # Basso perché carichiamo 2 modelli in VRAM
   NUM_WORKERS: 4
   
   # Optimizer params (Learning Rate molto basso per non rovinare CLIP)
-  LR: 1.0e-5             
+  #LR: 1.0e-5             
+  LR: 5.0e-5              # Sperimentale leggermente più alto
   WEIGHT_DECAY: 1.0e-4
   
   # Pesi della Loss Congiunta

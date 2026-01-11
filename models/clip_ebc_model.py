@@ -288,5 +288,5 @@ class CLIPEBCModel(nn.Module):
             'ebc_density': density,
             'ebc_logits': logits,
             'bin_probs': prob,
-            'final_count': final_count  # <--- Chiave mancante aggiunta!
+            'final_count': final_count  
         }

@@ -109,7 +109,7 @@ def evaluate(model, loader, device):
 # =============================================================================
 def train_stage1_simple():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--config', type=str, default='configs/config_shb.yaml')
+    parser.add_argument('--config', type=str, default='configs/config_sha.yaml')
     parser.add_argument('--gpu', type=int, default=0)
     args = parser.parse_args()
     
