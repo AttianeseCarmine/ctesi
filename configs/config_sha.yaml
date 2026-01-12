@@ -22,11 +22,16 @@ DATA:
   CROP_SCALE: [0.5, 2.0]
   IMG_EXTS: [".jpg", ".png"]
 
+# Modifica per Stage 1 (ZIP)
+BACKBONE:
+  TYPE: "vgg16_bn"       # <--- Usa VGG16 con Batch Norm
+  PRETRAINED: True
+  FREEZE_BN: True
 # ============================================================
 # MODEL: CLIP RN50 (ResNet50)
 # ============================================================
 CLIP_EBC_HEAD:
-  CLIP_MODEL: "RN50"       # ResNet50
+  CLIP_MODEL: "ViT-B/16"       # ResNet50
   PRETRAINED: "openai"
   PROMPT_TYPE: "word"      # Usa "one", "two", "three"...
   WINDOW_SIZE: 16          # Finestra di attenzione
@@ -41,12 +46,17 @@ BINS:
   - [3, 3]
   - [4, 4]
   - [5, 5]
-  - [6, 7]      
-  - [8, 9999]   
+  - [6, 7]
+  - [8, 10]
+  - [11, 15]
+  - [16, 25]
+  - [26, 40]
+  - [41, 9999]  # Bin "Overflow" molto più alto
 
-NUM_BINS: 8
+NUM_BINS: 12
 
-BIN_CENTERS: [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.5, 12.0]
+# Centri calcolati (media del range o valore rappresentativo)
+BIN_CENTERS: [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.5, 9.0, 13.0, 20.5, 33.0, 55.0]
 
 
 # ============================================================
@@ -69,20 +79,19 @@ EVAL_STAGE1:
 # TRAINING (Stage 2)
 # ============================================================
 TRAIN_STAGE2:
-  TOTAL_EPOCHS: 1000       # Il paper dice 300-500
+  TOTAL_EPOCHS: 1500       # Il paper dice 300-500
   BATCH_SIZE: 16          # 16 o 32 a seconda della VRAM
   NUM_WORKERS: 8
   EVAL_FREQ: 10
   
   # Strategia Learning Rate Ufficiale
   OPTIMIZER: "adamw"
-  LR_BACKBONE: 1.0e-5     # Basso per CLIP Visual Encoder
-  LR_HEAD: 1.0e-4         # Alto per il Decoder
-  WEIGHT_DECAY: 5.0e-4
+  LR_BACKBONE: 5.0e-6     # Abbassa LR del backbone (ViT è delicato)
+  LR_HEAD: 1.0e-4
+  WEIGHT_DECAY: 1.0e-4
   WARMUP_EPOCHS: 5        # FONDAMENTALE!
-  
   AMP: true
-  CLIP_GRAD_NORM: 10.0    # Il repo ufficiale usa 10.0, non 1.0
+  CLIP_GRAD_NORM: 1.0     # 10.0 è aggressivo, prova 1.0 per stabilità   # Il repo ufficiale usa 10.0, non 1.0
 
 LOSS_STAGE2:
   TYPE: "dace"
@@ -99,14 +108,22 @@ TRAIN_STAGE3:
   
   # Optimizer params (Learning Rate molto basso per non rovinare CLIP)
   #LR: 1.0e-5             
-  LR: 5.0e-5              # Sperimentale leggermente più alto
+  LR: 1.0e-5           # Sperimentale leggermente più alto
   WEIGHT_DECAY: 1.0e-4
   
-  # Pesi della Loss Congiunta
-  LAMBDA_ZIP: 1.0        # Peso maschera binaria
-  LAMBDA_CLIP: 1.0       # Peso classificazione EBC
-  LAMBDA_COUNT: 10.0     # Peso errore conteggio finale (L1)
-
+  # Pesi della Loss (Bilanciamento corretto)
+  LAMBDA_ZIP: 0.5         # Riduci peso ZIP per non soffocare CLIP
+  LAMBDA_CLIP: 1.0        # Peso principale
+  LAMBDA_COUNT: 0.1       # <--- CRITICO: Abbassa da 10.0 a 0.1
+  ZIP_STEPS: 1
+  CLIP_STEPS: 1
+  LR_ZIP: 1.0e-5
+  LR_CLIP: 1.0e-5
+  AMP: true
+  CLIP_GRAD_NORM: 1.0
+  LOG_EVERY: 50
+  MASK_THR: 0.5
+  MASK_EPS: 0.001
   # PERCORSI DEI PESI PRE-ADDESTRATI (Fondamentale!)
   # Sostituisci con i percorsi reali dei tuoi .pth migliori
   CHECKPOINT_STAGE1: "checkpoints/sha/stage1/best_model.pth" 

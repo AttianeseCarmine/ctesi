@@ -100,7 +100,7 @@ def build_backbone(config):
 
     print(f"🏗️  Building Backbone: {bk_type} (Pretrained={pretrained})")
 
-    if 'vgg' in bk_type:
+    if 'vgg16' in bk_type:
         return VGG16Backbone(pretrained=pretrained, freeze_bn=freeze_bn)
     elif 'resnet' in bk_type:
         return ResNetBackbone(backbone_name=bk_type, pretrained=pretrained, freeze_bn=freeze_bn)

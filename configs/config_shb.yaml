@@ -22,11 +22,16 @@ DATA:
   CROP_SCALE: [0.5, 2.0] # Scale ufficiale
   IMG_EXTS: [".jpg", ".png"]
 
+# Modifica per Stage 1 (ZIP)
+BACKBONE:
+  TYPE: "vgg16_bn"       # <--- Usa VGG16 con Batch Norm
+  PRETRAINED: True
+  FREEZE_BN: True
 # ============================================================
 # MODEL: CLIP RN50 (ResNet50)
 # ============================================================
 CLIP_EBC_HEAD:
-  CLIP_MODEL: "RN50"       # ResNet50
+  CLIP_MODEL: "ViT-B/16"       # ResNet50
   PRETRAINED: "openai"
   PROMPT_TYPE: "word"      # Usa "one", "two", "three"...
   WINDOW_SIZE: 16          # Finestra di attenzione

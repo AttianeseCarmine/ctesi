@@ -27,7 +27,8 @@ def adjust_learning_rate(optimizer, epoch, args):
         lr_ratio = (epoch + 1) / (args['warmup_epochs'] + 1e-8)
     else:
         # Cosine Decay
-        progress = (epoch - args['warmup_epochs']) / (args['epochs'] - args['warmup_epochs'])
+        den = max(1, args['epochs'] - args['warmup_epochs'])
+        progress = (epoch - args['warmup_epochs']) / den
         lr_ratio = 0.5 * (1. + math.cos(math.pi * progress))
     
     # Applica i learning rate differenziati
@@ -52,11 +53,11 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', type=str, default="configs/config_sha.yaml")
     parser.add_argument('--gpu', type=int, default=0)
-    parser.add_argument('--out_dir', type=str, default="checkpoints/sha/stage2")
+    parser.add_argument('--out', type=str, default="checkpoints/sha/stage2")
     cmd_args = parser.parse_args()
 
     device = torch.device(f'cuda:{cmd_args.gpu}')
-    os.makedirs(cmd_args.out_dir, exist_ok=True)
+    os.makedirs(cmd_args.out, exist_ok=True)
     
     with open(cmd_args.config, 'r') as f: config = yaml.safe_load(f)
     print(f"🚀 Training Stage 2 on {config['DATASET']} (Official Replica)")
@@ -120,20 +121,18 @@ def main():
         pbar = tqdm(train_loader, desc=f"Ep {epoch+1} | LR {curr_lr:.2e}")
         
         loss_avg = 0
-        
+                
         for batch in pbar:
-            if batch is None: continue
+            if batch is None: 
+                continue
             images = batch['image'].to(device)
             gt_density = batch['density'].to(device)
-            points = batch['points'] # Lista di tensori
+            points = [p.to(device) for p in batch['points']]  # ✅ FIX
 
             optimizer.zero_grad()
-            
+
             with autocast('cuda', enabled=config['TRAIN_STAGE2']['AMP']):
                 out = model(images)
-                # out['ebc_logits'] -> [B, N_bins, H, W]
-                # out['ebc_density'] -> [B, 1, H, W]
-                
                 loss, loss_dict = criterion(out['ebc_logits'], out['ebc_density'], gt_density, points)
             
             scaler.scale(loss).backward()
@@ -147,26 +146,44 @@ def main():
             
             loss_avg += loss.item()
             pbar.set_postfix({'Loss': f"{loss.item():.2f}"})
-
-        # --- VALIDATION ---
+    # --- VALIDATION ---
         model.eval()
-        val_mae = 0
+        val_abs = 0.0
+        val_sq = 0.0
+
         with torch.no_grad():
             for batch in val_loader:
+                if batch is None:
+                    continue
+
                 img = batch['image'].to(device)
                 gt_count = len(batch['points'][0])
-                
+
                 out = model(img)
-                pred_count = out['final_count'].item() # CLIP-EBC restituisce final_count nel dict
-                
-                val_mae += abs(pred_count - gt_count)
-        
-        val_mae /= len(val_loader)
-        print(f"📊 Ep {epoch+1} | Val MAE: {val_mae:.2f} (Best: {best_mae:.2f})")
-        
+                pred_count = out['final_count'].item()
+
+                diff = pred_count - gt_count
+                val_abs += abs(diff)
+                val_sq += diff ** 2
+
+        N = len(val_loader)  # batch_size=1 quindi ok
+        val_mae = val_abs / max(1, N)
+        val_rmse = math.sqrt(val_sq / max(1, N))
+
+        print(f"\n📊 Ep {epoch+1} | Val MAE: {val_mae:.2f} | Val RMSE: {val_rmse:.2f} (Best MAE: {best_mae:.2f})")
+
         if val_mae < best_mae:
             best_mae = val_mae
-            torch.save(model.state_dict(), os.path.join(cmd_args.out_dir, "best_model.pth"))
+            torch.save(
+                {
+                    "epoch": epoch,
+                    "model": model.state_dict(),
+                    "mae": best_mae,
+                    "rmse": val_rmse,
+                    "config": config,
+                },
+                os.path.join(cmd_args.out, "best_model.pth")
+            )
             print("🌟 Saved Best Model")
 
 if __name__ == "__main__":

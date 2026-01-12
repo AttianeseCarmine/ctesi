@@ -11793,3 +11793,5 @@ logs/stage1_147342.err
 logs/stage1_147347.err
 logs/stage2_147355_sha.err
 models/__pycache__/clip_ebc_model.cpython-312.pyc
+models/__pycache__/clip_ebc_model.cpython-312.pyc
+visualize/stage1_shb_default.png

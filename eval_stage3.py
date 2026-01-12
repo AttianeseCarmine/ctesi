@@ -1,183 +1,187 @@
 #!/usr/bin/env python3
 """
-Evaluate: Divide et Impera Strategy (Strict Conditional)
-========================================================
-Logica:
-1. Divide l'immagine in blocchi.
-2. Passa ogni blocco in ZIP (Stage 1).
-3. Se Prob(Persone) < Threshold -> Scarta il blocco (Conteggio = 0).
-4. Se Prob(Persone) > Threshold -> Passa a CLIP (Stage 2) -> Somma il conteggio.
+Evaluate Stage 3: Joint Model Evaluation + per-image logging
+============================================================
+Stampa per ogni immagine:
+- conteggio predetto
+- conteggio GT
+- errore assoluto
+- errore percentuale
+
+Supporta sliding window per immagini grandi.
 """
 
 import os
 import yaml
 import argparse
+import math
 import torch
 import torch.nn.functional as F
 from tqdm import tqdm
 from torch.utils.data import DataLoader
 
-# --- IMPORTS ---
 from models.zip_model import ZIPModel
 from models.clip_ebc_model import CLIPEBCModel
-from datasets.sha import SHA
+from models.joint_model import ZIPCLIPJointModel
+from datasets.sha import SHA  # per SHA/SHB nel tuo repo
 from datasets.transforms import build_transforms
 
-def divide_and_conquer_predict(stage1, stage2, image, patch_size=448, stride=448, threshold=0.6, device='cuda'):
-    """
-    Esegue la logica condizionale a blocchi.
-    """
-    stage1.eval()
-    stage2.eval()
-    
-    B, C, H, W = image.shape
-    total_count = 0.0
-    
-    # Statistiche per curiosità
-    blocks_total = 0
-    blocks_processed = 0
-    
-    with torch.no_grad():
-        for y in range(0, H, stride):
-            for x in range(0, W, stride):
-                blocks_total += 1
-                
-                # Calcolo coordinate crop
-                y_end = min(y + patch_size, H)
-                x_end = min(x + patch_size, W)
-                y_start = max(y_end - patch_size, 0)
-                x_start = max(x_end - patch_size, 0)
-                
-                # Estrai Patch
-                patch = image[:, :, y_start:y_end, x_start:x_end].to(device)
-                
-                # --- PASSO 1: IL FILTRO (ZIP) ---
-                zip_out = stage1(patch)
-                
-                # Ottieni probabilità (Gestisce sia output dict che tensore)
-                if isinstance(zip_out, dict):
-                    logits = zip_out.get('pi_logits', zip_out.get('logit_pi'))
-                else:
-                    logits = zip_out
-                
-                # Calcola probabilità massima nel blocco (o media, a scelta)
-                # Se anche solo un pezzetto del blocco ha alta probabilità, lo teniamo.
-                prob_presence = torch.sigmoid(logits).max().item()
-                
-                # --- LA DECISIONE (Thresholding) ---
-                if prob_presence < threshold:
-                    # SCARTA: Non chiamare CLIP, risparmia tempo e riduci FP
-                    continue
-                
-                # --- PASSO 2: IL CONTATORE (CLIP) ---
-                blocks_processed += 1
-                clip_out = stage2(patch)
-                
-                # Ottieni densità
-                density = clip_out['ebc_density'] # [1, 1, h, w]
-                
-                # Somma solo la parte non sovrapposta (logica sliding window base)
-                # Nota: Per semplicità qui sommiamo tutto il patch processato.
-                # Per precisione estrema sui bordi servirebbe un canvas, ma questo rende l'idea.
-                patch_count = density.sum().item()
-                
-                # (Opzionale) Possiamo ri-applicare la maschera locale per pulire i bordi del patch
-                # mask_local = torch.sigmoid(logits)
-                # patch_count = (density * mask_local).sum().item()
-                
-                total_count += patch_count
 
-    return total_count, blocks_processed, blocks_total
+@torch.no_grad()
+def sliding_window_predict_count(model, img_cpu, window_size=448, stride=448, device="cuda", amp=False):
+    """
+    Sliding window che restituisce direttamente il conteggio.
+    Importante: usa divisor_map se stride < window_size (overlap).
+    """
+    model.eval()
+    img = img_cpu.to(device)
+    B, C, H, W = img.shape
+    assert B == 1, "sliding_window_predict_count supporta batch=1"
+
+    count_map = torch.zeros((H, W), device=device)
+    divisor_map = torch.zeros((H, W), device=device)
+
+    for y in range(0, H, stride):
+        for x in range(0, W, stride):
+            y_end = min(y + window_size, H)
+            x_end = min(x + window_size, W)
+            y_start = max(y_end - window_size, 0)
+            x_start = max(x_end - window_size, 0)
+
+            crop = img[:, :, y_start:y_end, x_start:x_end]
+
+            out = model(crop)
+            # densità finale (gated)
+            pred_density = out["final_density"]  # [1,1,h,w]
+
+            # riallinea a crop size per accumulare correttamente
+            pred_density = F.interpolate(
+                pred_density,
+                size=(crop.shape[2], crop.shape[3]),
+                mode="bilinear",
+                align_corners=False
+            )
+
+            count_map[y_start:y_end, x_start:x_end] += pred_density.squeeze(0).squeeze(0)
+            divisor_map[y_start:y_end, x_start:x_end] += 1.0
+
+    final_density = count_map / torch.clamp(divisor_map, min=1.0)
+    return final_density.sum().item()
+
 
 def evaluate(args):
-    # 1. Configurazione
-    with open(args.config, 'r') as f: config = yaml.safe_load(f)
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"🔧 Device: {device} | Dataset: {config['DATASET']}")
+    with open(args.config, "r") as f:
+        config = yaml.safe_load(f)
 
-    # 2. Inizializza i Modelli "Specialisti"
-    print("🏗️  Building Specialist Models...")
-    zip_model = ZIPModel(config).to(device)
-    clip_model = CLIPEBCModel(config).to(device)
-    
-    # 3. Carica i Pesi dal "Joint Model" addestrato
-    # Il file .pth di Stage 3 contiene le chiavi 'stage1.xxx' e 'stage2.xxx'
-    print(f"📥 Loading Checkpoint: {args.checkpoint}")
-    checkpoint = torch.load(args.checkpoint, map_location=device)
-    state_dict = checkpoint['model'] if 'model' in checkpoint else checkpoint
-    
-    # Separa i pesi
-    zip_dict = {k.replace('stage1.', ''): v for k, v in state_dict.items() if k.startswith('stage1.')}
-    clip_dict = {k.replace('stage2.', ''): v for k, v in state_dict.items() if k.startswith('stage2.')}
-    
-    zip_model.load_state_dict(zip_dict, strict=False)
-    clip_model.load_state_dict(clip_dict, strict=False)
-    print("✅ Weights Split & Loaded into ZIP and CLIP models.")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    amp = bool(config.get("TRAIN_STAGE3", {}).get("AMP", False)) and (device.type == "cuda")
 
-    # 4. Dataset
-    val_transforms = build_transforms(config['DATA'], is_train=False) 
-    dataset = SHA(config['DATA']['ROOT'], 'val', val_transforms)
-    loader = DataLoader(dataset, batch_size=1, shuffle=False, num_workers=4)
+    print(f"🔧 Device: {device} | Dataset: {config.get('DATASET', 'N/A')} | AMP={amp}", flush=True)
 
-    # 5. Valutazione
+    # 1) Build joint model
+    stage1 = ZIPModel(config).to(device)
+    stage2 = CLIPEBCModel(config).to(device)
+
+    steep = float(config.get("TRAIN_STAGE3", {}).get("STEEPNESS", 20.0))
+    model = ZIPCLIPJointModel(stage1, stage2, steepness=steep).to(device)
+
+    # 2) Load checkpoint
+    ckpt = torch.load(args.checkpoint, map_location=device)
+    state_dict = ckpt["model"] if isinstance(ckpt, dict) and "model" in ckpt else ckpt
+
+    missing, unexpected = model.load_state_dict(state_dict, strict=False)
+    if missing:
+        print(f"⚠️ Missing keys: {len(missing)} (spesso ok)", flush=True)
+    if unexpected:
+        print(f"⚠️ Unexpected keys: {len(unexpected)}", flush=True)
+
+    model.eval()
+
+    # 3) Dataset/loader
+    dataset_name = str(config.get("DATASET", "sha")).lower()
+    root_dir = config["DATA"]["ROOT"]
+    split = args.split
+
+    val_transforms = build_transforms(config["DATA"], is_train=False)
+
+    if "sha" in dataset_name or "shb" in dataset_name:
+        dataset = SHA(root_dir, split, val_transforms)
+    else:
+        raise ValueError(f"Dataset {dataset_name} non supportato da questo script (per ora).")
+
+    loader = DataLoader(dataset, batch_size=1, shuffle=False, num_workers=args.num_workers)
+
+    # sliding window params
+    crop_size = int(config["DATA"].get("CROP_SIZE", 448))
+    window = int(args.window or crop_size)
+    stride = int(args.stride or window)
+
     mae_accum = 0.0
     mse_accum = 0.0
-    total_skipped = 0
-    total_blocks = 0
-    
-    # Threshold definisce quanto severo è il filtro ZIP
-    # 0.5 è neutro. >0.5 è severo (scarta dubbi). <0.5 è permissivo.
-    CONFIDENCE_THRESHOLD = 0.6
-    
-    print(f"🚀 Starting Divide & Conquer Eval (Threshold: {CONFIDENCE_THRESHOLD})...")
-    
+
+    print(f"🚀 Start eval | split={split} | steepness={steep} | window={window} stride={stride}", flush=True)
+
     pbar = tqdm(loader)
-    for batch in pbar:
-        img = batch['image'] # Non spostare su GPU qui, lo fa la funzione patchwise
-        gt_count = len(batch['points'][0]) 
-        
-        # Esegui la logica a blocchi
-        pred_count, n_proc, n_tot = divide_and_conquer_predict(
-            zip_model, 
-            clip_model, 
-            img, 
-            patch_size=448, 
-            stride=448, # Nessuna sovrapposizione per massima velocità
-            threshold=CONFIDENCE_THRESHOLD, 
-            device=device
-        )
-        
-        # Metriche
-        error = abs(pred_count - gt_count)
-        mae_accum += error
-        mse_accum += error ** 2
-        
-        total_skipped += (n_tot - n_proc)
-        total_blocks += n_tot
-        
-        pbar.set_postfix({
-            'GT': gt_count, 
-            'Pred': f"{pred_count:.1f}", 
-            'Kept': f"{n_proc}/{n_tot}"
-        })
+    for idx, batch in enumerate(pbar):
+        img = batch["image"]          # CPU tensor
+        gt_count = len(batch["points"][0])
 
-    # 6. Risultati Finali
-    final_mae = mae_accum / len(dataset)
-    final_mse = (mse_accum / len(dataset)) ** 0.5
-    skip_rate = (total_skipped / total_blocks) * 100 if total_blocks > 0 else 0
-    
-    print("\n" + "="*50)
-    print(f"🏆 FINAL RESULTS: {config['DATASET'].upper()}")
-    print(f"   Strategy: Divide et Impera (Skip empty blocks)")
-    print(f"   MAE: {final_mae:.2f}")
-    print(f"   MSE: {final_mse:.2f}")
-    print(f"   Efficiency: {skip_rate:.1f}% of blocks were SKIPPED (Pure Background)")
-    print("="*50 + "\n")
+        # pred count: sliding window se molto grande
+        if img.shape[2] > args.max_side or img.shape[3] > args.max_side:
+            pred_count = sliding_window_predict_count(
+                model, img, window_size=window, stride=stride, device=device, amp=amp
+            )
+        else:
+            img_dev = img.to(device)
+            out = model(img_dev)
+            pred_count = out["final_density"].sum().item()
 
-if __name__ == '__main__':
+        err = abs(pred_count - gt_count)
+        mae_accum += err
+        mse_accum += err ** 2
+
+        pct = (err / max(1, gt_count)) * 100.0  # se gt=0 evita divisione per 0 (interpreta come % su 1)
+
+        # nome immagine se disponibile
+        img_name = None
+        if isinstance(batch, dict):
+            img_name = batch.get("img_path", None)
+        if isinstance(img_name, list) and len(img_name) > 0:
+            img_name = img_name[0]
+
+        # stampa dettagli (evita spam)
+        if args.print_every > 0 and (idx % args.print_every == 0):
+            prefix = f"[{idx:05d}]"
+            if img_name:
+                prefix += f" {os.path.basename(str(img_name))}"
+            print(
+                f"{prefix}  pred={pred_count:.2f}  gt={gt_count}  "
+                f"abs_err={err:.2f}  pct_err={pct:.1f}%",
+                flush=True
+            )
+
+        pbar.set_postfix({"MAE": f"{mae_accum/(idx+1):.2f}", "RMSE": f"{math.sqrt(mse_accum/(idx+1)):.2f}"})
+
+    final_mae = mae_accum / max(1, len(dataset))
+    final_rmse = math.sqrt(mse_accum / max(1, len(dataset)))
+
+    print("\n" + "=" * 40)
+    print(f"🏆 FINAL RESULTS: {str(config.get('DATASET','')).upper()} | split={split}")
+    print(f"   MAE:  {final_mae:.2f}")
+    print(f"   RMSE: {final_rmse:.2f}")
+    print("=" * 40 + "\n", flush=True)
+
+
+if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--config', type=str, default="configs/config_shb.yaml")
-    parser.add_argument('--checkpoint', type=str, required=True)
+    parser.add_argument("--config", type=str, default="configs/config_shb.yaml")
+    parser.add_argument("--checkpoint", type=str, required=True, help="Path to stage3 best_model/last_model.pth")
+    parser.add_argument("--split", type=str, default="val", choices=["train", "val", "test"])
+    parser.add_argument("--num_workers", type=int, default=4)
+    parser.add_argument("--max_side", type=int, default=1024, help="Se H o W supera questo, usa sliding window")
+    parser.add_argument("--window", type=int, default=None, help="override window size (default = CROP_SIZE)")
+    parser.add_argument("--stride", type=int, default=None, help="override stride (default = window)")
+    parser.add_argument("--print_every", type=int, default=1, help="stampa una riga ogni N immagini (1=sempre, 0=mai)")
     args = parser.parse_args()
-    
+
     evaluate(args)
