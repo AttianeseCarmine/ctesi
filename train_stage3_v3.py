@@ -79,24 +79,72 @@ def soft_iou(pred: torch.Tensor, gt: torch.Tensor, eps: float = 1e-6):
 # -------------------------
 # Validation (MAE + RMSE) sul conteggio finale
 # -------------------------
+
 @torch.no_grad()
-def validate(model, val_loader, device):
+def sliding_window_predict(model, image, window_size=448, stride=448, device='cuda'):
+    model.eval()
+    B, C, H, W = image.shape
+
+    density_map = torch.zeros((H, W), device=device)
+    count_map = torch.zeros((H, W), device=device)
+
+    for y in range(0, H, stride):
+        for x in range(0, W, stride):
+            y_end = min(y + window_size, H)
+            x_end = min(x + window_size, W)
+
+            y_start = max(y_end - window_size, 0)
+            x_start = max(x_end - window_size, 0)
+
+            crop = image[:, :, y_start:y_end, x_start:x_end].to(device)
+
+            out = model(crop)
+            pred_crop = out['final_density']  # [1,1,h,w]
+
+            density_map[y_start:y_end, x_start:x_end] += pred_crop.squeeze()
+            count_map[y_start:y_end, x_start:x_end] += 1.0
+
+    final_density = density_map / count_map
+    return final_density
+
+@torch.no_grad()
+def validate(model, val_loader, device, window_size=448, stride=448, hard_steepness=20.0):
     model.eval()
     abs_sum, sq_sum, n = 0.0, 0.0, 0
 
-    for batch in val_loader:
+    # forza la stessa steepness dell'eval (salva/ripristina)
+    old_steep = getattr(model, "steepness", None)
+    if old_steep is not None:
+        model.steepness = hard_steepness
+
+    for batch in tqdm(val_loader, desc="Validating", leave=False):
         if batch is None:
             continue
-        img = batch["image"].to(device)
+
+        img = batch["image"]          # resta su CPU come nell'eval
         gt = len(batch["points"][0])
 
-        out = model(img)
-        pred = out["final_density"].sum().item()
+        # stessa politica: se grande -> sliding window
+        if img.shape[2] > 1024 or img.shape[3] > 1024:
+            pred_density = sliding_window_predict(
+                model, img,
+                window_size=window_size, stride=stride,
+                device=device
+            )
+            pred = pred_density.sum().item()
+        else:
+            img = img.to(device)
+            out = model(img)
+            pred = out["final_density"].sum().item()
 
         diff = pred - gt
         abs_sum += abs(diff)
         sq_sum += diff * diff
         n += 1
+
+    # ripristina steepness
+    if old_steep is not None:
+        model.steepness = old_steep
 
     mae = abs_sum / max(1, n)
     rmse = math.sqrt(sq_sum / max(1, n))

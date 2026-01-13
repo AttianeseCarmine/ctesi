@@ -149,7 +149,7 @@ def evaluate(args):
     print("\n" + "="*40)
     print(f"🏆 FINAL RESULTS: {config['DATASET'].upper()}")
     print(f"   MAE: {final_mae:.2f}")
-    print(f"   MSE: {final_mse:.2f}")
+    print(f"   RMSE: {final_mse:.2f}")
     print("="*40 + "\n")
 
 if __name__ == '__main__':
