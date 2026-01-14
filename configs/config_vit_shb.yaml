@@ -53,7 +53,7 @@ BIN_CENTERS: [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0]
 # TRAINING STAGES
 # ============================================================
 TRAIN_STAGE1:
-  EPOCHS: 600
+  EPOCHS: 1000
   BATCH_SIZE: 32
   NUM_WORKERS: 8
   VAL_INTERVAL: 5
