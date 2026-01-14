@@ -15,7 +15,7 @@ DATA:
   ROOT: "./data/sha/"
   TRAIN_SPLIT: "train"
   VAL_SPLIT: "val"
-  # CLIP-EBC usa standard ImageNet mean/std per RN50
+# CLIP Normalization (FONDAMENTALE per Stage 2 e 3)
   NORM_MEAN: [0.48145466, 0.4578275, 0.40821073]
   NORM_STD:  [0.26862954, 0.26130258, 0.27577711]
   CROP_SIZE: 448
