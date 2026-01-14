@@ -19,8 +19,7 @@ from models.joint_model import ZIPCLIPJointModel
 from losses.clip_ebc_loss import CLIPEBCLoss
 
 from datasets.transforms import build_transforms
-from datasets.sha import SHA
-
+from datasets.builder import build_dataset
 
 # -------------------------
 # Collate (coerente coi tuoi train)
@@ -214,8 +213,8 @@ def main():
     scaler = GradScaler("cuda", enabled=amp_enabled)
 
     # data (qui: SHA, ma stessa struttura che usi)
-    train_ds = SHA(config["DATA"]["ROOT"], "train", build_transforms(config["DATA"], True))
-    val_ds = SHA(config["DATA"]["ROOT"], "val", build_transforms(config["DATA"], False))
+    train_ds = build_dataset(config, "train", build_transforms(config["DATA"], True))
+    val_ds = build_dataset(config, "val", build_transforms(config["DATA"], False))
 
     train_loader = DataLoader(
         train_ds, batch_size=bs, shuffle=True, num_workers=num_workers,

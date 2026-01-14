@@ -1,8 +1,4 @@
 # models/clip_ebc_model.py
-# ============================================================
-# CLIP Visual Encoder & EBC Model - VI T 448 FIX
-# ============================================================
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -20,272 +16,199 @@ except ImportError:
 # ============================================================
 # 1. OFFICIAL UTILS
 # ============================================================
-def conv3x3(in_channels: int, out_channels: int, stride: int = 1, groups: int = 1, dilation: int = 1) -> nn.Conv2d:
-    return nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=stride, padding=dilation, groups=groups, bias=False, dilation=dilation)
+def conv3x3(in_channels: int, out_channels: int, stride: int = 1) -> nn.Conv2d:
+    return nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=stride, padding=1, bias=False)
 
 def conv1x1(in_channels: int, out_channels: int, stride: int = 1) -> nn.Conv2d:
     return nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=stride, bias=False)
 
-class Bottleneck(nn.Module):
-    def __init__(self, in_channels: int, out_channels: int, stride: int = 1, groups: int = 1, base_width: int = 64, dilation: int = 1, expansion: int = 4, norm_layer=None):
+class BasicBlock(nn.Module):
+    def __init__(self, in_channels: int, out_channels: int, stride: int = 1):
         super().__init__()
-        if norm_layer is None: norm_layer = nn.BatchNorm2d
-        width = int(out_channels * (base_width / 64.0)) * groups
-        self.expansion = expansion
-        self.conv1 = conv1x1(in_channels, width)
-        self.bn1 = norm_layer(width)
-        self.conv2 = conv3x3(width, width, stride, groups, dilation)
-        self.bn2 = norm_layer(width)
-        self.conv3 = conv1x1(width, out_channels * self.expansion) 
-        self.bn3 = norm_layer(out_channels * self.expansion)
+        self.conv1 = conv3x3(in_channels, out_channels, stride)
+        self.bn1 = nn.BatchNorm2d(out_channels)
         self.relu = nn.ReLU(inplace=True)
+        self.conv2 = conv3x3(out_channels, out_channels)
+        self.bn2 = nn.BatchNorm2d(out_channels)
+        
         self.downsample = nn.Identity()
-        if stride != 1 or in_channels != out_channels * self.expansion:
+        if stride != 1 or in_channels != out_channels:
             self.downsample = nn.Sequential(
-                conv1x1(in_channels, out_channels * self.expansion, stride),
-                norm_layer(out_channels * self.expansion),
+                conv1x1(in_channels, out_channels, stride),
+                nn.BatchNorm2d(out_channels),
             )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        identity = x
-        out = self.conv1(x)
-        out = self.bn1(out)
-        out = self.relu(out)
-        out = self.conv2(out)
-        out = self.bn2(out)
-        out = self.relu(out)
-        out = self.conv3(out)
-        out = self.bn3(out)
-        out += self.downsample(identity)
-        out = self.relu(out)
-        return out
-
-def _init_weights(model: nn.Module) -> None:
-    for m in model.modules():
-        if isinstance(m, nn.Conv2d):
-            nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
-            if m.bias is not None: nn.init.constant_(m.bias, 0.)
-        elif isinstance(m, (nn.BatchNorm2d, nn.GroupNorm)):
-            nn.init.constant_(m.weight, 1.)
-            if m.bias is not None: nn.init.constant_(m.bias, 0.)
-        elif isinstance(m, nn.Linear):
-            nn.init.normal_(m.weight, std=0.01)
-            if m.bias is not None: nn.init.constant_(m.bias, 0.)
-
-def make_resnet_layers(block, cfg, in_channels, dilation=1, expansion=1):
-    layers = []
-    for v in cfg:
-        layers.append(block(in_channels=in_channels, out_channels=v, dilation=dilation, expansion=expansion))
-        in_channels = v * expansion
-    layers = nn.Sequential(*layers)
-    layers.apply(_init_weights)
-    return layers
-
-# ============================================================
-# 2. PROMPT UTILS
-# ============================================================
-NUM_TO_WORD = {
-    "0": "zero", "1": "one", "2": "two", "3": "three", "4": "four", "5": "five", 
-    "6": "six", "7": "seven", "8": "eight", "9": "nine", "10": "ten", 
-    "11": "eleven", "12": "twelve", "13": "thirteen", "14": "fourteen", "15": "fifteen", 
-    "16": "sixteen", "17": "seventeen", "18": "eighteen", "19": "nineteen", 
-    "20": "twenty", "21": "twenty-one", "22": "twenty-two", "23": "twenty-three", 
-    "24": "twenty-four", "25": "twenty-five", "26": "twenty-six", "27": "twenty-seven", 
-    "28": "twenty-eight", "29": "twenty-nine", "30": "thirty", "40": "forty", 
-    "50": "fifty", "60": "sixty", "70": "seventy", "80": "eighty", "90": "ninety",
-    "100": "one hundred"
-}
-
-def num2word(num: Union[int, str]) -> str:
-    num = str(int(num))
-    return NUM_TO_WORD.get(num, num)
-
-def format_count(count: Union[float, Tuple[float, float]], prompt_type: str = "word") -> str:
-    if count == 0 or (isinstance(count, (list, tuple)) and count == [0, 0]):
-        return "There is no person." if prompt_type == "word" else "There is 0 person."
-    elif count == 1 or (isinstance(count, (list, tuple)) and count == [1, 1]):
-        return "There is one person." if prompt_type == "word" else "There is 1 person."
-    elif isinstance(count, (int, float)):
-        val = int(count)
-        word = num2word(val) if prompt_type == "word" else str(val)
-        return f"There are {word} people."
-    elif isinstance(count, (list, tuple)) and (count[1] == float("inf") or count[1] > 999):
-        val = int(count[0])
-        word = num2word(val) if prompt_type == "word" else str(val)
-        return f"There are more than {word} people."
-    else:  
-        left, right = int(count[0]), int(count[1])
-        if left == right:
-            word = num2word(left) if prompt_type == "word" else str(left)
-            return f"There are {word} people."
-        w_left = num2word(left) if prompt_type == "word" else str(left)
-        w_right = num2word(right) if prompt_type == "word" else str(right)
-        return f"There are between {w_left} and {w_right} people."
-
-# ============================================================
-# 3. CLIP VISUAL ENCODER (Con FIX per Risoluzione 448+)
-# ============================================================
-class CLIPVisualEncoder(nn.Module):
-    def __init__(self, model_name="RN50", pretrained="openai", frozen=False, output_layer="layer3"):
-        super().__init__()
-        clip_model, _, _ = open_clip.create_model_and_transforms(model_name, pretrained=pretrained, force_quick_gelu=True)
-        self.visual = clip_model.visual
-        self.output_layer = output_layer
-        
-        if 'RN' in model_name or 'ResNet' in model_name:
-            if output_layer == 'layer2': self.out_channels, self.reduction = 512, 8
-            elif output_layer == 'layer3': self.out_channels, self.reduction = 1024, 16
-            else: self.out_channels, self.reduction = 2048, 32
-        else:
-            self.out_channels = self.visual.transformer.width
-            self.reduction = 16 
-            
-        if frozen:
-            for p in self.visual.parameters(): p.requires_grad = False
-
     def forward(self, x):
-        # --- LOGICA RESNET (Invariata) ---
-        if hasattr(self.visual, 'layer1'): 
-            x = self.visual.conv1(x)
-            x = self.visual.bn1(x)
-            x = F.relu(x)
-            x = self.visual.conv2(x)
-            x = self.visual.bn2(x)
-            x = F.relu(x)
-            x = self.visual.conv3(x)
-            x = self.visual.bn3(x)
-            x = F.relu(x)
-            x = self.visual.avgpool(x)
-            x = self.visual.layer1(x)
-            x = self.visual.layer2(x)
-            if self.output_layer in ['layer3', 'layer4']: x = self.visual.layer3(x)
-            if self.output_layer == 'layer4': x = self.visual.layer4(x)
-            return x
-            
-        # --- LOGICA ViT (CORRETTA PER IMMAGINI RETTANGOLARI) ---
-        else: 
-            # 1. Patch Embedding (Conv2d)
-            x = self.visual.conv1(x)  # [Batch, Width, Grid_H, Grid_W]
-            
-            # CATTURIAMO LE DIMENSIONI DELLA GRIGLIA QUI!
-            B, width, grid_h, grid_w = x.shape 
-            
-            # 2. Flatten
-            x = x.reshape(B, width, -1).permute(0, 2, 1) # [B, L, Width]
-            
-            # 3. Class Token
-            class_embed = self.visual.class_embedding.to(x.dtype) + torch.zeros(B, 1, width, dtype=x.dtype, device=x.device)
-            x = torch.cat([class_embed, x], dim=1) # [B, L+1, Width]
-            
-            # 4. Positional Embedding Interpolation (RECTANGULAR SUPPORT)
-            pos_embed = self.visual.positional_embedding.to(x.dtype)
-            
-            # Se il numero di token non corrisponde (es. img più grande o rettangolare)
-            if x.shape[1] != pos_embed.shape[0]:
-                cls_pos = pos_embed[0:1] # [1, Width]
-                grid_pos = pos_embed[1:] # [Orig_L, Width] (es. 196 per ViT-B/16 su 224x224)
-                
-                # Dimensione originale del grid di pre-training (es. 14x14)
-                orig_size = int(math.sqrt(grid_pos.shape[0]))
-                
-                # Reshape alla griglia quadrata originale
-                grid_pos = grid_pos.reshape(1, orig_size, orig_size, -1).permute(0, 3, 1, 2)
-                
-                # Interpolazione Bilineare alla nuova dimensione REALE (grid_h, grid_w)
-                grid_pos = F.interpolate(
-                    grid_pos, 
-                    size=(grid_h, grid_w), # <--- USA LE DIMENSIONI CATTURATE DALLA CONV
-                    mode='bicubic', 
-                    align_corners=False
-                )
-                
-                # Flatten di nuovo
-                grid_pos = grid_pos.permute(0, 2, 3, 1).reshape(grid_h * grid_w, -1)
-                
-                # Ricostruisce pos_embed
-                pos_embed = torch.cat([cls_pos, grid_pos], dim=0)
-            
-            # 5. Add Position & Transformer
-            x = x + pos_embed
-            x = self.visual.ln_pre(x).permute(1, 0, 2)
-            x = self.visual.transformer(x).permute(1, 0, 2)
-            
-            # 6. Ricostruzione output spaziale
-            # Non usiamo più math.sqrt, abbiamo grid_h e grid_w salvati!
-            return x[:, 1:, :].permute(0, 2, 1).reshape(B, width, grid_h, grid_w)
+        identity = x
+        out = self.relu(self.bn1(self.conv1(x)))
+        out = self.bn2(self.conv2(out))
+        out += self.downsample(identity)
+        return self.relu(out)
 
 # ============================================================
-# 4. CLIP-EBC MODEL (MAIN CLASS)
+# 2. CLIP-EBC MODEL (MAIN CLASS)
 # ============================================================
-
 class CLIPEBCModel(nn.Module):
-    def __init__(self, config: Dict):
+    def __init__(self, config):
         super().__init__()
         ebc_cfg = config.get('CLIP_EBC_HEAD', {})
-        model_name = ebc_cfg.get('CLIP_MODEL', 'RN50')
+        model_name = ebc_cfg.get('CLIP_MODEL', 'ViT-B/16')
         pretrained = ebc_cfg.get('PRETRAINED', 'openai')
-        self.prompt_type = ebc_cfg.get('PROMPT_TYPE', 'word')
         
-        block_size = config.get('DATA', {}).get('ZIP_BLOCK_SIZE', 16)
-        output_layer = 'layer3' if block_size == 16 else 'layer4'
-        self.visual_encoder = CLIPVisualEncoder(model_name, pretrained, frozen=False, output_layer=output_layer)
-        
-        self.clip_model, _, _ = open_clip.create_model_and_transforms(model_name, pretrained=pretrained, force_quick_gelu=True)
+        # 1. Load CLIP
+        print(f"🔄 Loading CLIP model: {model_name} ({pretrained})...")
+        clip_model, _, _ = open_clip.create_model_and_transforms(model_name, pretrained=pretrained)
+        self.visual = clip_model.visual
         self.tokenizer = open_clip.get_tokenizer(model_name)
-        for p in self.clip_model.parameters(): p.requires_grad = False
         
-        self.channels = self.visual_encoder.out_channels
-        self.clip_embed_dim = self.clip_model.text_projection.shape[1]
+        # Freeze CLIP
+        for p in self.visual.parameters(): p.requires_grad = False
+        for p in clip_model.parameters(): p.requires_grad = False
+        self.clip_model = clip_model
+
+        # 2. Setup Dimensions & Hooks
+        if 'RN' in model_name: # ResNet (RN50)
+            self.channels = 2048 # ResNet50 output layer4 channels
+            self.is_vit = False
+            # HOOK: Cattura l'output di layer4 PRIMA che entri in attnpool
+            self._resnet_features = None
+            self.visual.layer4.register_forward_hook(self._hook_fn)
+        else: # ViT
+            self.channels = 768  # ViT-B/16 output
+            self.is_vit = True
+            
+        self.embed_dim = clip_model.text_projection.shape[1] # usually 512
+
+        # 3. Decoder with UPSAMPLE logic for ResNet
+        if self.is_vit:
+            # ViT esce già a 1/16 (28x28), non serve upsample
+            self.decoder = nn.Sequential(
+                BasicBlock(self.channels, 768),
+                BasicBlock(768, 768)
+            )
+            self.channels = 768
+        else:
+            # ResNet esce a 1/32 (14x14). Dobbiamo portarlo a 1/16 (28x28)
+            # Aggiungiamo un Upsample nel decoder
+            self.decoder = nn.Sequential(
+                nn.Conv2d(self.channels, 512, kernel_size=1, bias=False), # Riduci canali 2048->512
+                nn.BatchNorm2d(512),
+                nn.ReLU(inplace=True),
+                nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False), # Upsample 14->28
+                BasicBlock(512, 512) # Raffina le feature
+            )
+            self.channels = 512 # Nuova dimensione canali
+
+        # 4. Projection
+        self.projection = nn.Conv2d(self.channels, self.embed_dim, kernel_size=1)
+        self._init_weights(self.projection)
         
-        if 'RN50' in model_name or 'ResNet50' in model_name:
-            decoder_cfg = [2048]
-            self.image_decoder = make_resnet_layers(Bottleneck, decoder_cfg, in_channels=self.channels, expansion=1)
-            self.channels = decoder_cfg[-1]
-        else:
-            self.image_decoder = nn.Identity()
-
-        if self.channels != self.clip_embed_dim:
-            self.projection = nn.Conv2d(in_channels=self.channels, out_channels=self.clip_embed_dim, kernel_size=1)
-            self.projection.apply(_init_weights)
-        else:
-            self.projection = nn.Identity()
-
-        raw_bins = config.get('BINS', [])
-        self.register_buffer('bin_centers', torch.tensor(config.get('BIN_CENTERS', []), dtype=torch.float32))
-        self.prompts = [format_count(b, self.prompt_type) for b in raw_bins]
-        print(f"✅ Model Aligned. Prompts ({self.prompt_type}): {self.prompts[:3]}...")
-        self._text_embeddings = None
+        # 5. Prompts & Bins
+        bin_centers = config.get('BIN_CENTERS', [])
+        if not bin_centers:
+            # Fallback
+            bin_centers = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0]
+            
+        self.register_buffer('bin_centers', torch.tensor(bin_centers, dtype=torch.float32))
+        self.prompts = [self._fmt_prompt(c) for c in bin_centers]
+        print(f"✅ Bins initialized: {bin_centers}")
+        
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
+        self._txt_embed = None
 
-    @torch.no_grad()
-    def _get_text_features(self, device):
-        if self._text_embeddings is None or self._text_embeddings.device != device:
-            tokens = self.tokenizer(self.prompts).to(device)
-            self._text_embeddings = F.normalize(self.clip_model.encode_text(tokens), dim=-1)
-        return self._text_embeddings
+    def _init_weights(self, m):
+        if isinstance(m, nn.Conv2d):
+            nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+
+    def _fmt_prompt(self, num):
+        if num < 1e-3: return "There is no person."
+        if abs(num - 1.0) < 1e-3: return "There is one person."
+        return f"There are {str(int(num))} people." if num < 9000 else "There is a crowd."
+
+    def get_text_features(self, device):
+        if self._txt_embed is None or self._txt_embed.device != device:
+            tok = self.tokenizer(self.prompts).to(device)
+            self._txt_embed = F.normalize(self.clip_model.encode_text(tok), dim=-1)
+        return self._txt_embed
+
+    # --- HOOK FUNCTION ---
+    def _hook_fn(self, module, input, output):
+        self._resnet_features = output
+
+    def forward_resnet_features(self, x):
+        """
+        Esegue la ResNet con Hook per catturare layer4 (14x14).
+        """
+        try:
+            _ = self.visual(x)
+        except RuntimeError:
+            pass
+            
+        if self._resnet_features is None:
+            raise RuntimeError("Hook failed: features not captured from ResNet layer4")
+            
+        features = self._resnet_features
+        self._resnet_features = None 
+        return features
+
+    def forward_vit_reshaped(self, x):
+        """
+        Logica ViT con interpolazione posizionale.
+        """
+        x = self.visual.conv1(x)  
+        B, C, H, W = x.shape 
+        x = x.reshape(B, C, -1).permute(0, 2, 1) 
+        
+        class_token = self.visual.class_embedding.to(x.dtype) + torch.zeros(B, 1, C, dtype=x.dtype, device=x.device)
+        x = torch.cat([class_token, x], dim=1) 
+        
+        pos_embed = self.visual.positional_embedding.to(x.dtype)
+        if x.shape[1] != pos_embed.shape[0]:
+            cls_pos = pos_embed[0:1] 
+            grid_pos = pos_embed[1:] 
+            orig_size = int(math.sqrt(grid_pos.shape[0]))
+            
+            grid_pos = grid_pos.reshape(1, orig_size, orig_size, -1).permute(0, 3, 1, 2)
+            grid_pos = F.interpolate(grid_pos, size=(H, W), mode='bicubic', align_corners=False)
+            grid_pos = grid_pos.permute(0, 2, 3, 1).reshape(-1, C)
+            
+            pos_embed = torch.cat([cls_pos, grid_pos], dim=0)
+
+        x = x + pos_embed
+        x = self.visual.ln_pre(x)
+        x = x.permute(1, 0, 2)
+        x = self.visual.transformer(x)
+        x = x.permute(1, 0, 2)
+        
+        x = x[:, 1:, :] 
+        x = x.permute(0, 2, 1).reshape(B, C, H, W)
+        return x
 
     def forward(self, x):
-        B = x.shape[0]
-        img_feat = self.visual_encoder(x)
-        img_feat = self.image_decoder(img_feat)
-        img_feat = self.projection(img_feat)
+        # 1. Extract Features
+        if self.is_vit:
+            img_feat = self.forward_vit_reshaped(x)
+        else:
+            img_feat = self.forward_resnet_features(x) # Output 14x14
+            
+        # 2. Decode & Project (Upsample avviene qui dentro per ResNet)
+        img_feat = self.decoder(img_feat) # Output diventa 28x28
+        img_feat = self.projection(img_feat) 
         
-        img_feat = img_feat.permute(0, 2, 3, 1)
-        img_feat = F.normalize(img_feat, p=2, dim=-1)
+        # 3. Similarity
+        txt_feat = self.get_text_features(x.device) 
+        img_feat = F.normalize(img_feat, dim=1)
         
-        txt_feat = self._get_text_features(x.device)
-        
-        logit_scale = self.logit_scale.exp()
-        logits = logit_scale * torch.matmul(img_feat, txt_feat.t())
-        logits = logits.permute(0, 3, 1, 2)
-        
+        logits = torch.einsum('bchw,nc->bnhw', img_feat, txt_feat) * self.logit_scale.exp()
         prob = F.softmax(logits, dim=1)
+        
+        # 4. Density & Count
         density = (prob * self.bin_centers.view(1, -1, 1, 1)).sum(dim=1, keepdim=True)
-        final_count = density.sum(dim=[1, 2, 3])
+        final_count = density.sum(dim=(1, 2, 3))
         
         return {
             'ebc_density': density,
             'ebc_logits': logits,
             'bin_probs': prob,
-            'final_count': final_count  
+            'final_count': final_count
         }

@@ -6,7 +6,7 @@ from .joint_model import ZIPCLIPJointModel
 
 __all__ = [
     'VGG16Backbone', 
-    'ResNetBackbone'
+    'ResNetBackbone',
     'ZIPHead', 
     'build_zip_head',
     'CLIPEBCModel',

@@ -130,7 +130,7 @@ def train_stage1_simple():
     print("Using device:", device)
     
     # Setup
-    dataset_name = config.get('DATASET', 'sha')
+    dataset_name = config.get('RUN_NAME', 'sha')
     save_dir = Path('./checkpoints') / dataset_name / 'stage1'
     save_dir.mkdir(parents=True, exist_ok=True)
     

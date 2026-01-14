@@ -14,7 +14,7 @@ from torch.amp import GradScaler, autocast
 from tqdm import tqdm
 
 from models.clip_ebc_model import CLIPEBCModel
-from datasets.sha import SHA # O SHB, assicurati di usare la classe giusta
+from datasets.builder import build_dataset
 from datasets.transforms import build_transforms
 from losses.clip_ebc_loss import DACELoss
 
@@ -93,9 +93,8 @@ def main():
     ).to(device)
 
     # 4. Data
-    # Nota: Assicurati che SHA/SHB dataset carichi i dati correttamente
-    train_ds = SHA(config['DATA']['ROOT'], 'train', build_transforms(config['DATA'], True))
-    val_ds = SHA(config['DATA']['ROOT'], 'val', build_transforms(config['DATA'], False))
+    train_ds = build_dataset(config, 'train', build_transforms(config['DATA'], True))
+    val_ds = build_dataset(config, 'val', build_transforms(config['DATA'], False))
     
     train_loader = DataLoader(train_ds, batch_size=config['TRAIN_STAGE2']['BATCH_SIZE'], 
                               shuffle=True, num_workers=config['TRAIN_STAGE2']['NUM_WORKERS'], 
