@@ -1,18 +1,15 @@
-# P2R_ZIP/datasets/base_dataset.py
 import torch
 from torch.utils.data import Dataset
-from torchvision.transforms import functional as TF
 import numpy as np
-import cv2
 from PIL import Image 
 
 class BaseCrowdDataset(Dataset):
-    def __init__(self, root, split, transforms=None, block_size=16):
+    def __init__(self, root, split, transforms=None):
         self.root = root
         self.split = split
         self.transforms = transforms 
-        self.block_size = block_size
         self.image_list = self.get_image_list(split)
+        
         if not self.image_list:
              raise FileNotFoundError(f"Nessuna immagine trovata per split '{split}' in root '{root}'")
 
@@ -21,68 +18,46 @@ class BaseCrowdDataset(Dataset):
 
     def __getitem__(self, i):
         img_path = self.image_list[i]
-        pts = self.load_points(img_path) 
-        img = self.load_image(img_path) 
         
-        den_np = self.points_to_density_numpy(pts, img.size[::-1]) # Passa (h, w)
-
-        img_tensor, pts_transformed, den_tensor = None, pts, None # Default
+        # 1. Carica Immagine e Punti
+        img = Image.open(img_path).convert("RGB")
+        pts = self.load_points(img_path) 
+        
+        # 2. Applica Trasformazioni (Simil-CLIP)
+        # Nota: Qui non passiamo densità alle trasformazioni, la generiamo DOPO 
+        # per essere sicuri che corrisponda ai punti trasformati.
         if self.transforms:
-            img_transformed, pts_transformed, den_np_transformed = self.transforms(img, pts, den_np)
-            
-            if not isinstance(img_transformed, torch.Tensor):
-                 raise TypeError("Le trasformazioni devono restituire un Tensor per l'immagine")
-            img_tensor = img_transformed
-            
-            if den_np_transformed is not None:
-                if isinstance(den_np_transformed, torch.Tensor):
-                    den_tensor = den_np_transformed
-                else: 
-                    den_tensor = torch.from_numpy(den_np_transformed).unsqueeze(0)
-            else: 
-                 h, w = img_tensor.shape[1:]
-                 den_tensor = self.points_to_density_tensor(pts_transformed, (h, w))
-                 
-            pts_tensor = torch.from_numpy(pts_transformed) if pts_transformed is not None and len(pts_transformed) > 0 else torch.zeros((0,2), dtype=torch.float32)
-
+            img_tensor, pts_transformed, _ = self.transforms(img, pts, None)
         else:
-             img_tensor = TF.to_tensor(img)
-             den_tensor = torch.from_numpy(den_np).unsqueeze(0)
-             pts_tensor = torch.from_numpy(pts) if pts is not None and len(pts) > 0 else torch.zeros((0,2), dtype=torch.float32)
+            img_tensor = img
+            pts_transformed = pts
+
+        # 3. Genera Densità Sparsa (Target per ZIP) dai punti trasformati
+        # ZIP richiede una mappa con 1 dove c'è la testa.
+        h, w = img_tensor.shape[1], img_tensor.shape[2]
+        den_tensor = self.points_to_sparse_density(pts_transformed, h, w)
 
         return {
             "image": img_tensor,
-            "points": pts_tensor, 
+            "points": torch.from_numpy(pts_transformed).float() if pts_transformed is not None else torch.zeros((0, 2)),
             "density": den_tensor,
             "img_path": img_path,
         }
 
-    def get_image_list(self, split):
-        raise NotImplementedError("Implementa in subclass")
-
-    def load_points(self, img_path):
-        raise NotImplementedError("Implementa in subclass") 
-
-    def load_image(self, img_path):
-        img = Image.open(img_path).convert("RGB")
-        return img
-
-    def points_to_density_numpy(self, points, shape):
-        h, w = shape
-        den = np.zeros((h, w), dtype=np.float32)
-        if points is not None:
-             for x, y in points:
-                x, y = int(x), int(y)
-                if 0 <= y < h and 0 <= x < w:
-                    den[y, x] = 1.0 
-        return den
-        
-    def points_to_density_tensor(self, points, shape):
-        h, w = shape
+    def points_to_sparse_density(self, points, h, w):
+        """Crea mappa densità sparsa (ZIP style)"""
         den = torch.zeros((1, h, w), dtype=torch.float32)
-        if points is not None:
-             for x, y in points: 
-                x, y = int(x), int(y)
+        if points is not None and len(points) > 0:
+            # Arrotonda coordinate
+            pts_long = np.round(points).astype(int)
+            for pt in pts_long:
+                x, y = pt[0], pt[1]
                 if 0 <= y < h and 0 <= x < w:
                     den[0, y, x] = 1.0
         return den
+
+    def get_image_list(self, split):
+        raise NotImplementedError
+    
+    def load_points(self, img_path):
+        raise NotImplementedError
