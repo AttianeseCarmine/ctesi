@@ -38,7 +38,7 @@ echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
 python -c "import torch; print('torch', torch.__version__); print('cuda_available', torch.cuda.is_available()); print('torch_cuda', torch.version.cuda)"
 nvidia-smi
 
-srun python train_stage1.py --config configs/config_sha.yaml --out checkpoints/sha/stage1
+#srun python train_stage1.py --config configs/config_sha.yaml --out checkpoints/sha/stage1
 
 srun python train_stage2.py --config configs/config_sha.yaml  --out checkpoints/sha/stage2 
 
