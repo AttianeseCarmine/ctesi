@@ -1,0 +1,119 @@
+BACKBONE:
+  FREEZE_BN: true
+  PRETRAINED: true
+  TYPE: resnet50
+BINS:
+- - -0.1
+  - 0.5
+- - 0.5
+  - 1.5
+- - 1.5
+  - 2.5
+- - 2.5
+  - 3.5
+- - 3.5
+  - 4.5
+- - 4.5
+  - 5.5
+- - 5.5
+  - 6.5
+- - 6.5
+  - 9999
+BIN_CENTERS:
+- 0.0
+- 1.0
+- 2.0
+- 3.0
+- 4.0
+- 5.0
+- 6.0
+- 8.0
+CLIP_EBC_HEAD:
+  CLIP_MODEL: RN50
+  PRETRAINED: openai
+  PROMPT_TYPE: word
+  REDUCTION: 16
+  WINDOW_SIZE: 16
+DATA:
+  CROP_SCALE:
+  - 0.5
+  - 2.0
+  CROP_SIZE: 448
+  IMG_EXTS:
+  - .jpg
+  - .png
+  NORM_MEAN:
+  - 0.48145466
+  - 0.4578275
+  - 0.40821073
+  NORM_STD:
+  - 0.26862954
+  - 0.26130258
+  - 0.27577711
+  ROOT: ./data/shb/
+  TRAIN_SPLIT: train
+  VAL_SPLIT: val
+DATASET: shb
+DEVICE: cuda
+EVAL_STAGE1:
+  THRESHOLD: 0.3
+EVAL_STAGE3:
+  PATCH_SIZE: 224
+  STRIDE: 224
+  THRESHOLD: 0.5
+EXP:
+  LOG_INTERVAL: 50
+  OUT_DIR: ./checkpoints/shb_res50
+  SAVE_BEST: true
+LOSS_STAGE2:
+  COUNT_LOSS: dmcount
+  LABEL_SMOOTHING: 0.0
+  TYPE: dace
+  WEIGHT_COUNT_LOSS: 1.0
+  WEIGHT_OT: 0.1
+  WEIGHT_TV: 0.01
+NUM_BINS: 8
+RUN_NAME: shb_res50
+SEED: 42
+TRAIN_STAGE1:
+  BATCH_SIZE: 32
+  EPOCHS: 600
+  LR_BACKBONE: 1.0e-05
+  LR_HEAD: 0.0005
+  NUM_WORKERS: 8
+  OPTIMIZER: adamw
+  POS_WEIGHT: 1
+  VAL_INTERVAL: 5
+  WEIGHT_DECAY: 0.0001
+TRAIN_STAGE2:
+  AMP: true
+  BATCH_SIZE: 16
+  CLIP_GRAD_NORM: 1.0
+  EVAL_FREQ: 10
+  LR_BACKBONE: 1.0e-05
+  LR_HEAD: 0.0001
+  NUM_WORKERS: 8
+  OPTIMIZER: adamw
+  TOTAL_EPOCHS: 1500
+  WARMUP_EPOCHS: 5
+  WEIGHT_DECAY: 0.0001
+TRAIN_STAGE3:
+  AMP: true
+  BATCH_SIZE: 4
+  CHECKPOINT_STAGE1: checkpoints/shb_res50/stage1/best_model.pth
+  CHECKPOINT_STAGE2: checkpoints/shb_res50/stage2/best_model.pth
+  CLIP_GRAD_NORM: 1.0
+  CLIP_STEPS: 1
+  EPOCHS: 400
+  LAMBDA_CLIP: 1.0
+  LAMBDA_COUNT: 0.1
+  LAMBDA_ZIP: 0.5
+  LOG_EVERY: 50
+  LR: 1.0e-05
+  LR_CLIP: 1.0e-05
+  LR_ZIP: 1.0e-05
+  MASK_EPS: 0.001
+  MASK_THR: 0.5
+  NUM_WORKERS: 4
+  WEIGHT_DECAY: 0.0001
+  ZIP_STEPS: 1

@@ -3,7 +3,7 @@
 # ZIP-CLIP-EBC: Configurazione STABILE (MAE ~84)
 # ============================================================
 
-RUN_NAME: "sha_res50"
+RUN_NAME: "sha_resnet50"
 SEED: 42
 DEVICE: "cuda"
 
@@ -72,7 +72,7 @@ TRAIN_STAGE1:
   LR_BACKBONE: 1.0e-5
   LR_HEAD: 5.0e-4
   WEIGHT_DECAY: 1.0e-4
-  POS_WEIGHT: 1
+  POS_WEIGHT: 10
 
 EVAL_STAGE1:
   THRESHOLD: 0.3

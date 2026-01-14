@@ -9,8 +9,8 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH --time=07:00:00
-#SBATCH -o logs/sha_resnet50_ALLSTAGE_%j.out
-#SBATCH -e logs/sha_resnet50_ALLSTAGE_%j.err
+#SBATCH -o logs/sha_resnet50_stage1_%j.out
+#SBATCH -e logs/sha_resnet50_stage1_%j.err
 #SBATCH --mail-user=c.attianese13@studenti.unisa.it
 #SBATCH --mail-type=ALL
 
@@ -40,6 +40,6 @@ nvidia-smi
 
 srun python train_stage1.py --config configs/config_resnet_sha.yaml --out checkpoints/sha_res50/stage1
 
-srun python train_stage2.py --config configs/config_resnet_sha.yaml  --out checkpoints/sha_res50/stage2 
+#srun python train_stage2.py --config configs/config_resnet_sha.yaml  --out checkpoints/sha_res50/stage2 
 
-srun python train_stage3_v2.py --config configs/config_resnet_sha.yaml --s1 checkpoints/sha_res50/stage1/best_model.pth --s2 checkpoints/sha_res50/stage2/best_model.pth --out checkpoints/sha_res50/stage3
+#srun python train_stage3_v2.py --config configs/config_resnet_sha.yaml --s1 checkpoints/sha_res50/stage1/best_model.pth --s2 checkpoints/sha_res50/stage2/best_model.pth --out checkpoints/sha_res50/stage3

@@ -3,7 +3,7 @@
 # ZIP-CLIP-EBC: Configurazione STABILE (MAE ~84)
 # ============================================================
 
-RUN_NAME: "sha"
+RUN_NAME: "sha_res50"
 SEED: 42
 DEVICE: "cuda"
 
@@ -24,14 +24,14 @@ DATA:
 
 # Modifica per Stage 1 (ZIP)
 BACKBONE:
-  TYPE: "vgg16_bn"       # <--- Usa VGG16 con Batch Norm
+  TYPE: "resnet50"       # <--- Usa ResNet50
   PRETRAINED: True
   FREEZE_BN: True
 # ============================================================
 # MODEL: CLIP RN50 (ResNet50)
 # ============================================================
 CLIP_EBC_HEAD:
-  CLIP_MODEL: "ViT-B/16"       # ResNet50
+  CLIP_MODEL: "RN50"       # ResNet50
   PRETRAINED: "openai"
   PROMPT_TYPE: "word"      # Usa "one", "two", "three"...
   WINDOW_SIZE: 16          # Finestra di attenzione
@@ -87,7 +87,7 @@ TRAIN_STAGE2:
   
   # Strategia Learning Rate Ufficiale
   OPTIMIZER: "adamw"
-  LR_BACKBONE: 1.0e-6    # Abbassa LR del backbone (ViT è delicato)
+  LR_BACKBONE: 1.0e-5      # ResNet regge bene questo LR e impara prima
   LR_HEAD: 1.0e-4
   WEIGHT_DECAY: 1.0e-4
   WARMUP_EPOCHS: 5        # FONDAMENTALE!
@@ -127,8 +127,8 @@ TRAIN_STAGE3:
   MASK_EPS: 0.001
   # PERCORSI DEI PESI PRE-ADDESTRATI (Fondamentale!)
   # Sostituisci con i percorsi reali dei tuoi .pth migliori
-  CHECKPOINT_STAGE1: "checkpoints/sha/stage1/best_model.pth" 
-  CHECKPOINT_STAGE2: "checkpoints/sha/stage2/best_model.pth"
+  CHECKPOINT_STAGE1: "checkpoints/sha_res50/stage1/best_model.pth" 
+  CHECKPOINT_STAGE2: "checkpoints/sha_res50/stage2/best_model.pth"
 
 EVAL_STAGE3:
   # Parametri per la strategia "Hard" (Divide et Impera)
