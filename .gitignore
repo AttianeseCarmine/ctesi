@@ -19,6 +19,7 @@ data/*
 *.out
 *.pyc
 *.jpg
+*.pyc
 *.npy
 logs_pipeline/stage1.log
 logs_pipeline/stage2.log

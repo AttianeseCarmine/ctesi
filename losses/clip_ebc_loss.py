@@ -200,13 +200,24 @@ class DACELoss(nn.Module):
                 **kwargs
             )
 
-    def _bin_count(self, density_map: Tensor) -> Tensor:
+    def _bin_count(self, density_map):
+        """
+        Mappa ogni valore di densità al bin INTEGER corretto.
+        Es: density=2.7 → bin [2,2] (indice 2)
+            density=15.3 → bin [14,inf] (indice 14)
+        """
+        density_map = density_map.squeeze(1)  # [B, H, W]
         class_map = torch.zeros_like(density_map, dtype=torch.long)
+        
         for idx, (low, high) in enumerate(self.bins):
-            high = float('inf') if high > 9000 else high
-            mask = (density_map >= low) & (density_map <= high)
+            if high > 1000:  # Overflow bin
+                mask = (density_map >= low)
+            else:
+                # Integer matching: floor(density) deve essere in [low, high]
+                mask = (torch.floor(density_map) >= low) & (torch.floor(density_map) <= high)
             class_map[mask] = idx
-        return class_map.squeeze(1)
+        
+        return class_map
 
     def forward(self, pred_class: Tensor, pred_density: Tensor, target_density: Tensor, target_points: List[Tensor]) -> Tuple[Tensor, Dict[str, Tensor]]:
         if target_density.shape[-2:] != pred_density.shape[-2:]:

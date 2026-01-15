@@ -13,7 +13,7 @@ Approccio Semplificato (Official Style):
 - Loss: BCEWithLogitsLoss (pesata per sbilanciamento)
 ============================================================
 """
-
+import shutil
 import argparse
 import yaml
 import os
@@ -30,7 +30,7 @@ from tqdm import tqdm
 
 # Assicurati che questi import funzionino
 from models.zip_model import ZIPModel
-from datasets.sha import SHA
+from datasets.builder import build_dataset  
 from datasets.transforms import build_transforms
 from utils.train_utils import seed_everything
 
@@ -110,9 +110,19 @@ def evaluate(model, loader, device):
 def train_stage1_simple():
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', type=str, default='configs/config_sha.yaml')
+    parser.add_argument("--out", type=str, default="checkpoints/sha/stage1", help="Output directory")
     parser.add_argument('--gpu', type=int, default=0)
     args = parser.parse_args()
     
+    os.makedirs(args.out, exist_ok=True)
+
+    # --- SALVATAGGIO CONFIG ---
+    # Salva una copia esatta del config usato per questo training
+    saved_config_path = os.path.join(args.out, "config.yaml")
+    shutil.copy(args.config, saved_config_path)
+    print(f"📄 Configuration saved to: {saved_config_path}")
+    # -------------------------------------------------
+
     with open(args.config, 'r') as f: config = yaml.safe_load(f)
     seed_everything(config.get('SEED', 42))
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -120,7 +130,7 @@ def train_stage1_simple():
     print("Using device:", device)
     
     # Setup
-    dataset_name = config.get('DATASET', 'sha')
+    dataset_name = config.get('RUN_NAME', 'sha')
     save_dir = Path('./checkpoints') / dataset_name / 'stage1'
     save_dir.mkdir(parents=True, exist_ok=True)
     
@@ -129,8 +139,8 @@ def train_stage1_simple():
     
     # Dataset
     data_cfg = config['DATA']
-    train_dataset = SHA(data_cfg['ROOT'], 'train', build_transforms(data_cfg, True))
-    val_dataset = SHA(data_cfg['ROOT'], 'val', build_transforms(data_cfg, False))
+    train_dataset = build_dataset(config, 'train', build_transforms(config['DATA'], True))
+    val_dataset = build_dataset(config, 'val', build_transforms(config['DATA'], False))
     
     # Batch size ridotto se necessario per SHB (immagini grandi)
     bs = config['TRAIN_STAGE1'].get('BATCH_SIZE', 16)
@@ -239,6 +249,3 @@ def train_stage1_simple():
 
 if __name__ == '__main__':
     train_stage1_simple()
-
-
-# nohup python train_stage1.py --config configs/config_shb.yaml > train_shb_stage1.out 2>&1 &
