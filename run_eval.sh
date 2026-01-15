@@ -39,7 +39,4 @@ python -c "import torch; print('torch', torch.__version__); print('cuda_availabl
 nvidia-smi
 
 
-srun python evaluate_stage2.py --config configs/config_resnet_sha.yaml --ckpt checkpoints/sha_res50/stage2/best_mae.pth --backbone resnet50 --split val --sliding_window --window_size 224 --stride 224 --reduction 8 
-srun python evaluate_stage2.py --config configs/config_resnet_shb.yaml --ckpt checkpoints/shb_res50/stage2/best_mae.pth --backbone resnet50 --split val --sliding_window --window_size 224 --stride 224 --reduction 8 
-srun python evaluate_stage2.py --config configs/config_vit_shb.yaml --ckpt checkpoints/shb_vit/stage2/best_mae.pth --backbone vit_b_16 --split val --sliding_window --window_size 224 --stride 224 --reduction 16
-srun python evaluate_stage2.py --config configs/config_vit_sha.yaml --ckpt checkpoints/sha_vit/stage2/best_mae.pth --backbone vit_b_16 --split val --sliding_window --window_size 224 --stride 224 --reduction 16
+srun python evaluate_stage2.py --dataset sha --data-dir data/sha --model clip_vit_b_16 --reduction 8  --truncation 4 --resume checkpoints/sha_vit/stage2_official/best_mae.pth  --sliding_window --gpu 0

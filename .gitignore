@@ -18,6 +18,9 @@ data/*
 *.err   
 *.out
 *.pyc
+*.jpg
+*.png
+*.npy
 visualize/*
 logs_pipeline/stage1.log
 logs_pipeline/stage2.log

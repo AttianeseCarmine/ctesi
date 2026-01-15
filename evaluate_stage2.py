@@ -1,171 +1,222 @@
 import argparse
-import os
 import torch
-import yaml
+import os
+import numpy as np
 import json
 from torch.utils.data import DataLoader
-import sys
-import numpy as np
+from tqdm import tqdm
+from typing import Dict, Optional
 
-# Import interni
-from datasets.builder import build_dataset
-from datasets.transforms import build_transforms
-from eval import evaluate
+# --- Import specifici del tuo repository ---
+# Assicurati che questi file esistano nelle cartelle indicate
+from utils import calculate_errors, sliding_window_predict
+from models import get_model
+from datasets import Crowd  
 
-# Import esterni (CLIP-EBC)
-sys.path.append("external_libs/CLIP-EBC") 
+def evaluate(
+    model: torch.nn.Module,
+    data_loader: DataLoader,
+    device: torch.device,
+    sliding_window: bool = False,
+    window_size: Optional[int] = None,
+    stride: Optional[int] = None,
+) -> Dict[str, float]:
+    model.eval()
+    pred_counts, target_counts = [], []
+    
+    if sliding_window:
+        if window_size is None or stride is None:
+            raise ValueError("Window size e stride devono essere specificati per sliding_window=True")
 
-try:
-    from models import get_model 
-except ImportError:
-    print("⚠️ CLIP-EBC non trovato nel path specificato.")
-    get_model = None
+    print(f"Inizio valutazione su {len(data_loader)} immagini...")
+    
+    # tqdm per barra di progresso
+    for i, batch in enumerate(tqdm(data_loader)):
+        # Gestione robusta del batch unpack
+        image = batch[0]
+        target_points = batch[1]
+        
+        image = image.to(device)
+        
+        # Ground Truth: conta il numero di punti per ogni immagine nel batch
+        target_counts.append([len(p) for p in target_points])
 
-def load_config(path):
-    with open(path, 'r') as f: return yaml.safe_load(f)
+        with torch.set_grad_enabled(False):
+            if sliding_window:
+                # Predizione con finestra scorrevole per immagini grandi (es. ShanghaiTech)
+                pred_density = sliding_window_predict(model, image, window_size, stride)
+            else:
+                # Predizione diretta
+                pred_density = model(image)
 
-def eval_collate(batch):
-    batch = [b for b in batch if b is not None]
-    if len(batch) == 0: return None
-    images = torch.stack([item['image'] for item in batch])
-    points = [item['points'] for item in batch]
-    img_paths = [item['img_path'] for item in batch]
-    return images, points, img_paths
+            # Somma della mappa di densità per ottenere il conteggio totale
+            # clip_ebc ritorna spesso [Batch, Bins, H, W], dobbiamo sommare o prendere l'output corretto
+            # Solitamente per CLIP-EBC l'output finale è già una mappa di densità o logit.
+            # Se il modello ritorna la densità prevista:
+            pred_counts.append(pred_density.sum(dim=(1, 2, 3)).cpu().numpy().tolist())
 
-def get_fallback_bins():
-    """
-    Genera bins standard (0-100) per quando il JSON è incompleto.
-    Questo serve per i pesi 'Full' (best_mae) che usano ~100 classi.
-    """
-    print("⚠️  ATTENZIONE: JSON incompleto. Generazione Bins di FALLBACK (Range 0-100)...")
-    # Genera bin: [0,0], [1,1], ..., [99,99], [100, inf]
-    bins = [[i, i] for i in range(100)] + [[100, float("inf")]]
+    # Appiattiamo le liste (handling per batch_size > 1)
+    pred_counts = np.array([item for sublist in pred_counts for item in sublist])
+    target_counts = np.array([item for sublist in target_counts for item in sublist])
     
-    # Anchor points semplici (valore del bin)
-    anchors = [float(b[0]) for b in bins]
+    assert len(pred_counts) == len(target_counts), f"Mismatch: {len(pred_counts)} preds vs {len(target_counts)} targets"
     
-    return bins, anchors
+    metrics = calculate_errors(pred_counts, target_counts)
+    return metrics
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Valutazione CLIP-EBC')
+    
+    # Dati
+    parser.add_argument('--dataset', default='sha', help='dataset name: sha, shb, qnrf, jhu')
+    parser.add_argument('--data-dir', required=True, help='percorso root del dataset')
+    
+    # Modello
+    parser.add_argument('--model', default='clip_vit_b_16', help='backbone type')
+    parser.add_argument('--reduction', type=int, default=8, help='reduction factor (8, 16, 32)')
+    
+    # TRUNCATION: Aggiunto perché serve per navigare il JSON (es. "4" per SHA)
+    parser.add_argument('--truncation', type=int, default=4, help='Truncation level (top key in json)')
+    
+    parser.add_argument('--config-dir', default='./configs', help='cartella dove sono i json reduction_X.json')
+    parser.add_argument('--prompt-type', default='word')
+    
+    # Input
+    parser.add_argument('--input-size', type=int, default=224, help='dimensione crop input network')
+    parser.add_argument('--batch-size', type=int, default=1)
+    parser.add_argument('--num-workers', type=int, default=4)
+    
+    # Checkpoint
+    parser.add_argument('--resume', required=True, help='percorso checkpoint .pth')
+    parser.add_argument('--gpu', default='0', help='id gpu')
+    
+    # Sliding Window
+    parser.add_argument('--sliding_window', action='store_true')
+    parser.add_argument('--window-size', type=int, default=224)
+    parser.add_argument('--stride', type=int, default=224)
 
-def load_bins_from_json(reduction, dataset_name):
-    """
-    Carica i bin dal JSON. Se manca la config FULL, usa il fallback.
-    """
-    json_path = f"configs/reduction_{reduction}.json"
+    args = parser.parse_args()
+
+    # 1. Setup Device
+    os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"Usando device: {device}")
+
+    # 2. CARICAMENTO CONFIGURAZIONE JSON (BINS & ANCHOR POINTS)
+    config_file = os.path.join(args.config_dir, f"reduction_{args.reduction}.json")
     
-    if not os.path.exists(json_path):
-        print(f"⚠️  File {json_path} non trovato. Uso FALLBACK.")
-        return get_fallback_bins()
+    if not os.path.exists(config_file):
+        raise FileNotFoundError(f"File config non trovato: {config_file}")
     
-    with open(json_path, 'r') as f:
-        data = json.load(f)
+    print(f"Caricamento configurazione da: {config_file}")
+    with open(config_file, 'r') as f:
+        config_data = json.load(f)
     
-    # Mapping nomi
-    dataset_mapping = {
-        'sha': ['part_a', 'shanghaitech_part_a', 'sha'],
-        'shb': ['part_b', 'shanghaitech_part_b', 'shb'],
-        'qnrf': ['qnrf', 'ucf_qnrf'],
-        'nwpu': ['nwpu', 'nwpu_crowd']
-    }
+    ds_key = args.dataset.lower() # es. 'sha'
+    trunc_key = str(args.truncation) # es. '4'
+
+    # --- LOGICA DI RICERCA NEL JSON AGGIORNATA ---
+    found_config = None
+
+    # Caso 1: Struttura annidata (Truncation -> Dataset) [Quella che hai tu]
+    if trunc_key in config_data and ds_key in config_data[trunc_key]:
+        print(f"Configurazione trovata sotto truncation '{trunc_key}'")
+        found_config = config_data[trunc_key][ds_key]
     
-    possible_names = dataset_mapping.get(dataset_name, [dataset_name])
-    target_cfg = None
-    
-    # Cerca SOLO configurazioni FULL ("0", "None", "null")
-    # Ignora le chiavi "2", "4", "11" presenti nel file, perché sono troncate.
-    priority_keys = ["0", "None", "null"] 
-    
-    for key in priority_keys:
-        if key in data:
-            for name in possible_names:
-                if name in data[key]:
-                    target_cfg = data[key][name]
-                    print(f"✅ Configurazione JSON trovata: Key='{key}' | Dataset='{name}'")
-                    break
-        if target_cfg: break
-            
-    # Cerca alla radice (se non annidato)
-    if target_cfg is None:
-        for name in possible_names:
-            if name in data:
-                target_cfg = data[name]
-                print(f"✅ Configurazione JSON trovata (Root): Dataset='{name}'")
+    # Caso 2: Struttura piatta (Solo Dataset)
+    elif ds_key in config_data:
+        found_config = config_data[ds_key]
+        
+    # Caso 3: Fallback (Cerca il dataset in qualsiasi chiave numerica)
+    else:
+        print(f"Warning: Chiave truncation '{trunc_key}' non trovata. Cerco ovunque...")
+        for k in config_data:
+            if isinstance(config_data[k], dict) and ds_key in config_data[k]:
+                print(f"Configurazione trovata sotto chiave '{k}'")
+                found_config = config_data[k][ds_key]
                 break
-
-    # Se non troviamo la config FULL, attiviamo il fallback invece di crashare
-    if target_cfg is None:
-        print(f"❌ Nessuna configurazione FULL trovata nel JSON per {possible_names}.")
-        print("   (Le configurazioni '2', '4', '8', '11' sono troncate e non adatte ai pesi 'best_mae').")
-        return get_fallback_bins()
-
-    granularity = "fine"
-    bins = target_cfg["bins"][granularity]
-    anchor_points = target_cfg["anchor_points"][granularity]["average"]
     
-    return bins, anchor_points
+    if found_config is None:
+        raise KeyError(f"Impossibile trovare i parametri per '{ds_key}' nel JSON. Controlla il nome del dataset o la struttura del file.")
 
-def test_clip_standalone(args):
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"🚀 Avvio Test Stage 2 (Solo CLIP-EBC) su {device}")
+    # Estrazione Bins e Anchors
+    # Solitamente dentro c'è un'altra chiave tipo "fine", "coarse", o "dynamic". CLIP-EBC usa "fine" di default.
+    raw_bins = found_config['bins']
+    raw_anchors = found_config['anchor_points']
 
-    # 1. Config
-    cfg = load_config(args.config)
-    dataset_name = cfg.get('DATASET', 'sha')
-    print(f"📄 Dataset letto dal config: {dataset_name}")
+    # Se 'bins' è un dizionario, prendi la chiave 'fine' (o la prima disponibile)
+    if isinstance(raw_bins, dict):
+        key_type = 'fine' if 'fine' in raw_bins else list(raw_bins.keys())[0]
+        bins_list = raw_bins[key_type]
+        anchor_points_list = raw_anchors[key_type]
+        if isinstance(anchor_points_list, dict): # A volte anchor è ulteriormente annidato (middle/average)
+             anchor_points_list = anchor_points_list.get('average', anchor_points_list.get('middle'))
+    else:
+        bins_list = raw_bins
+        anchor_points_list = raw_anchors
+
+    print(f"Bins caricati: {len(bins_list)} intervalli")
+
+    # 3. Inizializzazione Modello
+    print(f"Costruzione modello {args.model}...")
     
-    # 2. Bins (JSON o Fallback)
-    print(f"📥 Caricamento configurazione per Reduction {args.reduction}...")
-    try:
-        bins, anchor_points = load_bins_from_json(args.reduction, dataset_name)
-        print(f"✅ Bin caricati: {len(bins)}")
-    except Exception as e:
-        print(f"❌ Errore critico generazione bin: {e}")
-        return
-
-    # 3. Dataset
-    val_trans = build_transforms(cfg['DATA'], is_train=False)
-    dataset = build_dataset(cfg, split=args.split, transforms=val_trans)
-    loader = DataLoader(dataset, batch_size=1, shuffle=False, num_workers=4, collate_fn=eval_collate)
-    print(f"📊 Dataset: {len(dataset)} immagini")
-
-    # 4. Modello
-    print(f"🔹 Building Model: CLIP-{args.backbone} | Reduction: {args.reduction}")
     model = get_model(
-        backbone=f"clip_{args.backbone}", 
-        input_size=224,       
-        reduction=args.reduction, 
-        bins=bins,            
-        anchor_points=anchor_points, 
-        prompt_type="word"    
+        backbone=args.model,
+        input_size=args.input_size,
+        reduction=args.reduction,
+        bins=bins_list,
+        anchor_points=anchor_points_list,
+        prompt_type=args.prompt_type,
+        # Parametri CLIP specifici
+        num_vpt=32,
+        vpt_drop=0.0,
+        deep_vpt=True
     )
 
-    # 5. Checkpoint
-    if args.ckpt:
-        print(f"📥 Loading checkpoint: {args.ckpt}")
-        ckpt = torch.load(args.ckpt, map_location=device)
-        
-        state_dict = ckpt.get('model', ckpt.get('model_state_dict', ckpt.get('state_dict', ckpt)))
-        new_state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
-        
-        # Load weights
-        missing, unexpected = model.load_state_dict(new_state_dict, strict=False)
-        
-        # Verifica se la testa è stata caricata
-        head_missing = [k for k in missing if 'classifier' in k or 'regressor' in k]
-        if len(head_missing) > 0:
-            print("\n⛔️ WARNING: Pesi della testa NON caricati!")
-            print("   Il checkpoint ha un numero di bin diverso da quello generato.")
-            print(f"   Bins usati: {len(bins)}")
+    # 4. Caricamento Pesi
+    print(f"Caricamento pesi da {args.resume}...")
+    checkpoint = torch.load(args.resume, map_location=device)
+    
+    if 'model' in checkpoint:
+        state_dict = checkpoint['model']
+    elif 'state_dict' in checkpoint:
+        state_dict = checkpoint['state_dict']
+    else:
+        state_dict = checkpoint
+
+    # Pulizia prefisso 'module.'
+    new_state_dict = {}
+    for k, v in state_dict.items():
+        if k.startswith('module.'):
+            new_state_dict[k[7:]] = v
         else:
-            print("✅ Pesi caricati correttamente (Head inclusa).")
-
+            new_state_dict[k] = v
+            
+    model.load_state_dict(new_state_dict)
     model.to(device)
-    model.eval()
 
-    # 6. Eval
-    print("running evaluation...")
+    # 5. Dataset
+    print("Caricamento Dati...")
+    val_dataset = Crowd(
+        dataset=args.dataset, 
+        root=args.data_dir, 
+        split='val', 
+        crop_size=args.input_size,
+        reduction=args.reduction,
+        method='val'
+    )
+    
+    data_loader = DataLoader(
+        val_dataset,
+        batch_size=args.batch_size,
+        num_workers=args.num_workers,
+        shuffle=False,
+        pin_memory=True
+    )
+
+    # 6. Esecuzione
     results = evaluate(
         model=model,
-        data_loader=loader,
+        data_loader=data_loader,
         device=device,
         sliding_window=args.sliding_window,
         window_size=args.window_size,
@@ -173,23 +224,7 @@ def test_clip_standalone(args):
     )
 
     print("\n" + "="*40)
-    print(f"🎯 RISULTATI STAGE 2 - {dataset_name.upper()}")
-    print("-" * 40)
-    print(f"   MAE  : {results['mae']:.4f}")
-    print(f"   RMSE : {results['rmse']:.4f}")
+    print(f"RISULTATI FINALI:")
+    print(f"MAE: {results['mae']:.2f}")
+    print(f"MSE: {results['mse']:.2f}")
     print("="*40 + "\n")
-
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--config', type=str, required=True)
-    parser.add_argument('--ckpt', type=str, required=True)
-    parser.add_argument('--backbone', type=str, default='resnet50')
-    parser.add_argument('--reduction', type=int, default=8)
-    parser.add_argument('--split', type=str, default='test')
-    parser.add_argument('--sliding_window', action='store_true')
-    parser.add_argument('--window_size', type=int, default=224)
-    parser.add_argument('--stride', type=int, default=224)
-    
-    args = parser.parse_args()
-    if args.sliding_window and args.stride is None: args.stride = args.window_size
-    test_clip_standalone(args)

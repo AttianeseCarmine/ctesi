@@ -43,3 +43,4 @@ srun python train_stage1.py --config configs/config_resnet_sha.yaml --out checkp
 #srun python train_stage2.py --config configs/config_resnet_sha.yaml  --out checkpoints/sha_res50/stage2 
 
 #srun python train_stage3_v2.py --config configs/config_resnet_sha.yaml --s1 checkpoints/sha_res50/stage1/best_model.pth --s2 checkpoints/sha_res50/stage2/best_model.pth --out checkpoints/sha_res50/stage3
+
