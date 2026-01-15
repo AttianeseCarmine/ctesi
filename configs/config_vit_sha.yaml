@@ -3,7 +3,7 @@
 # ZIP-CLIP-EBC: Configurazione STABILE (MAE ~84)
 # ============================================================
 
-RUN_NAME: "sha"
+RUN_NAME: "sha_vit"
 SEED: 42
 DEVICE: "cuda"
 
@@ -15,18 +15,23 @@ DATA:
   ROOT: "./data/sha/"
   TRAIN_SPLIT: "train"
   VAL_SPLIT: "val"
-  # CLIP-EBC usa standard ImageNet mean/std per RN50
-  NORM_MEAN: [0.485, 0.456, 0.406]
-  NORM_STD: [0.229, 0.224, 0.225]
+# CLIP Normalization (FONDAMENTALE per Stage 2 e 3)
+  NORM_MEAN: [0.48145466, 0.4578275, 0.40821073]
+  NORM_STD:  [0.26862954, 0.26130258, 0.27577711]
   CROP_SIZE: 448
   CROP_SCALE: [0.5, 2.0]
   IMG_EXTS: [".jpg", ".png"]
 
+# Modifica per Stage 1 (ZIP)
+BACKBONE:
+  TYPE: "vit_b_16"       # <--- Usa VGG16 con Batch Norm
+  PRETRAINED: True
+  FREEZE_BN: True
 # ============================================================
 # MODEL: CLIP RN50 (ResNet50)
 # ============================================================
 CLIP_EBC_HEAD:
-  CLIP_MODEL: "RN50"       # ResNet50
+  CLIP_MODEL: "ViT-B/16"       # ResNet50
   PRETRAINED: "openai"
   PROMPT_TYPE: "word"      # Usa "one", "two", "three"...
   WINDOW_SIZE: 16          # Finestra di attenzione
@@ -34,26 +39,32 @@ CLIP_EBC_HEAD:
 
 # BIN UFFICIALI PER SHANGHAITECH (Estratti da configs/reduction_16.json)
 # Nota: [start, end] inclusivi.
+# ShanghaiTech A (Folla densa)
 BINS:
-  - [0, 0]
-  - [1, 1]
-  - [2, 2]
-  - [3, 3]
-  - [4, 4]
-  - [5, 5]
-  - [6, 7]      
-  - [8, 9999]   
+  - [-0.1, 0.5]
+  - [0.5, 1.5]
+  - [1.5, 2.5]
+  - [2.5, 3.5]
+  - [3.5, 4.5]
+  - [4.5, 5.5]
+  - [5.5, 6.5]
+  - [6.5, 7.5]
+  - [7.5, 8.5]
+  - [8.5, 10.5]
+  - [10.5, 14.5]
+  - [14.5, 20.5]
+  - [20.5, 30.5]
+  - [30.5, 45.5]
+  - [45.5, 9999]
 
-NUM_BINS: 8
-
-BIN_CENTERS: [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.5, 12.0]
-
+NUM_BINS: 15
+BIN_CENTERS: [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.5, 12.5, 17.5, 25.5, 38.0, 60.0]
 
 # ============================================================
 # TRAINING STAGES
 # ============================================================
 TRAIN_STAGE1:
-  EPOCHS: 600
+  EPOCHS: 2000
   BATCH_SIZE: 32
   NUM_WORKERS: 8
   VAL_INTERVAL: 5
@@ -61,7 +72,7 @@ TRAIN_STAGE1:
   LR_BACKBONE: 1.0e-5
   LR_HEAD: 5.0e-4
   WEIGHT_DECAY: 1.0e-4
-  POS_WEIGHT: 1
+  POS_WEIGHT: 10
 
 EVAL_STAGE1:
   THRESHOLD: 0.3
@@ -69,20 +80,19 @@ EVAL_STAGE1:
 # TRAINING (Stage 2)
 # ============================================================
 TRAIN_STAGE2:
-  TOTAL_EPOCHS: 1000       # Il paper dice 300-500
+  TOTAL_EPOCHS: 1500       # Il paper dice 300-500
   BATCH_SIZE: 16          # 16 o 32 a seconda della VRAM
   NUM_WORKERS: 8
   EVAL_FREQ: 10
   
   # Strategia Learning Rate Ufficiale
   OPTIMIZER: "adamw"
-  LR_BACKBONE: 1.0e-5     # Basso per CLIP Visual Encoder
-  LR_HEAD: 1.0e-4         # Alto per il Decoder
-  WEIGHT_DECAY: 5.0e-4
+  LR_BACKBONE: 1.0e-6    # Abbassa LR del backbone (ViT è delicato)
+  LR_HEAD: 1.0e-4
+  WEIGHT_DECAY: 1.0e-4
   WARMUP_EPOCHS: 5        # FONDAMENTALE!
-  
   AMP: true
-  CLIP_GRAD_NORM: 10.0    # Il repo ufficiale usa 10.0, non 1.0
+  CLIP_GRAD_NORM: 1.0     # 10.0 è aggressivo, prova 1.0 per stabilità   # Il repo ufficiale usa 10.0, non 1.0
 
 LOSS_STAGE2:
   TYPE: "dace"
@@ -99,18 +109,26 @@ TRAIN_STAGE3:
   
   # Optimizer params (Learning Rate molto basso per non rovinare CLIP)
   #LR: 1.0e-5             
-  LR: 5.0e-5              # Sperimentale leggermente più alto
+  LR: 1.0e-5           # Sperimentale leggermente più alto
   WEIGHT_DECAY: 1.0e-4
   
-  # Pesi della Loss Congiunta
-  LAMBDA_ZIP: 1.0        # Peso maschera binaria
-  LAMBDA_CLIP: 1.0       # Peso classificazione EBC
-  LAMBDA_COUNT: 10.0     # Peso errore conteggio finale (L1)
-
+  # Pesi della Loss (Bilanciamento corretto)
+  LAMBDA_ZIP: 0.5         # Riduci peso ZIP per non soffocare CLIP
+  LAMBDA_CLIP: 1.0        # Peso principale
+  LAMBDA_COUNT: 0.1       # <--- CRITICO: Abbassa da 10.0 a 0.1
+  ZIP_STEPS: 1
+  CLIP_STEPS: 1
+  LR_ZIP: 1.0e-5
+  LR_CLIP: 1.0e-5
+  AMP: true
+  CLIP_GRAD_NORM: 1.0
+  LOG_EVERY: 50
+  MASK_THR: 0.5
+  MASK_EPS: 0.001
   # PERCORSI DEI PESI PRE-ADDESTRATI (Fondamentale!)
   # Sostituisci con i percorsi reali dei tuoi .pth migliori
-  CHECKPOINT_STAGE1: "checkpoints/sha/stage1/best_model.pth" 
-  CHECKPOINT_STAGE2: "checkpoints/sha/stage2/best_model.pth"
+  CHECKPOINT_STAGE1: "checkpoints/sha_vit/stage1/best_model.pth" 
+  CHECKPOINT_STAGE2: "checkpoints/sha_vit/stage2/best_model.pth"
 
 EVAL_STAGE3:
   # Parametri per la strategia "Hard" (Divide et Impera)

@@ -1,26 +1,18 @@
-#!/usr/bin/env python3
-"""
-ZIP-CLIP-EBC: Evaluation Script for Stage 1 (Binary ZIP Head)
-Valuta la capacità della π-head di classificare blocchi vuoti/pieni.
-"""
-
+import argparse
+import yaml
+import os
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-import yaml
-import argparse
-import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
-import os
 
-# --- CORREZIONE: Usa lo stesso modello del training ---
+# Import necessari dal tuo progetto
 from models.zip_model import ZIPModel
-from datasets.sha import SHA
+from datasets.builder import build_dataset  
 from datasets.transforms import build_transforms
 
 def crowd_collate(batch):
+    """Gestisce batch con immagini di dimensioni diverse (se necessario)"""
     batch = [b for b in batch if b is not None]
     if len(batch) == 0: return None
     return {
@@ -29,125 +21,134 @@ def crowd_collate(batch):
         'img_path': [item['img_path'] for item in batch]
     }
 
-def plot_confusion_matrix(tp, fp, tn, fn, save_path="confusion_matrix_stage1.png"):
-    cm_data = np.array([[tp, fn], [fp, tn]])
-    row_sums = cm_data.sum(axis=1, keepdims=True)
-    row_sums[row_sums == 0] = 1 
-    cm_perc = cm_data / row_sums
-
-    labels = np.array([
-        [f"TP\n{int(tp)}\n({cm_perc[0,0]:.1%})", f"FN\n{int(fn)}\n({cm_perc[0,1]:.1%})"],
-        [f"FP\n{int(fp)}\n({cm_perc[1,0]:.1%})", f"TN\n{int(tn)}\n({cm_perc[1,1]:.1%})"]
-    ])
-
-    plt.figure(figsize=(8, 6))
-    sns.set_style("white")
-    ax = sns.heatmap(cm_data, annot=labels, fmt='', cmap='Blues', cbar=True,
-                     linewidths=1, linecolor='black', annot_kws={"size": 14, "weight": "bold"})
-    ax.set_xticklabels(['Pred: PIENO', 'Pred: VUOTO'], fontsize=12)
-    ax.set_yticklabels(['GT: PIENO', 'GT: VUOTO'], fontsize=12, va='center')
-    plt.title('Stage 1 Confusion Matrix (ResNet50 ZIP-Head)', fontsize=16, pad=20)
-    plt.ylabel('Ground Truth', fontsize=14)
-    plt.xlabel('Prediction', fontsize=14)
-    plt.tight_layout()
-    plt.savefig(save_path, dpi=300)
-    plt.close()
-    print(f"📊 Grafico Matrice di Confusione salvato in: {save_path}")
-
-def evaluate_stage1(model, dataloader, device, threshold=0.5):
+@torch.no_grad()
+def evaluate(model, loader, device, threshold=0.2):
+    """
+    Valuta il modello Stage 1 (Binary Segmentation).
+    Logica allineata al 100% con train_stage1.py.
+    """
     model.eval()
-    tp, fp, tn, fn = 0, 0, 0, 0
-    num_images = 0
-
-    print(f"Running Stage 1 Evaluation with Threshold={threshold}...")
     
-    with torch.no_grad():
-        for batch in tqdm(dataloader):
-            if batch is None: continue
-            imgs = batch['image'].to(device)
-            gt_density = batch['density'].to(device)
-
-            # 1. Forward
-            outputs = model(imgs)
-            pi_logits = outputs['pi_logits']
-            prob_occupied = torch.sigmoid(pi_logits)
-            
-            # 2. Ground Truth Binaria (Adattiva)
-            # Calcoliamo la GT alla stessa risoluzione dell'output del modello
-            h_out, w_out = pi_logits.shape[2:]
-            scale = (imgs.shape[2] * imgs.shape[3]) / (h_out * w_out)
-            gt_down = F.adaptive_avg_pool2d(gt_density, (h_out, w_out)) * scale
-            gt_mask = (gt_down > 0.001).float() # Soglia bassa per definire "presenza"
-
-            # 3. Predizione Binaria
-            preds_mask = (prob_occupied > threshold).float()
-
-            # 4. Metriche Pixel-wise (Block-wise)
-            tp += ((preds_mask == 1) & (gt_mask == 1)).sum().item()
-            fp += ((preds_mask == 1) & (gt_mask == 0)).sum().item()
-            tn += ((preds_mask == 0) & (gt_mask == 0)).sum().item()
-            fn += ((preds_mask == 0) & (gt_mask == 1)).sum().item()
-            
-            num_images += imgs.size(0)
-
+    tp, tn, fp, fn = 0, 0, 0, 0
+    
+    print(f"⚙️  Evaluation Threshold: {threshold}")
+    
+    for batch in tqdm(loader, desc="Calculating Metrics"):
+        if batch is None: continue
+        
+        images = batch['image'].to(device)
+        gt_density = batch['density'].to(device)
+        
+        # 1. Forward
+        outputs = model(images)
+        pi_logits = outputs['pi_logits'] # [B, 1, H_out, W_out]
+        probs = torch.sigmoid(pi_logits)
+        
+        # 2. Prepara Ground Truth Binaria (Allineamento dimensioni)
+        h_out, w_out = pi_logits.shape[2:]
+        
+        # Scaling factor per mantenere la somma della densità corretta dopo il pooling
+        scale_factor = (images.shape[2] * images.shape[3]) / (h_out * w_out)
+        
+        # Downsample della densità GT alla risoluzione dell'output del modello
+        gt_down = F.adaptive_avg_pool2d(gt_density, (h_out, w_out)) * scale_factor
+        
+        # Definizione Target Binario:
+        # Se nel blocco c'è anche una minima presenza (> 0.001), è considerato "Folla" (1)
+        gt_binary = (gt_down > 0.001).float()
+        
+        # 3. Predizione Binaria
+        pred_binary = (probs > threshold).float()
+        
+        # 4. Aggiornamento Statistiche (Vettorizzato per velocità)
+        tp += ((pred_binary == 1) & (gt_binary == 1)).sum().item()
+        tn += ((pred_binary == 0) & (gt_binary == 0)).sum().item()
+        fp += ((pred_binary == 1) & (gt_binary == 0)).sum().item()
+        fn += ((pred_binary == 0) & (gt_binary == 1)).sum().item()
+        
     # Calcolo Metriche
-    eps = 1e-7
-    precision = tp / (tp + fp + eps)
-    recall = tp / (tp + fn + eps)
-    f1 = 2 * (precision * recall) / (precision + recall + eps)
-    accuracy = (tp + tn) / (tp + tn + fp + fn + eps)
-
-    print("\n" + "="*50)
-    print("📊 STAGE 1 RESULTS (Binary Classification)")
-    print("="*50)
-    print(f"Threshold: {threshold}")
-    print(f"Accuracy:  {accuracy:.2%}")
-    print(f"Precision: {precision:.2%}")
-    print(f"Recall:    {recall:.2%}")
-    print(f"F1-Score:  {f1:.2%}")
-    print("="*50)
+    # Aggiungiamo 1e-8 per evitare divisioni per zero
+    precision = tp / (tp + fp + 1e-8)
+    recall = tp / (tp + fn + 1e-8)
+    f1 = 2 * (precision * recall) / (precision + recall + 1e-8)
+    accuracy = (tp + tn) / (tp + tn + fp + fn + 1e-8)
     
-    plot_confusion_matrix(tp, fp, tn, fn)
-    return f1
+    return {
+        'f1': f1, 
+        'accuracy': accuracy, 
+        'precision': precision, 
+        'recall': recall,
+        'TP': tp, 'TN': tn, 'FP': fp, 'FN': fn
+    }
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--config', type=str, default='configs/config_shb.yaml')
-    parser.add_argument('--checkpoint', type=str, default=None)
-    parser.add_argument('--threshold', type=float, default=None)
-    parser.add_argument('--gpu', type=int, default=0)
+def main():
+    parser = argparse.ArgumentParser(description="Evaluate Stage 1 Model (ZIP)")
+    parser.add_argument('--config', type=str, required=True, help="Path to config file (yaml)")
+    parser.add_argument('--checkpoint', type=str, required=True, help="Path to trained .pth model")
+    parser.add_argument('--threshold', type=float, default=0.2, help="Probability threshold (default: 0.2 like training)")
+    parser.add_argument('--device', type=str, default="cuda", help="Device (cuda/cpu)")
+    parser.add_argument('--batch_size', type=int, default=1, help="Batch size for evaluation")
+    
     args = parser.parse_args()
-
-    with open(args.config, 'r') as f: config = yaml.safe_load(f)
-
-    # Threshold selection
-    if args.threshold is not None:
-        final_threshold = args.threshold
-    else:
-        final_threshold = config.get('EVAL_STAGE1', {}).get('THRESHOLD', 0.5)
-
-    device = torch.device(f'cuda:{args.gpu}')
     
-    # --- MODIFICA: Istanzia ZIPModel ---
+    device = torch.device(args.device if torch.cuda.is_available() else "cpu")
+    print(f"🔧 Device: {device}")
+    
+    # 1. Carica Configurazione
+    with open(args.config, 'r') as f:
+        config = yaml.safe_load(f)
+    
+    print(f"🏗️  Building Dataset & Model...")
+    
+    # 2. Carica Dataset (Validation)
+    val_transforms = build_transforms(config['DATA'], is_train=False)
+    val_dataset = build_dataset(config, 'val', val_transforms)
+    
+    val_loader = DataLoader(
+        val_dataset, 
+        batch_size=args.batch_size, 
+        shuffle=False, 
+        num_workers=4, 
+        collate_fn=crowd_collate
+    )
+    
+    # 3. Carica Modello
     model = ZIPModel(config).to(device)
     
-    if args.checkpoint:
-        ckpt_path = args.checkpoint
-    else:
-        dataset_name = config.get('DATASET', 'shb')
-        ckpt_path = f"./checkpoints/{dataset_name}/stage1/best_model.pth"
-    
-    if os.path.exists(ckpt_path):
-        print(f"Loading checkpoint: {ckpt_path}")
-        checkpoint = torch.load(ckpt_path, map_location=device)
-        # Gestione robusta delle chiavi
-        state_dict = checkpoint['state_dict'] if 'state_dict' in checkpoint else checkpoint
+    if os.path.isfile(args.checkpoint):
+        print(f"📥 Loading weights from: {args.checkpoint}")
+        checkpoint = torch.load(args.checkpoint, map_location=device)
+        
+        # Gestione dizionario checkpoint vs state_dict diretto
+        state_dict = checkpoint['model'] if 'model' in checkpoint else checkpoint
+        
+        # Rimuovi prefisso 'module.' se presente (Training parallelo)
+        state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
+        
         model.load_state_dict(state_dict, strict=False)
     else:
-        print(f"⚠️ Checkpoint not found: {ckpt_path}")
-    
-    # Validation Loader
-    val_dataset = SHA(config['DATA']['ROOT'], 'val', build_transforms(config['DATA'], False))
-    val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False, num_workers=4, collate_fn=crowd_collate)
+        print(f"❌ Checkpoint not found: {args.checkpoint}")
+        return
 
-    evaluate_stage1(model, val_loader, device, threshold=final_threshold)
+    # 4. Esegui Valutazione
+    print(f"🚀 Starting Evaluation on {len(val_dataset)} images...")
+    metrics = evaluate(model, val_loader, device, threshold=args.threshold)
+    
+    # 5. Stampa Risultati
+    print("\n" + "="*40)
+    print(f"📊 EVALUATION RESULTS ({config['BACKBONE']['TYPE']})")
+    print("="*40)
+    print(f"🎯 F1-Score:   {metrics['f1']:.2%}")
+    print(f"🎯 Accuracy:   {metrics['accuracy']:.2%}")
+    print(f"🎯 Precision:  {metrics['precision']:.2%}")
+    print(f"🎯 Recall:     {metrics['recall']:.2%}")
+    print("-" * 40)
+    print(f"🔢 Raw Counts:")
+    print(f"   TP (Correct Crowd): {metrics['TP']}")
+    print(f"   TN (Correct Empty): {metrics['TN']}")
+    print(f"   FP (False Alarm):   {metrics['FP']}")
+    print(f"   FN (Missed Crowd):  {metrics['FN']}")
+    print("="*40)
+
+if __name__ == "__main__":
+    main()

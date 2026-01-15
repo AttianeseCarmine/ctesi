@@ -1,6 +1,6 @@
 #!/bin/bash -l
 
-#SBATCH --job-name=stage23_shb_train
+#SBATCH --job-name=sha_vit_train
 #SBATCH --account=did_crowd_counting_339
 #SBATCH --partition=aiq
 #SBATCH --gres=gpu:1
@@ -9,8 +9,8 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH --time=07:00:00
-#SBATCH -o logs/stage23_%j_shb.out
-#SBATCH -e logs/stage23_%j_shb.err
+#SBATCH -o logs/sha_vit_stage1_%j.out
+#SBATCH -e logs/sha_vit_stage1_%j.err
 #SBATCH --mail-user=c.attianese13@studenti.unisa.it
 #SBATCH --mail-type=ALL
 
@@ -37,6 +37,9 @@ echo "HOSTNAME: $(hostname)"
 echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
 python -c "import torch; print('torch', torch.__version__); print('cuda_available', torch.cuda.is_available()); print('torch_cuda', torch.version.cuda)"
 nvidia-smi
-#srun python train_stage2.py --config configs/config_shb.yaml --out_dir checkpoints/shb/stage2 
 
-srun python train_stage3.py --config configs/config_shb.yaml --s1 checkpoints/shb/stage1/best_model.pth --s2 checkpoints/shb/stage2/best_model.pth --out checkpoints/shb/stage3
+srun python train_stage1.py --config configs/config_vit_sha.yaml --out checkpoints/sha_vit/stage1
+
+#srun python train_stage2.py --config configs/config_vit_sha.yaml  --out checkpoints/sha_vit/stage2 
+
+#srun python train_stage3_v2.py --config configs/config_vit_sha.yaml --s1 checkpoints/sha_vit/stage1/best_model.pth --s2 checkpoints/sha_vit/stage2/best_model.pth --out checkpoints/sha_vit/stage3
