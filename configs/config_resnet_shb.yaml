@@ -36,7 +36,7 @@ CLIP_EBC_HEAD:
   PRETRAINED: "openai"
   PROMPT_TYPE: "word"      # Usa "one", "two", "three"...
   WINDOW_SIZE: 16          # Finestra di attenzione
-  REDUCTION: 16            # RN50 riduce di 32x, ma con dilation diventa 16x
+  REDUCTION: 8           # RN50 riduce di 32x, ma con dilation diventa 16x
 
 # ============================================================
 # BINS PER DENSITÀ BASSA (SHB)
@@ -83,7 +83,7 @@ TRAIN_STAGE2:
   BATCH_SIZE: 16          # 16 o 32 a seconda della VRAM
   NUM_WORKERS: 8
   EVAL_FREQ: 10
-  
+  NUM_WORKERS: 4
   # Strategia Learning Rate Ufficiale
   OPTIMIZER: "adamw"
   LR_BACKBONE: 1.0e-5      # ResNet regge bene questo LR (più alto di ViT)
@@ -98,29 +98,27 @@ LOSS_STAGE2:
   WEIGHT_COUNT_LOSS: 1.0  # Peso per MAE loss ausiliaria
   COUNT_LOSS: "dmcount"   # Usa DM Count (OT Based)
   WEIGHT_OT: 0.1
-  WEIGHT_TV: 0.01
+  WEIGHT_TV: 0.1
   LABEL_SMOOTHING: 0.0
 
 # ============================================================
 # STAGE 3: JOINT REFINEMENT
 # ============================================================
 TRAIN_STAGE3:
-  EPOCHS: 400
+  EPOCHS: 600
   BATCH_SIZE: 4          # Basso perché carichiamo 2 modelli in VRAM
   NUM_WORKERS: 4
   
-  # Optimizer params
-  LR: 1.0e-5           
+  # Optimizer params (Learning Rate molto basso per non rovinare CLIP)
+  #LR: 1.0e-5             
+  LR: 1.0e-5           # Sperimentale leggermente più alto
   WEIGHT_DECAY: 1.0e-4
+  LAMBDA_ZIP: 0.5    # Dà importanza alla precisione di ZIP
+  LAMBDA_CLIP: 1.0   # Mantiene la capacità di conteggio di CLIP
+  LAMBDA_CONS: 0.2   # <--- AGGIUNGI QUESTO: evita che ZIP "mangi" persone reali
+  STEEPNESS_START: 1.0
+  STEEPNESS_END: 20.0
   
-  # Pesi della Loss
-  LAMBDA_ZIP: 0.5         
-  LAMBDA_CLIP: 1.0        
-  LAMBDA_COUNT: 0.1       
-  ZIP_STEPS: 1
-  CLIP_STEPS: 1
-  LR_ZIP: 1.0e-5
-  LR_CLIP: 1.0e-5
   AMP: true
   CLIP_GRAD_NORM: 1.0
   LOG_EVERY: 50

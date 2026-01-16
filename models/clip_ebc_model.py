@@ -154,25 +154,51 @@ def format_count(count: Union[float, Tuple[float, float]], prompt_type: str = "w
 # 3. CLIP VISUAL ENCODER (Con FIX per Risoluzione 448+)
 # ============================================================
 class CLIPVisualEncoder(nn.Module):
-    def __init__(self, model_name="RN50", pretrained="openai", frozen=False, output_layer="layer3"):
+    def __init__(self, model_name="ViT-B/16", pretrained="openai", frozen=False, output_layer="layer3", num_vpt=10, deep_vpt=True, vpt_drop=0.0):
         super().__init__()
+        # Carica il modello CLIP originale
         clip_model, _, _ = open_clip.create_model_and_transforms(model_name, pretrained=pretrained, force_quick_gelu=True)
         self.visual = clip_model.visual
         self.output_layer = output_layer
+        self.num_vpt = num_vpt
+        self.deep_vpt = deep_vpt
         
         if 'RN' in model_name or 'ResNet' in model_name:
+            # Ramo ResNet: No VPT
             if output_layer == 'layer2': self.out_channels, self.reduction = 512, 8
             elif output_layer == 'layer3': self.out_channels, self.reduction = 1024, 16
             else: self.out_channels, self.reduction = 2048, 32
         else:
-            self.out_channels = self.visual.transformer.width
-            self.reduction = 16 
+            # Ramo ViT: Inizializzazione Visual Prompt Tuning (VPT)
+            self.image_encoder_depth = len(self.visual.transformer.resblocks)
+            width = self.visual.transformer.width
+            
+            # Inizializzazione stile Xavier/Yiming
+            val = math.sqrt(6. / float(3 * 16 + width)) 
+            num_layers = self.image_encoder_depth if self.deep_vpt else 1
+            
+            self.vpt_params = nn.ParameterList([
+                nn.Parameter(torch.empty(self.num_vpt, width).uniform_(-val, val)) 
+                for _ in range(num_layers)
+            ])
+            self.vpt_drop = nn.Dropout(vpt_drop)
+            
+            self.out_channels = width
+            self.reduction = 16
             
         if frozen:
-            for p in self.visual.parameters(): p.requires_grad = False
+            for p in self.visual.parameters(): 
+                p.requires_grad = False
+
+    def _prepare_vpt(self, layer_idx, batch_size, device, dtype):
+        # Fondamentale per AMP: assicura che i prompt abbiano lo stesso tipo dei dati immagine
+        vpt = self.vpt_params[layer_idx].to(device).to(dtype)
+        vpt = vpt.unsqueeze(0).expand(batch_size, -1, -1)
+        vpt = self.vpt_drop(vpt)
+        return vpt.permute(1, 0, 2) # [Num_VPT, Batch, Width]
 
     def forward(self, x):
-        # --- LOGICA RESNET (Invariata) ---
+        # --- LOGICA RESNET ---
         if hasattr(self.visual, 'layer1'): 
             x = self.visual.conv1(x)
             x = self.visual.bn1(x)
@@ -190,62 +216,56 @@ class CLIPVisualEncoder(nn.Module):
             if self.output_layer == 'layer4': x = self.visual.layer4(x)
             return x
             
-        # --- LOGICA ViT (CORRETTA PER IMMAGINI RETTANGOLARI) ---
+        # --- LOGICA ViT CON VPT E SUPPORTO RETTANGOLARE ---
         else: 
-            # 1. Patch Embedding (Conv2d)
-            x = self.visual.conv1(x)  # [Batch, Width, Grid_H, Grid_W]
-            
-            # CATTURIAMO LE DIMENSIONI DELLA GRIGLIA QUI!
+            # 1. Patch Embedding
+            x = self.visual.conv1(x) 
             B, width, grid_h, grid_w = x.shape 
             
-            # 2. Flatten
-            x = x.reshape(B, width, -1).permute(0, 2, 1) # [B, L, Width]
-            
-            # 3. Class Token
+            # 2. Flatten & Class Token
+            x = x.reshape(B, width, -1).permute(0, 2, 1) 
             class_embed = self.visual.class_embedding.to(x.dtype) + torch.zeros(B, 1, width, dtype=x.dtype, device=x.device)
-            x = torch.cat([class_embed, x], dim=1) # [B, L+1, Width]
+            x = torch.cat([class_embed, x], dim=1) 
             
-            # 4. Positional Embedding Interpolation (RECTANGULAR SUPPORT)
+            # 3. Interpolazione Positional Embedding (per risoluzioni diverse da 224x224)
             pos_embed = self.visual.positional_embedding.to(x.dtype)
-            
-            # Se il numero di token non corrisponde (es. img più grande o rettangolare)
             if x.shape[1] != pos_embed.shape[0]:
-                cls_pos = pos_embed[0:1] # [1, Width]
-                grid_pos = pos_embed[1:] # [Orig_L, Width] (es. 196 per ViT-B/16 su 224x224)
-                
-                # Dimensione originale del grid di pre-training (es. 14x14)
+                cls_pos = pos_embed[0:1]
+                grid_pos = pos_embed[1:]
                 orig_size = int(math.sqrt(grid_pos.shape[0]))
-                
-                # Reshape alla griglia quadrata originale
                 grid_pos = grid_pos.reshape(1, orig_size, orig_size, -1).permute(0, 3, 1, 2)
-                
-                # Interpolazione Bilineare alla nuova dimensione REALE (grid_h, grid_w)
-                grid_pos = F.interpolate(
-                    grid_pos, 
-                    size=(grid_h, grid_w), # <--- USA LE DIMENSIONI CATTURATE DALLA CONV
-                    mode='bicubic', 
-                    align_corners=False
-                )
-                
-                # Flatten di nuovo
+                grid_pos = F.interpolate(grid_pos, size=(grid_h, grid_w), mode='bicubic', align_corners=False)
                 grid_pos = grid_pos.permute(0, 2, 3, 1).reshape(grid_h * grid_w, -1)
-                
-                # Ricostruisce pos_embed
                 pos_embed = torch.cat([cls_pos, grid_pos], dim=0)
             
-            # 5. Add Position & Transformer
             x = x + pos_embed
-            x = self.visual.ln_pre(x).permute(1, 0, 2)
-            x = self.visual.transformer(x).permute(1, 0, 2)
+            x = self.visual.ln_pre(x).permute(1, 0, 2) # [Seq, Batch, Width]
             
-            # 6. Ricostruzione output spaziale
-            # Non usiamo più math.sqrt, abbiamo grid_h e grid_w salvati!
+            # 4. Ciclo Transformer con iniezione VPT
+            vpt = self._prepare_vpt(0, B, x.device, x.dtype)
+            
+            for idx in range(self.image_encoder_depth):
+                # Assemble: [CLS, VPT, TOKENS]
+                x = torch.cat([x[:1, :, :], vpt, x[1:, :, :]], dim=0)
+                
+                x = self.visual.transformer.resblocks[idx](x)
+
+                # Disassemble: rimuove VPT per passare allo strato successivo
+                if idx < self.image_encoder_depth - 1:
+                    if self.deep_vpt:
+                        vpt = self._prepare_vpt(idx + 1, B, x.device, x.dtype)
+                    else:
+                        vpt = x[1 : (self.num_vpt + 1), :, :]
+                
+                x = torch.cat([x[:1, :, :], x[(self.num_vpt + 1):, :, :]], dim=0)
+            
+            # 5. Ricostruzione Mappa Spaziale
+            x = x.permute(1, 0, 2) 
+            x = self.visual.ln_post(x)
+            # Rimuove il CLS token e reshape a griglia [B, C, H, W]
             return x[:, 1:, :].permute(0, 2, 1).reshape(B, width, grid_h, grid_w)
 
-# ============================================================
-# 4. CLIP-EBC MODEL (MAIN CLASS)
-# ============================================================
-
+            
 class CLIPEBCModel(nn.Module):
     def __init__(self, config: Dict):
         super().__init__()
@@ -253,6 +273,13 @@ class CLIPEBCModel(nn.Module):
         model_name = ebc_cfg.get('CLIP_MODEL', 'RN50')
         pretrained = ebc_cfg.get('PRETRAINED', 'openai')
         self.prompt_type = ebc_cfg.get('PROMPT_TYPE', 'word')
+        
+        # Recupera il target reduction dal config
+        target_reduction = ebc_cfg.get('REDUCTION', 16)
+        
+        # Diciamo esplicitamente al modello qual è la sua riduzione finale
+        # così sliding_window_predict non si confonde.
+        self.reduction = target_reduction 
         
         block_size = config.get('DATA', {}).get('ZIP_BLOCK_SIZE', 16)
         output_layer = 'layer3' if block_size == 16 else 'layer4'
@@ -265,13 +292,29 @@ class CLIPEBCModel(nn.Module):
         self.channels = self.visual_encoder.out_channels
         self.clip_embed_dim = self.clip_model.text_projection.shape[1]
         
+        # ====================================================
+        # FIX: QUI MANCAVA IL BLOCCO DI DEFINIZIONE UPSAMPLE!
+        # ====================================================
+        if target_reduction == 8:
+            self.upsample = nn.ConvTranspose2d(
+                in_channels=self.channels, 
+                out_channels=self.channels, 
+                kernel_size=2, stride=2
+            )
+            nn.init.normal_(self.upsample.weight, std=0.01)
+            if self.upsample.bias is not None:
+                nn.init.constant_(self.upsample.bias, 0)
+            print(f"✨ Enabled 2x Upsampling for Reduction 8 (Model: {model_name})")
+        else:
+            self.upsample = nn.Identity()
+
         if 'RN50' in model_name or 'ResNet50' in model_name:
             decoder_cfg = [2048]
             self.image_decoder = make_resnet_layers(Bottleneck, decoder_cfg, in_channels=self.channels, expansion=1)
             self.channels = decoder_cfg[-1]
-        elif 'ViT-B/16' or 'vit-b/16' in model_name:
+        elif 'ViT-B/16' in model_name or 'vit-b/16' in model_name:
             # Implementazione stile Yiming per ViT
-            decoder_cfg = [768]
+            decoder_cfg = [768] # Mantiene la dimensione canali del ViT
             self.image_decoder = make_resnet_layers(BasicBlock, decoder_cfg, in_channels=self.channels, expansion=1)
             self.channels = decoder_cfg[-1]
         else:
@@ -299,7 +342,13 @@ class CLIPEBCModel(nn.Module):
 
     def forward(self, x):
         B = x.shape[0]
+        # 1. Feature Extraction (Esce a 1/16 per ViT)
         img_feat = self.visual_encoder(x)
+        
+        # 2. Upsampling (Diventa 1/8 se attivato)
+        img_feat = self.upsample(img_feat)
+
+        # 3. Decoder & Projection
         img_feat = self.image_decoder(img_feat)
         img_feat = self.projection(img_feat)
         

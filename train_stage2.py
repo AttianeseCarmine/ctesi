@@ -8,6 +8,7 @@ import argparse
 import math
 import torch
 import torch.nn as nn
+import shutil
 from torch.utils.data import DataLoader
 from torch.optim import AdamW
 from torch.amp import GradScaler, autocast
@@ -17,7 +18,7 @@ from models.clip_ebc_model import CLIPEBCModel
 from datasets.sha import SHA # O SHB, assicurati di usare la classe giusta
 from datasets.transforms import build_transforms
 from losses.clip_ebc_loss import DACELoss
-
+from utils.eval_utils import sliding_window_predict
 # --- SCHEDULER UFFICIALE (Warmup + Cosine) ---
 def adjust_learning_rate(optimizer, epoch, args):
     """Decay the learning rate based on schedule"""
@@ -53,33 +54,50 @@ def main():
     parser.add_argument('--config', type=str, default="configs/config_sha.yaml")
     parser.add_argument('--gpu', type=int, default=0)
     parser.add_argument('--out_dir', type=str, default="checkpoints/sha/stage2")
-    cmd_args = parser.parse_args()
-
-    device = torch.device(f'cuda:{cmd_args.gpu}')
-    os.makedirs(cmd_args.out_dir, exist_ok=True)
+    cmd_args = parser.parse_args()  # <--- Qui è definito come cmd_args
     
+    device = torch.device(f'cuda:{cmd_args.gpu}')
+    
+    if not os.path.exists(cmd_args.out_dir):
+        os.makedirs(cmd_args.out_dir, exist_ok=True)
+    
+    # --- CORREZIONE QUI ---
+    # Sostituisci 'args' con 'cmd_args' per coerenza con sopra
+    saved_config_path = os.path.join(cmd_args.out_dir, "config.yaml") 
+    shutil.copy(cmd_args.config, saved_config_path)
+    print(f"📄 Configuration saved to: {saved_config_path}")
+
     with open(cmd_args.config, 'r') as f: config = yaml.safe_load(f)
+    
     print(f"🚀 Training Stage 2 on {config['DATASET']} (Official Replica)")
 
     # 1. Model
     model = CLIPEBCModel(config).to(device)
 
-    # 2. Optimizer Groups (Split Backbone vs Head)
+    # 2. Optimizer Groups (CORRETTO per ViT + VPT)
     backbone_params = []
     head_params = []
     
-    # Identifica i parametri del backbone (visual_encoder di CLIP)
     for name, param in model.named_parameters():
-        if "visual_encoder" in name or "clip_model" in name:
+        if not param.requires_grad:
+            continue
+        
+        # LOGICA CORRETTA:
+        # Se è un Prompt (vpt), un Upsample, un Decoder o la Proiezione -> HEAD (LR Alto)
+        if "vpt" in name or "upsample" in name or "decoder" in name or "projection" in name or "logit_scale" in name:
+            head_params.append(param)
+        # Se è il resto del visual_encoder -> BACKBONE (LR Zero o Basso)
+        elif "visual_encoder" in name or "clip_model" in name:
             backbone_params.append(param)
         else:
-            head_params.append(param) # Decoder, Projections, Logit Scale
-            
+            head_params.append(param)
+
     optimizer = AdamW([
         {'params': backbone_params, 'lr': config['TRAIN_STAGE2']['LR_BACKBONE'], 'name': 'backbone'},
         {'params': head_params, 'lr': config['TRAIN_STAGE2']['LR_HEAD'], 'name': 'head'}
     ], weight_decay=config['TRAIN_STAGE2']['WEIGHT_DECAY'])
-
+    
+    print(f"✅ Optimizer Setup: {len(backbone_params)} backbone params (Frozen/Low), {len(head_params)} head params (Training).")
     scaler = GradScaler('cuda', enabled=config['TRAIN_STAGE2']['AMP'])
 
     # 3. Loss
@@ -151,22 +169,34 @@ def main():
         # --- VALIDATION ---
         model.eval()
         val_mae = 0
+        window_size = config['DATA']['CROP_SIZE']
+        
         with torch.no_grad():
             for batch in val_loader:
                 img = batch['image'].to(device)
                 gt_count = len(batch['points'][0])
                 
-                out = model(img)
-                pred_count = out['final_count'].item() # CLIP-EBC restituisce final_count nel dict
+                if img.shape[2] > window_size or img.shape[3] > window_size:
+                    # Usa sliding window per immagini grandi (SOTA approach)
+                    pred_density = sliding_window_predict(model, img, window_size=window_size, stride=window_size, device=device)
+                    pred_count = pred_density.sum().item()
+                else:
+                    out = model(img)
+                    pred_count = out['final_count'].item()
                 
                 val_mae += abs(pred_count - gt_count)
-        
+
         val_mae /= len(val_loader)
         print(f"📊 Ep {epoch+1} | Val MAE: {val_mae:.2f} (Best: {best_mae:.2f})")
         
         if val_mae < best_mae:
             best_mae = val_mae
-            torch.save(model.state_dict(), os.path.join(cmd_args.out_dir, "best_model.pth"))
+            torch.save({
+                'model': model.state_dict(),
+                'epoch': epoch,
+                'mae': val_mae,
+                'config': config
+            }, os.path.join(cmd_args.out_dir, "best_model.pth"))
             print("🌟 Saved Best Model")
 
 if __name__ == "__main__":

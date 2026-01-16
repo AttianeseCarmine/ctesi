@@ -35,30 +35,22 @@ CLIP_EBC_HEAD:
   PRETRAINED: "openai"
   PROMPT_TYPE: "word"      # Usa "one", "two", "three"...
   WINDOW_SIZE: 16          # Finestra di attenzione
-  REDUCTION: 16            # RN50 riduce di 32x, ma con dilation diventa 16x
+  REDUCTION: 8            # RN50 riduce di 32x, ma con dilation diventa 16x
 
 # BIN UFFICIALI PER SHANGHAITECH (Estratti da configs/reduction_16.json)
 # Nota: [start, end] inclusivi.
 # ShanghaiTech A (Folla densa)
 BINS:
-  - [-0.1, 0.5]
-  - [0.5, 1.5]
-  - [1.5, 2.5]
-  - [2.5, 3.5]
-  - [3.5, 4.5]
-  - [4.5, 5.5]
-  - [5.5, 6.5]
-  - [6.5, 7.5]
-  - [7.5, 8.5]
-  - [8.5, 10.5]
-  - [10.5, 14.5]
-  - [14.5, 20.5]
-  - [20.5, 30.5]
-  - [30.5, 45.5]
-  - [45.5, 9999]
+  - [-0.1, 0.5]  # 0
+  - [0.5, 1.5]   # 1
+  - [1.5, 2.5]   # 2
+  - [2.5, 3.5]   # 3
+  - [3.5, 4.5]   # 4
+  - [4.5, 5.5]   # 5
+  - [5.5, 9999]  # >5
 
-NUM_BINS: 15
-BIN_CENTERS: [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.5, 12.5, 17.5, 25.5, 38.0, 60.0]
+NUM_BINS: 7
+BIN_CENTERS: [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
 
 # ============================================================
 # TRAINING STAGES
@@ -82,14 +74,15 @@ EVAL_STAGE1:
 TRAIN_STAGE2:
   TOTAL_EPOCHS: 1500       # Il paper dice 300-500
   BATCH_SIZE: 16          # 16 o 32 a seconda della VRAM
-  NUM_WORKERS: 8
-  EVAL_FREQ: 10
-  
+  EVAL_FREQ: 15
+  WARMUP_EPOCHS: 15        # Aumentato da 5 a 15 per stabilità VPT
+  LR_BACKBONE: 0           # Se hai congelato il backbone come sopra
+  NUM_WORKERS: 4
   # Strategia Learning Rate Ufficiale
   OPTIMIZER: "adamw"
   LR_BACKBONE: 1.0e-6    # Abbassa LR del backbone (ViT è delicato)
-  LR_HEAD: 1.0e-4
-  WEIGHT_DECAY: 1.0e-4
+  LR_HEAD: 1.0e-3
+  WEIGHT_DECAY: 0
   WARMUP_EPOCHS: 5        # FONDAMENTALE!
   AMP: true
   CLIP_GRAD_NORM: 1.0     # 10.0 è aggressivo, prova 1.0 per stabilità   # Il repo ufficiale usa 10.0, non 1.0
@@ -103,7 +96,7 @@ LOSS_STAGE2:
   LABEL_SMOOTHING: 0.0
 
 TRAIN_STAGE3:
-  EPOCHS: 400
+  EPOCHS: 600
   BATCH_SIZE: 4          # Basso perché carichiamo 2 modelli in VRAM
   NUM_WORKERS: 4
   
@@ -111,15 +104,12 @@ TRAIN_STAGE3:
   #LR: 1.0e-5             
   LR: 1.0e-5           # Sperimentale leggermente più alto
   WEIGHT_DECAY: 1.0e-4
-  
-  # Pesi della Loss (Bilanciamento corretto)
-  LAMBDA_ZIP: 0.5         # Riduci peso ZIP per non soffocare CLIP
-  LAMBDA_CLIP: 1.0        # Peso principale
-  LAMBDA_COUNT: 0.1       # <--- CRITICO: Abbassa da 10.0 a 0.1
-  ZIP_STEPS: 1
-  CLIP_STEPS: 1
-  LR_ZIP: 1.0e-5
-  LR_CLIP: 1.0e-5
+  LAMBDA_ZIP: 0.5    # Dà importanza alla precisione di ZIP
+  LAMBDA_CLIP: 1.0   # Mantiene la capacità di conteggio di CLIP
+  LAMBDA_CONS: 0.2   # <--- AGGIUNGI QUESTO: evita che ZIP "mangi" persone reali
+  STEEPNESS_START: 1.0
+  STEEPNESS_END: 20.0
+    
   AMP: true
   CLIP_GRAD_NORM: 1.0
   LOG_EVERY: 50

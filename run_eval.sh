@@ -1,112 +1,45 @@
-#!/bin/bash
-# ============================================================
-# ZIP-CLIP-EBC: Evaluation Pipeline
-# ============================================================
-# Esegue valutazione e visualizzazione per Stage 1 e Stage 2
-#
-# Uso:
-#   ./run_evaluation.sh                          # Usa config default
-#   ./run_evaluation.sh --config configs/config_shb.yaml
-#   ./run_evaluation.sh --num_samples 20         # Più visualizzazioni
-# ============================================================
-# ./run_evaluation.sh --config configs/config_sha.yaml --num_samples 15 --gpu 0 --threshold 0.5
-set -e  # Esci se un comando fallisce
+#!/bin/bash -l
 
-# === CONFIGURAZIONE DEFAULT ===
-CONFIG="configs/config_sha.yaml"
-NUM_SAMPLES=10
-GPU=0
-THRESHOLD_S1=0.5
+#SBATCH --job-name=th_S1
+#SBATCH --account=did_crowd_counting_339
+#SBATCH --partition=aiq
+#SBATCH --gres=gpu:1
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=32G
+#SBATCH --time=07:00:00
+#SBATCH -o logs/threshold_s1_%j.out
+#SBATCH -e logs/threshold_s1_%j.err
+#SBATCH --mail-user=c.attianese13@studenti.unisa.it
+#SBATCH --mail-type=ALL
 
-# === DIRECTORY OUTPUT ===
-OUTPUT_DIR="output"
-OUTPUT_S1="${OUTPUT_DIR}/stage1"
-OUTPUT_S2="${OUTPUT_DIR}/stage2"
+mkdir -p logs
 
-# Crea directory
-mkdir -p "$OUTPUT_S1"
-mkdir -p "$OUTPUT_S2"
+# init modules
+if ! command -v module &>/dev/null; then
+  [ -f /etc/profile.d/modules.sh ] && source /etc/profile.d/modules.sh
+  [ -f /usr/share/Modules/init/bash ] && source /usr/share/Modules/init/bash
+  [ -f /etc/profile.d/lmod.sh ] && source /etc/profile.d/lmod.sh
+fi
 
-# === HEADER ===
-echo ""
-echo "========================================================"
-echo "🚀 ZIP-CLIP-EBC EVALUATION PIPELINE"
-echo "========================================================"
-echo "📅 Data: $(date)"
-echo "📄 Config: $CONFIG"
-echo "🖥️  GPU: $GPU"
-echo "📊 Num samples per visualizzazione: $NUM_SAMPLES"
-echo "📁 Output Stage 1: $OUTPUT_S1"
-echo "📁 Output Stage 2: $OUTPUT_S2"
-echo "========================================================"
-echo ""
+module purge
+module load slurm/slurm/23.11.10
+module load anaconda/3
+module load cuda12.8/toolkit/12.8.0
+module load cuda12.8/blas/12.8.0
+module load cuda12.8/fft/12.8.0
 
-# ============================================================
-# STAGE 1: π-Head Evaluation
-# ============================================================
-echo ""
-echo "========================================================"
-echo "📊 STAGE 1: Valutazione π-Head (Classificazione Blocchi)"
-echo "========================================================"
-echo ""
+source "$(conda info --base)/etc/profile.d/conda.sh"
+conda activate ctesi
 
-# Valutazione metriche
-echo "🔍 Esecuzione evaluation_stage1.py..."
-python evaluations/evaluation_stage1.py \
-    --config "$CONFIG" \
-    --threshold "$THRESHOLD_S1" \
-    --gpu "$GPU" \
-    | tee "${OUTPUT_S1}/evaluation_results.txt"
+echo "HOSTNAME: $(hostname)"
+echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
+python -c "import torch; print('torch', torch.__version__); print('cuda_available', torch.cuda.is_available()); print('torch_cuda', torch.version.cuda)"
+nvidia-smi
 
-echo ""
-echo "🎨 Generazione visualizzazioni Stage 1..."
-python visualizations_results/visualize_stage1.py \
-    --config "$CONFIG" \
-    --output_dir "$OUTPUT_S1" \
-    --num_samples "$NUM_SAMPLES" \
-    --threshold "$THRESHOLD_S1" \
-    --gpu "$GPU"
+#srun python train_stage1.py --config configs/config_resnet_sha.yaml --out checkpoints/sha_res50/stage1
 
-echo ""
-echo "✅ Stage 1 completato! Risultati in: $OUTPUT_S1"
+srun python evaluation_stage1.py --config checkpoints/sha_res50/stage1/config.yaml --checkpoint checkpoints/sha_res50/stage1/best_model.pth 
 
-# ============================================================
-# STAGE 2: CLIP-EBC Evaluation
-# ============================================================
-echo ""
-echo "========================================================"
-echo "📊 STAGE 2: Valutazione CLIP-EBC Head (Conteggio)"
-echo "========================================================"
-echo ""
-
-# Valutazione metriche
-echo "🔍 Esecuzione evaluation_stage2.py..."
-python evaluations/evaluation_stage2.py \
-    --config "$CONFIG" \
-    --gpu "$GPU" \
-    | tee "${OUTPUT_S2}/evaluation_results.txt"
-
-echo ""
-echo "🎨 Generazione visualizzazioni Stage 2..."
-python visualizations_results/visualize_stage2.py \
-    --config "$CONFIG" \
-    --output_dir "$OUTPUT_S2" \
-    --num_samples "$NUM_SAMPLES" \
-    --gpu "$GPU"
-
-echo ""
-echo "✅ Stage 2 completato! Risultati in: $OUTPUT_S2"
-
-# ============================================================
-# SUMMARY
-# ============================================================
-echo ""
-echo "========================================================"
-echo "🏆 EVALUATION PIPELINE COMPLETATA!"
-echo "========================================================"
-
-echo " risultati in: $OUTPUT_DIR/"
-
-echo "========================================================"
-echo "📅 Completato: $(date)"
-echo "========================================================"
+#srun python train_stage3_v2.py --config configs/config_resnet_sha.yaml --s1 checkpoints/sha_res50/stage1/best_model.pth --s2 checkpoints/sha_res50/stage2/best_model.pth --out checkpoints/sha_res50/stage3ch

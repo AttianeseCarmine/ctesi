@@ -37,13 +37,13 @@ CLIP_EBC_HEAD:
 
 # Bins per SHB (Range ridotti per bassa densità)
 BINS:
-  - [-0.1, 0.5]  # 0
-  - [0.5, 1.5]   # 1
-  - [1.5, 2.5]   # 2
-  - [2.5, 3.5]   # 3
-  - [3.5, 4.5]   # 4
-  - [4.5, 5.5]   # 5
-  - [5.5, 9999]  # >5
+  - [-0.1, 0.5]  # 0 persone (Sfondo)
+  - [0.5, 1.5]   # 1 persona
+  - [1.5, 2.5]   # 2 persone
+  - [2.5, 3.5]   # 3 persone
+  - [3.5, 4.5]   # 4 persone
+  - [4.5, 5.5]   # 5 persone
+  - [5.5, 9999]  # >5 persone (Rarissimo in 8x8 pixel)
 
 NUM_BINS: 7
 BIN_CENTERS: [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
@@ -69,12 +69,12 @@ TRAIN_STAGE2:
   TOTAL_EPOCHS: 1000
   BATCH_SIZE: 16
   NUM_WORKERS: 8
-  EVAL_FREQ: 15 # METTI 10
+  EVAL_FREQ: 1
   OPTIMIZER: "adamw"
-  LR_BACKBONE: 0.0    # <--- BASSO per stabilità ViT
+  LR_BACKBONE: 1.0e-6    # <--- BASSO per stabilità ViT
   NUM_WORKERS: 4
-  LR_HEAD: 1.0e-3
-  WEIGHT_DECAY: 0.0
+  LR_HEAD: 1.0e-4
+  WEIGHT_DECAY: 1.0e-4
   WARMUP_EPOCHS: 15        # Aumentato da 5 a 15 per stabilità VPT
   LR_BACKBONE: 0         
   AMP: true
@@ -85,7 +85,7 @@ LOSS_STAGE2:
   WEIGHT_COUNT_LOSS: 1.0
   COUNT_LOSS: "dmcount"
   WEIGHT_OT: 0.1
-  WEIGHT_TV: 0.1
+  WEIGHT_TV: 0.01
   LABEL_SMOOTHING: 0.0
 
 TRAIN_STAGE3:
@@ -95,7 +95,7 @@ TRAIN_STAGE3:
   
   # Optimizer params (Learning Rate molto basso per non rovinare CLIP)
   #LR: 1.0e-5             
-  LR: 1.0e-6           # Sperimentale leggermente più alto
+  LR: 1.0e-5           # Sperimentale leggermente più alto
   WEIGHT_DECAY: 1.0e-4
   LAMBDA_ZIP: 0.5    # Dà importanza alla precisione di ZIP
   LAMBDA_CLIP: 1.0   # Mantiene la capacità di conteggio di CLIP

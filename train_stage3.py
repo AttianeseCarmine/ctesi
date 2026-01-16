@@ -12,6 +12,7 @@ import argparse
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import shutil
 from torch.utils.data import DataLoader
 from torch.optim import AdamW
 from torch.amp import GradScaler, autocast
@@ -97,21 +98,43 @@ def main():
     parser.add_argument('--config', type=str, default="configs/config_sha.yaml")
     parser.add_argument('--s1', type=str, required=True, help="Path best model Stage 1")
     parser.add_argument('--s2', type=str, required=True, help="Path best model Stage 2")
-    parser.add_argument('--out', type=str, default="checkpoints/sha/stage3_final")
+    parser.add_argument('--out', type=str, default="checkpoints/sha/stage3")
     parser.add_argument('--gpu', type=int, default=0)
     args = parser.parse_args()
     
     device = torch.device(f'cuda:{args.gpu}')
     os.makedirs(args.out, exist_ok=True)
     
+
+     # --- SALVATAGGIO CONFIG ---
+    # Salva una copia esatta del config usato per questo training
+    saved_config_path = os.path.join(args.out, "config.yaml")
+    shutil.copy(args.config, saved_config_path)
+    print(f"📄 Configuration saved to: {saved_config_path}")
+    # -------------------------------------------------
+
     with open(args.config, 'r') as f: config = yaml.safe_load(f)
-
-
-    base_lr = config['TRAIN_STAGE3']['LR']
-    zip_w = config['TRAIN_STAGE3']['LAMBDA_ZIP']  # Basso per mantenere struttura
-    clip_w = config['TRAIN_STAGE3']['LAMBDA_CLIP']  # Alto per precisione conteggio
+    # Estrazione dinamica dal config (TRAIN_STAGE3)
+    t3 = config.get("TRAIN_STAGE3", {})
+    EPOCHS = int(t3.get("EPOCHS", 400))
+    BASE_LR = float(t3.get("LR", 1.0e-5))
     
-    print(f"🚀 Stage 3 Joint Training | Config: {args.config}")
+    # Lambda per le Loss
+    l_zip_w = float(t3.get("LAMBDA_ZIP", 0.5))
+    l_clip_w = float(t3.get("LAMBDA_CLIP", 1.0))
+    l_cons_w = float(t3.get("LAMBDA_CONS", 0.2))
+    
+    # Parametri Steepness
+    s_start = float(t3.get("STEEPNESS_START", 1.0))
+    s_end = float(t3.get("STEEPNESS_END", 20.0))
+    
+    # Soglia Maschera
+    mask_eps = float(t3.get("MASK_EPS", 0.001))
+
+    print(f"🚀 Stage 3 REFINED | Epochs: {EPOCHS} | LR: {BASE_LR}")
+    print(f"⚖️  Loss Weights: CLIP={l_clip_w}, ZIP={l_zip_w}, CONS={l_cons_w}")
+
+    
     
     # --- 1. CARICAMENTO MODELLI ---
     print("📦 Loading Models...")
@@ -125,7 +148,13 @@ def main():
     # Stage 2: CLIPEBCModel (Usa la classe dal file clip_ebc_model.py)
     # Forziamo parametri se necessario
     if 'CLIP_EBC_HEAD' not in config: config['CLIP_EBC_HEAD'] = {}
-    config['CLIP_EBC_HEAD']['DECODER_DIM'] = 2048 
+    
+    # Imposta il DECODER_DIM solo se non è già presente nel config
+    if 'DECODER_DIM' not in config['CLIP_EBC_HEAD']:
+        if 'RN' in config['CLIP_EBC_HEAD'].get('CLIP_MODEL', ''):
+            config['CLIP_EBC_HEAD']['DECODER_DIM'] = 2048
+        else:
+            config['CLIP_EBC_HEAD']['DECODER_DIM'] = 768
     
     stage2 = CLIPEBCModel(config).to(device)
     ckpt2 = torch.load(args.s2, map_location=device)
@@ -143,7 +172,7 @@ def main():
     # Costruiamo lista piatta per l'optimizer
     final_groups = []
     for g in optim_groups:
-        final_groups.append({'params': g['params'], 'lr': base_lr * g['lr_mult']})
+        final_groups.append({'params': g['params'], 'lr': BASE_LR * g['lr_mult']})
 
     optimizer = AdamW(final_groups, weight_decay=1e-4)
     scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
@@ -170,10 +199,13 @@ def main():
     # --- 5. LOOP ---
     best_mae = float('inf')
     epochs = config['TRAIN_STAGE3']['EPOCHS']
-    for epoch in range(epochs): # 100 Epoche bastano per fine-tuning
+
+    for epoch in range(EPOCHS):
         model.train()
-        model.steepness = 1.0 # Soft Gating in training
         
+        # STEEPNESS ANNEALING DINAMICO
+        current_steepness = s_start + (epoch / EPOCHS) * (s_end - s_start)
+        model.steepness = current_steepness
         pbar = tqdm(train_loader, desc=f"Ep {epoch}")
         epoch_loss = 0
         
@@ -186,31 +218,27 @@ def main():
             optimizer.zero_grad()
             
             with autocast('cuda'):
-                # Forward Joint
-                out = model(imgs) 
+                out = model(imgs)
                 
-                # A. Loss CLIP (Density)
-                # Usa 'final_density' che è già filtrata dal gating
-                l_clip, _ = clip_loss_fn(
-                    out['ebc_logits'], 
-                    out['final_density'], 
-                    gt_density, 
-                    points
-                )
+                # 1. CLIP Loss
+                l_clip, _ = clip_loss_fn(out['ebc_logits'], out['final_density'], gt_density, points)
                 
-                # B. Loss ZIP (Mask maintenance)
-                # Creiamo target binario ridimensionato
+                # 2. ZIP Loss con soglia da config
                 pi_logits = out['pi_logits']
-                h, w = pi_logits.shape[-2:]
-                gt_resized = F.interpolate(gt_density, size=(h, w), mode='bilinear')
-                # Scala per conservare la somma approssimativa (density/area)
-                gt_resized = gt_resized * ((gt_density.shape[-1]/w)**2)
-                mask_target = (gt_resized > 0.001).float()
+                with torch.no_grad():
+                    gt_resized = F.interpolate(gt_density, size=pi_logits.shape[-2:], mode='bilinear')
+                    gt_resized = gt_resized * ((gt_density.shape[-1]/pi_logits.shape[-1])**2)
+                    mask_target = (gt_resized > mask_eps).float() # USA MASK_EPS
                 
                 l_zip = zip_loss_fn(pi_logits, mask_target)
                 
-                # Totale
-                loss = (clip_w * l_clip) + (zip_w * l_zip)
+                # 3. Consistency Regularization
+                clip_raw_density = out['raw_density'].detach()
+                prob_zip = out['pi_prob']
+                l_cons = (clip_raw_density * (1 - prob_zip)).mean()
+
+                # TOTALE PESATA DAI LAMBDA DELLO YAML
+                loss = (l_clip_w * l_clip) + (l_zip_w * l_zip) + (l_cons_w * l_cons)
 
             scaler.scale(loss).backward()
             scaler.step(optimizer)
@@ -239,11 +267,17 @@ def main():
         scheduler.step(val_mae)
         
         print(f"📊 Val MAE: {val_mae:.2f} (Best: {best_mae:.2f})")
-        
+
         if val_mae < best_mae:
             best_mae = val_mae
-            torch.save(model.state_dict(), os.path.join(args.out, "best_model.pth"))
-            print("🌟 Saved Best")
+            save_dict = {
+                'model': model.state_dict(),
+                'epoch': epoch,
+                'mae': val_mae,
+                'config': config
+            }
+            torch.save(save_dict, os.path.join(args.out, "best_model.pth"))
+            print(f"🌟 Saved Best Model (MAE: {val_mae:.2f})")
 
 if __name__ == "__main__":
     main()

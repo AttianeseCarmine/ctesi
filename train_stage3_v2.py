@@ -20,7 +20,7 @@ from torch.optim import AdamW
 from torch.amp import GradScaler, autocast
 from torch.optim.lr_scheduler import OneCycleLR
 from tqdm import tqdm
-
+import shutil
 # --- IMPORTS ---
 from models.joint_model import ZIPCLIPJointModel
 from models.clip_ebc_model import CLIPEBCModel
@@ -104,11 +104,17 @@ def main():
     parser.add_argument('--s2', type=str, default="checkpoints/sha/stage2/best_model.pth")
     parser.add_argument('--out', type=str, default="checkpoints/sha/stage3_refined")
     parser.add_argument('--gpu', type=int, default=0)
-    args = parser.parse_args()
-    
+    args = parser.parse_args()  # <--- Qui è definito come args
+
     device = torch.device(f'cuda:{args.gpu}')
     os.makedirs(args.out, exist_ok=True)
     
+    # --- CORREZIONE QUI ---
+    # Sostituisci 'cmd_args' con 'args' per coerenza con sopra
+    saved_config_path = os.path.join(args.out, "config.yaml") 
+    shutil.copy(args.config, saved_config_path)
+    print(f"📄 Configuration saved to: {saved_config_path}")
+
     with open(args.config, 'r') as f: config = yaml.safe_load(f)
 
     # Parametri Refined
@@ -120,14 +126,26 @@ def main():
     # --- 1. LOAD MODELS ---
     print("📦 Loading Models...")
     stage1 = ZIPModel(config).to(device)
-    stage1.load_state_dict(torch.load(args.s1, map_location=device)['model'], strict=False)
+    ckpt1 = torch.load(args.s1, map_location=device)
+    # Controlla se 'model' è una chiave, altrimenti usa l'intero oggetto
+    if isinstance(ckpt1, dict) and 'model' in ckpt1:
+        stage1.load_state_dict(ckpt1['model'], strict=False)
+    else:
+        stage1.load_state_dict(ckpt1, strict=False)
+    print("   -> Stage 1 Loaded")
     
     # Config hack per CLIP se necessario
     if 'CLIP_EBC_HEAD' not in config: config['CLIP_EBC_HEAD'] = {}
     config['CLIP_EBC_HEAD']['DECODER_DIM'] = 2048 
     
     stage2 = CLIPEBCModel(config).to(device)
-    stage2.load_state_dict(torch.load(args.s2, map_location=device)['model'], strict=False)
+    ckpt2 = torch.load(args.s2, map_location=device)
+    # Stesso controllo per Stage 2
+    if isinstance(ckpt2, dict) and 'model' in ckpt2:
+        stage2.load_state_dict(ckpt2['model'], strict=False)
+    else:
+        stage2.load_state_dict(ckpt2, strict=False)
+    print("   -> Stage 2 Loaded")
 
     # Inizializza con steepness bassa
     model = ZIPCLIPJointModel(stage1, stage2, steepness=1.0).to(device)
@@ -244,7 +262,7 @@ def main():
         
         if val_mae < best_mae:
             best_mae = val_mae
-            torch.save({'model': model.state_dict(), 'epoch': epoch}, os.path.join(args.out, "best_model_refined.pth"))
+            torch.save({'model': model.state_dict(), 'epoch': epoch}, os.path.join(args.out, "best_model.pth"))
             print("🌟 Saved Best Refined")
 
 if __name__ == "__main__":
