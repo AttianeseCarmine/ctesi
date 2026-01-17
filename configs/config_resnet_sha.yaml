@@ -35,34 +35,25 @@ CLIP_EBC_HEAD:
   PRETRAINED: "openai"
   PROMPT_TYPE: "word"      # Usa "one", "two", "three"...
   WINDOW_SIZE: 16          # Finestra di attenzione
-  REDUCTION: 16           # RN50 riduce di 32x, ma con dilation diventa 16x
+  REDUCTION: 8           # RN50 riduce di 32x, ma con dilation diventa 16x
 
-# BIN UFFICIALI PER SHANGHAITECH (Estratti da configs/reduction_16.json)
-# Nota: [start, end] inclusivi.
-# ShanghaiTech A (Folla densa)
+# ============================================================
+# BINS PER DENSITÀ BASSA (SHA)
+# ============================================================
 BINS:
   - [0, 0]
   - [1, 1]
   - [2, 2]
   - [3, 3]
-  - [4, 4]
-  - [5, 5]
-  - [6, 6]
-  - [7, 7]
-  - [8, 8]
-  - [9, 9]
-  - [10, 10]
-  - [11, 11]
-  - [12, 12]
-  - [13, 13]
-  - [14, 9999]  # Overflow bin
+  - [4, 9999]
 
-NUM_BINS: 15
-BIN_CENTERS: [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 16.85]
+NUM_BINS: 5
+# Il valore 4.29992 è calcolato statisticamente dal repo ufficiale per SHA
+BIN_CENTERS: [0.0, 1.0, 2.0, 3.0, 4.29992]
 
 
 # ============================================================
-# TRAINING STAGES
+# TRAINING STAGES 1
 # ============================================================
 TRAIN_STAGE1:
   EPOCHS: 2000
@@ -81,26 +72,25 @@ EVAL_STAGE1:
 # TRAINING (Stage 2)
 # ============================================================
 TRAIN_STAGE2:
-  TOTAL_EPOCHS: 1500       # Il paper dice 300-500
-  BATCH_SIZE: 16          # 16 o 32 a seconda della VRAM
-  NUM_WORKERS: 8
-  EVAL_FREQ: 15
+  TOTAL_EPOCHS: 2600       
+  BATCH_SIZE: 8   
+  EVAL_FREQ: 15     
   NUM_WORKERS: 4
   # Strategia Learning Rate Ufficiale
   OPTIMIZER: "adamw"
-  LR_BACKBONE: 1.0e-5      # ResNet regge bene questo LR e impara prima
-  LR_HEAD: 1.0e-4
+  LR_BACKBONE: 1.0e-5      
+  LR_HEAD: 1.0e-4          
   WEIGHT_DECAY: 1.0e-4
-  WARMUP_EPOCHS: 5        # FONDAMENTALE!
+  CLIP_GRAD_NORM: 10.0
+  WARMUP_EPOCHS: 50        
   AMP: true
-  CLIP_GRAD_NORM: 1.0     # 10.0 è aggressivo, prova 1.0 per stabilità   # Il repo ufficiale usa 10.0, non 1.0
 
 LOSS_STAGE2:
   TYPE: "dace"
-  WEIGHT_COUNT_LOSS: 1.0  # Peso per MAE loss ausiliaria
-  COUNT_LOSS: "dmcount"   # Usa DM Count (OT Based)
+  COUNT_LOSS: "dmcount"   
   WEIGHT_OT: 0.1
-  WEIGHT_TV: 0.1
+  WEIGHT_TV: 0.01
+  WEIGHT_COUNT_LOSS: 1.0  # Peso per MAE loss ausiliaria
   LABEL_SMOOTHING: 0.0
 
 TRAIN_STAGE3:

@@ -1,0 +1,151 @@
+# configs/config_qnrf_resnet.yaml
+# ============================================================
+# ZIP-CLIP-EBC: Configurazione UFFICIALE QNRF (ResNet50)
+# ============================================================
+
+RUN_NAME: "qnrf_res50"
+SEED: 42
+DEVICE: "cuda"
+
+# ============================================================
+# DATASET
+# ============================================================
+DATASET: "qnrf"
+DATA:
+  ROOT: "./data/qnrf/"  # <--- Assicurati che il percorso sia giusto
+  TRAIN_SPLIT: "train"
+  VAL_SPLIT: "val"         
+  
+  # Normalizzazione Standard CLIP
+  NORM_MEAN: [0.48145466, 0.4578275, 0.40821073]
+  NORM_STD:  [0.26862954, 0.26130258, 0.27577711]
+  
+  # ResNet lavora benissimo a 448 (miglior dettaglio per folla densa)
+  CROP_SIZE: 448
+  CROP_SCALE: [0.5, 2.0]
+  IMG_EXTS: [".jpg", ".png"]
+
+# ============================================================
+# BACKBONE (Stage 1)
+# ============================================================
+BACKBONE:
+  TYPE: "resnet50"       # ResNet50 Standard
+  PRETRAINED: True
+  FREEZE_BN: True
+
+# ============================================================
+# MODEL: CLIP HEAD (Stage 2)
+# ============================================================
+CLIP_EBC_HEAD:
+  CLIP_MODEL: "RN50"     # Nome ufficiale CLIP per ResNet50
+  PRETRAINED: "openai"
+  PROMPT_TYPE: "word"
+  WINDOW_SIZE: 16
+  
+  # Usiamo Reduction 8 per la massima precisione (standard SOTA)
+  # Il modello userà l'upsample che abbiamo fixato (16 -> 8)
+  REDUCTION: 8
+  
+  # NOTA: ResNet NON usa VPT (Visual Prompt Tuning).
+  # Questi parametri vengono ignorati, ma li lasciamo a 0 per pulizia.
+  NUM_VPT: 0
+  VPT_DROP: 0.0
+
+# ============================================================
+# BIN CONFIGURATION (QNRF - Fine Granularity)
+# Fonte: reduction_8.json -> key "8" -> "qnrf" -> "bins" -> "fine"
+# ============================================================
+# QNRF è molto denso, usiamo una classificazione più fine (0..8)
+BINS:
+  - [0, 0]
+  - [1, 1]
+  - [2, 2]
+  - [3, 3]
+  - [4, 4]
+  - [5, 5]
+  - [6, 6]
+  - [7, 7]
+  - [8, 99999] 
+
+NUM_BINS: 9
+# Fonte: reduction_8.json -> key "8" -> "qnrf" -> "anchor_points" -> "fine" -> "average"
+BIN_CENTERS: [0, 1, 2, 3, 4, 5, 6, 7, 9.23349]
+
+# ============================================================
+# TRAINING STAGE 1 (ZIP Pre-training)
+# ============================================================
+TRAIN_STAGE1:
+  EPOCHS: 1000
+  BATCH_SIZE: 16         # ResNet 448x448 occupa memoria
+  NUM_WORKERS: 8
+  VAL_INTERVAL: 5
+  OPTIMIZER: "adamw"
+  LR_BACKBONE: 1.0e-5
+  LR_HEAD: 1.0e-4        # Un po' più basso per stabilità su QNRF
+  WEIGHT_DECAY: 1.0e-4
+  POS_WEIGHT: 10         # Peso per il bilanciamento classi background/foreground
+
+EVAL_STAGE1:
+  THRESHOLD: 0.8        # Soglia leggermente più alta per QNRF
+
+# ============================================================
+# TRAINING STAGE 2 (CLIP-EBC)
+# ============================================================
+TRAIN_STAGE2:
+  TOTAL_EPOCHS: 2600       
+  BATCH_SIZE: 8   
+  EVAL_FREQ: 15     
+  NUM_WORKERS: 4
+  # Strategia Learning Rate Ufficiale
+  OPTIMIZER: "adamw"
+  LR_BACKBONE: 1.0e-5      
+  LR_HEAD: 1.0e-4          
+  WEIGHT_DECAY: 1.0e-4
+  CLIP_GRAD_NORM: 1
+  WARMUP_EPOCHS: 50        
+  AMP: true
+
+LOSS_STAGE2:
+  TYPE: "dace"
+  WEIGHT_COUNT_LOSS: 1.0
+  COUNT_LOSS: "dmcount"
+  WEIGHT_OT: 0.1
+  WEIGHT_TV: 0.01
+  LABEL_SMOOTHING: 0.0
+
+# ============================================================
+# TRAINING STAGE 3 (Refinement)
+# ============================================================
+TRAIN_STAGE3:
+  EPOCHS: 600
+  BATCH_SIZE: 4
+  NUM_WORKERS: 4
+  
+  LR: 1.0e-5
+  WEIGHT_DECAY: 1.0e-4
+  
+  LAMBDA_ZIP: 0.5
+  LAMBDA_CLIP: 1.0
+  LAMBDA_CONS: 0.2
+  
+  STEEPNESS_START: 1.0
+  STEEPNESS_END: 20.0
+    
+  AMP: true
+  CLIP_GRAD_NORM: 1.0
+  LOG_EVERY: 50
+  MASK_THR: 0.35
+  MASK_EPS: 0.001
+  
+  CHECKPOINT_STAGE1: "checkpoints/qnrf_resnet50/stage1/best_model.pth" 
+  CHECKPOINT_STAGE2: "checkpoints/qnrf_resnet50/stage2/best_model.pth"
+
+EVAL_STAGE3:
+  PATCH_SIZE: 448        # Patch grande per QNRF
+  STRIDE: 448
+  THRESHOLD: 0.35
+
+EXP:
+  OUT_DIR: "./checkpoints"
+  SAVE_BEST: true
+  LOG_INTERVAL: 50

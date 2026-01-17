@@ -1,0 +1,120 @@
+# configs/config_qnrf_vit.yaml
+# ============================================================
+# ZIP-CLIP-EBC: Configurazione specifica per UCF-QNRF (High Density)
+# ============================================================
+
+RUN_NAME: "qnrf_vit"
+SEED: 42
+DEVICE: "cuda"
+
+# ============================================================
+# DATASET (UCF-QNRF)
+# ============================================================
+DATASET: "qnrf"
+DATA:
+  ROOT: "./data/qnrf/"
+  TRAIN_SPLIT: "train"
+  VAL_SPLIT: "val"
+  # Normalizzazione CLIP obbligatoria per ViT e Stage 2
+  NORM_MEAN: [0.48145466, 0.4578275, 0.40821073]
+  NORM_STD:  [0.26862954, 0.26130258, 0.27577711]
+  CROP_SIZE: 448
+  CROP_SCALE: [0.5, 2.0]
+  IMG_EXTS: [".jpg", ".png"]
+
+# ============================================================
+# BACKBONE: ViT-B/16 (Allineato tra Stage 1 e 2)
+# ============================================================
+BACKBONE:
+  TYPE: "vit_b_16"
+  PRETRAINED: True
+  FREEZE_BN: True
+
+# ============================================================
+# MODEL: CLIP-EBC HEAD
+# ============================================================
+CLIP_EBC_HEAD:
+  CLIP_MODEL: "ViT-B/16"
+  PRETRAINED: "openai"
+  PROMPT_TYPE: "word"
+  WINDOW_SIZE: 16
+  REDUCTION: 8            # Coerente con l'upsample in backbone.py e clip_ebc_model.py
+
+# ============================================================
+# BINS UFFICIALI QNRF (Estratti da reduction_16.json)
+# ============================================================
+BINS:
+  - [-0.1, 0.5]  # Corrisponde a [0, 0]
+  - [0.5, 1.5]   # Corrisponde a [1, 1]
+  - [1.5, 2.5]   # Corrisponde a [2, 2]
+  - [2.5, 3.5]   # Corrisponde a [3, 3]
+  - [3.5, 4.5]   # Corrisponde a [4, 4]
+  - [4.5, 5.5]   # Corrisponde a [5, 5]
+  - [5.5, 6.5]   # Corrisponde a [6, 6]
+  - [6.5, 7.5]   # Corrisponde a [7, 7]
+  - [7.5, 9999]  # Corrisponde a [8, "inf"]
+
+NUM_BINS: 9
+# Valori estratti da anchor_points -> fine -> average
+BIN_CENTERS: [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 9.23349]
+
+# ============================================================
+# TRAINING STAGES
+# ============================================================
+
+# STAGE 1 (ZIP): Impara la maschera binaria
+TRAIN_STAGE1:
+  EPOCHS: 1000            # QNRF converge prima rispetto a SHB
+  BATCH_SIZE: 16
+  NUM_WORKERS: 8
+  VAL_INTERVAL: 5
+  OPTIMIZER: "adamw"
+  LR_BACKBONE: 1.0e-5
+  LR_HEAD: 5.0e-4        # Alzato per far imparare la "testa" più velocemente
+  WEIGHT_DECAY: 1.0e-4
+  POS_WEIGHT: 2.5        # <--- IL CAMBIO CHIAVE: da 10 a 2.5 (Prudente ma non cieco)
+
+EVAL_STAGE1:
+  THRESHOLD: 0.45
+
+# STAGE 2 (CLIP-EBC): Impara a contare tramite similarità semantica
+TRAIN_STAGE2:
+  TOTAL_EPOCHS: 1000      # QNRF richiede più epoche per convergere
+  BATCH_SIZE: 16
+  EVAL_FREQ: 10
+  NUM_WORKERS: 4
+  OPTIMIZER: "adamw"
+  LR_BACKBONE: 5.0e-6    # LR basso per stabilità ViT
+  LR_HEAD: 1.0e-3
+  WARMUP_EPOCHS: 15
+  WEIGHT_DECAY: 0.01
+  AMP: true
+  CLIP_GRAD_NORM: 1.0
+
+LOSS_STAGE2:
+  TYPE: "dace"
+  WEIGHT_COUNT_LOSS: 1.0
+  COUNT_LOSS: "dmcount"
+  WEIGHT_OT: 0.1
+  WEIGHT_TV: 0.01
+  LABEL_SMOOTHING: 0.0
+
+# STAGE 3 (JOINT): Fusione Maschera + Densità
+TRAIN_STAGE3:
+  EPOCHS: 400
+  BATCH_SIZE: 4
+  NUM_WORKERS: 4
+  LR: 1.0e-6
+  WEIGHT_DECAY: 1.0e-4
+  LAMBDA_ZIP: 0.5
+  LAMBDA_CLIP: 1.0
+  LAMBDA_CONS: 0.1       # Consistenza spaziale
+  AMP: true
+  MASK_THR: 0.4          # Threshold per la maschera ZIP
+  CHECKPOINT_STAGE1: "checkpoints/qnrf_vit/stage1/best_model.pth"
+  CHECKPOINT_STAGE2: "checkpoints/qnrf_vit/stage2/best_model.pth"
+
+EXP:
+  OUT_DIR: "./checkpoints"
+  SAVE_BEST: true
+  LOG_INTERVAL: 50
