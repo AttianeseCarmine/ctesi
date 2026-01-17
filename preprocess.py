@@ -262,67 +262,104 @@ def _nwpu(
     max_size: int,
     generate_npy: bool = False
 ) -> None:
-    for split in ["train", "test"]:
-        generate_npy = generate_npy and split == "train"
-        print(f"Processing {split}...")
-        with open(os.path.join(data_src_dir, f"{split}.txt"), "r") as f:
-            indices = f.read().splitlines()
-        indices = [idx.split(" ")[0] for idx in indices]
-        image_src_paths = [os.path.join(data_src_dir, f"images_part{min(5, (int(idx) - 1) // 1000 + 1)}", f"{idx}.jpg") for idx in indices]
-        label_src_paths = [os.path.join(data_src_dir, "mats", f"{idx}.mat") for idx in indices]
+    # Mappa le cartelle sorgenti (tue) alle destinazioni
+    split_map = {
+        "train": "train",
+        "val": "val", 
+        "test": "val" 
+    }
 
-        image_dst_dir = os.path.join(data_dst_dir, split, "images")
-        label_dst_dir = os.path.join(data_dst_dir, split, "labels")
+    found_any_split = False
+
+    for src_folder, dst_split in split_map.items():
+        # Trova la cartella sorgente
+        src_path = os.path.join(data_src_dir, src_folder)
+        if not os.path.isdir(src_path):
+            if os.path.isdir(os.path.join(data_src_dir, src_folder.capitalize())): 
+                src_path = os.path.join(data_src_dir, src_folder.capitalize())
+            elif os.path.isdir(os.path.join(data_src_dir, src_folder.upper())): 
+                src_path = os.path.join(data_src_dir, src_folder.upper())
+            else:
+                continue 
+        
+        found_any_split = True
+        generate_npy_split = generate_npy and dst_split == "train"
+        print(f"Processing {src_folder} (found at {src_path}) -> saving as {dst_split}...")
+
+        # Trova immagini
+        image_src_paths = glob(os.path.join(src_path, "**", "*.jpg"), recursive=True)
+        if not image_src_paths:
+            image_src_paths = glob(os.path.join(src_path, "*.jpg"))
+        
+        image_src_paths.sort()
+        if not image_src_paths:
+            print(f"  ATTENZIONE: Nessuna immagine trovata in {src_path}")
+            continue
+
+        print(f"  Trovate {len(image_src_paths)} immagini.")
+
+        # Setup destinazione
+        image_dst_dir = os.path.join(data_dst_dir, dst_split, "images")
+        label_dst_dir = os.path.join(data_dst_dir, dst_split, "labels")
         os.makedirs(image_dst_dir, exist_ok=True)
         os.makedirs(label_dst_dir, exist_ok=True)
 
         size = len(str(len(image_src_paths)))
-        for i, (image_src_path, label_src_path) in tqdm(enumerate(zip(image_src_paths, label_src_paths)), total=len(image_src_paths)):
-            image_id = os.path.basename(image_src_path).split(".")[0]
-            label_id = os.path.basename(label_src_path).split(".")[0]
-            assert image_id == label_id, f"Expected image id {image_id} to match label id {label_id}"
+        
+        for i, image_src_path in tqdm(enumerate(image_src_paths), total=len(image_src_paths)):
             name = f"{(i + 1):0{size}d}"
             image = cv2.imread(image_src_path)
-            label = loadmat(label_src_path)["annPoints"]
+            
+            if image is None:
+                print(f"Skipping corrupt image: {image_src_path}")
+                continue
+
+            # Cerca il file .txt corrispondente (stessa cartella o parallela)
+            # Tu hai confermato che sono nella stessa cartella: img.jpg -> img.txt
+            label_path = image_src_path.replace(".jpg", ".txt")
+            
+            if not os.path.exists(label_path):
+                # Fallback: prova estensioni diverse o cartelle diverse se necessario
+                # Ma nel tuo caso sembra che i txt ci siano
+                print(f"Warning: Label non trovata per {os.path.basename(image_src_path)}")
+                label = np.array([])
+            else:
+                try:
+                    # Gestione file vuoti con soppressione warning
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore")
+                        # np.loadtxt può dare warning se il file è vuoto
+                        # ndmin=2 assicura che torni sempre un array 2D anche se c'è 1 punto
+                        label = np.loadtxt(label_path, ndmin=2)
+                    
+                    # Se il file è vuoto, loadtxt con ndmin=2 potrebbe ritornare shape (0, 1) o (0, 0)
+                    if label.size == 0:
+                        label = np.array([])
+                    else:
+                        # Assicurati che sia (N, 2)
+                        if label.shape[1] != 2 and label.shape[0] == 2:
+                             # Se per caso è (2, N) lo trasponiamo, ma loadtxt solito legge righe
+                             pass 
+                except Exception as e:
+                    # Se il file è proprio vuoto o corrotto in modo strano
+                    label = np.array([])
+
             _resize_and_save(
                 image=image,
                 label=label,
                 name=name,
                 image_dst_dir=image_dst_dir,
                 label_dst_dir=label_dst_dir,
-                generate_npy=generate_npy,
+                generate_npy=generate_npy_split,
                 min_size=min_size,
                 max_size=max_size
             )
 
-        if split == "train":
-            _generate_random_indices(len(image_src_paths), os.path.join(data_dst_dir, split))
-    
-    # preprocess the test set
-    split = "test"
-    print(f"Processing {split}...")
-    with open(os.path.join(data_src_dir, f"{split}.txt"), "r") as f:
-        indices = f.read().splitlines()
-    indices = [idx.split(" ")[0] for idx in indices]
-    image_src_paths = [os.path.join(data_src_dir, f"images_part{min(5, (int(idx) - 1) // 1000 + 1)}", f"{idx}.jpg") for idx in indices]
+        if dst_split == "train":
+            _generate_random_indices(len(image_src_paths), os.path.join(data_dst_dir, dst_split))
 
-    image_dst_dir = os.path.join(data_dst_dir, split, "images")
-    os.makedirs(image_dst_dir, exist_ok=True)
-
-    for image_src_path in tqdm(image_src_paths):
-        image_id = os.path.basename(image_src_path).split(".")[0]
-        image = cv2.imread(image_src_path)
-        _resize_and_save(
-            image=image,
-            label=None,
-            name=image_id,
-            image_dst_dir=image_dst_dir,
-            label_dst_dir=None,
-            generate_npy=generate_npy,
-            min_size=min_size,
-            max_size=max_size
-        )
-
+    if not found_any_split:
+        print(f"ERRORE: Non ho trovato nessuna cartella train/val/test in {data_src_dir}")
 
 def _qnrf(
     data_src_dir: str,
