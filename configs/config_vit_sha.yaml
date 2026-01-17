@@ -3,54 +3,46 @@
 # ZIP-CLIP-EBC: Configurazione STABILE (MAE ~84)
 # ============================================================
 
-RUN_NAME: "sha_vit"
+RUN_NAME: "reproduce_vit_sha"
 SEED: 42
 DEVICE: "cuda"
 
 # ============================================================
 # DATASET
 # ============================================================
-DATASET: "sha"
-DATA:
-  ROOT: "./data/sha/"
+DATASET:
+  NAME: "sha"
+  ROOT: "./data/sha/"  # Assicurati che il path sia corretto
   TRAIN_SPLIT: "train"
   VAL_SPLIT: "val"
-# CLIP Normalization (FONDAMENTALE per Stage 2 e 3)
-  NORM_MEAN: [0.48145466, 0.4578275, 0.40821073]
-  NORM_STD:  [0.26862954, 0.26130258, 0.27577711]
-  CROP_SIZE: 448
-  CROP_SCALE: [0.5, 2.0]
+  NORM_MEAN: [0.48145466, 0.4578275, 0.40821073] # CLIP mean
+  NORM_STD:  [0.26862954, 0.26130258, 0.27577711] # CLIP std
+  CROP_SIZE: 448       # Input size del modello
   IMG_EXTS: [".jpg", ".png"]
 
 # Modifica per Stage 1 (ZIP)
 BACKBONE:
-  TYPE: "vit_b_16"       # <--- Usa VGG16 con Batch Norm
-  PRETRAINED: True
-  FREEZE_BN: True
-# ============================================================
-# MODEL: CLIP RN50 (ResNet50)
-# ============================================================
-CLIP_EBC_HEAD:
-  CLIP_MODEL: "ViT-B/16"       # ResNet50
+  TYPE: "vit_b_16"      
   PRETRAINED: "openai"
-  PROMPT_TYPE: "word"      # Usa "one", "two", "three"...
-  WINDOW_SIZE: 16          # Finestra di attenzione
-  REDUCTION: 8            # RN50 riduce di 32x, ma con dilation diventa 16x
+  FREEZE_BN: True
 
-# BIN UFFICIALI PER SHANGHAITECH (Estratti da configs/reduction_16.json)
-# Nota: [start, end] inclusivi.
-# ShanghaiTech A (Folla densa)
-BINS:
-  - [-0.1, 0.5]  # 0
-  - [0.5, 1.5]   # 1
-  - [1.5, 2.5]   # 2
-  - [2.5, 3.5]   # 3
-  - [3.5, 4.5]   # 4
-  - [4.5, 5.5]   # 5
-  - [5.5, 9999]  # >5
+# ============================================================
+# MODEL: CLIP_EBC
+# ============================================================
+CLIP_EBC_MODEL:
+  BACKBONE: "vit_b_16"    # "resnet50" o "vit_b_16"
+  REDUCTION: 16           # 8 per ResNet, 16 per ViT-B (nativo)
+  INPUT_SIZE: 448
+  
+  # Parametri Visual Prompt Tuning (VPT) - Specifici per ViT
+  NUM_VPT: 32             # Dal paper: 32 token è ottimale
+  DEEP_VPT: True          # Prompt su tutti i layer
+  VPT_DROP: 0.0
 
-NUM_BINS: 7
-BIN_CENTERS: [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+  # Bin Configuration
+  # È CRUCIALE che questo file esista (es. copiato da configs/reduction_16.json)
+  BINS_JSON: "./configs/reduction_16.json" 
+  PROMPT_TYPE: "number"   # "There is 1 person"
 
 # ============================================================
 # TRAINING STAGES
@@ -72,61 +64,60 @@ EVAL_STAGE1:
 # TRAINING (Stage 2)
 # ============================================================
 TRAIN_STAGE2:
-  TOTAL_EPOCHS: 1500       # Il paper dice 300-500
-  BATCH_SIZE: 16          # 16 o 32 a seconda della VRAM
-  EVAL_FREQ: 15
-  WARMUP_EPOCHS: 15        # Aumentato da 5 a 15 per stabilità VPT
-  LR_BACKBONE: 0           # Se hai congelato il backbone come sopra
-  NUM_WORKERS: 4
-  # Strategia Learning Rate Ufficiale
-  OPTIMIZER: "adamw"
-  LR_BACKBONE: 1.0e-6    # Abbassa LR del backbone (ViT è delicato)
-  LR_HEAD: 1.0e-3
-  WEIGHT_DECAY: 0
-  WARMUP_EPOCHS: 5        # FONDAMENTALE!
-  AMP: true
-  CLIP_GRAD_NORM: 1.0     # 10.0 è aggressivo, prova 1.0 per stabilità   # Il repo ufficiale usa 10.0, non 1.0
-
-LOSS_STAGE2:
-  TYPE: "dace"
-  WEIGHT_COUNT_LOSS: 1.0  # Peso per MAE loss ausiliaria
-  COUNT_LOSS: "dmcount"   # Usa DM Count (OT Based)
-  WEIGHT_OT: 0.1
-  WEIGHT_TV: 0.01
-  LABEL_SMOOTHING: 0.0
-
-TRAIN_STAGE3:
-  EPOCHS: 600
-  BATCH_SIZE: 4          # Basso perché carichiamo 2 modelli in VRAM
+  EPOCHS: 200 # Il paper usa ~500-1000 per dataset piccoli, 200 per start
+  BATCH_SIZE: 8 # 8 va bene su GPU medie (es. 24GB), scendi a 4 se OOM
   NUM_WORKERS: 4
   
-  # Optimizer params (Learning Rate molto basso per non rovinare CLIP)
-  #LR: 1.0e-5             
-  LR: 1.0e-5           # Sperimentale leggermente più alto
+  # Optimizer
+  LR_BACKBONE: 0.0        # 0.0 perché CLIP ViT è congelato! (Solo VPT si allena)
+  LR_HEAD: 1.0e-4         # Learning rate per VPT e Decoder
   WEIGHT_DECAY: 1.0e-4
-  LAMBDA_ZIP: 0.5    # Dà importanza alla precisione di ZIP
-  LAMBDA_CLIP: 1.0   # Mantiene la capacità di conteggio di CLIP
-  LAMBDA_CONS: 0.2   # <--- AGGIUNGI QUESTO: evita che ZIP "mangi" persone reali
-  STEEPNESS_START: 1.0
-  STEEPNESS_END: 20.0
-    
-  AMP: true
-  CLIP_GRAD_NORM: 1.0
-  LOG_EVERY: 50
-  MASK_THR: 0.5
-  MASK_EPS: 0.001
-  # PERCORSI DEI PESI PRE-ADDESTRATI (Fondamentale!)
-  # Sostituisci con i percorsi reali dei tuoi .pth migliori
-  CHECKPOINT_STAGE1: "checkpoints/sha_vit/stage1/best_model.pth" 
-  CHECKPOINT_STAGE2: "checkpoints/sha_vit/stage2/best_model.pth"
+  
+  # Scheduler
+  WARMUP_EPOCHS: 5
 
-EVAL_STAGE3:
-  # Parametri per la strategia "Hard" (Divide et Impera)
-  PATCH_SIZE: 224        # Dimensione del blocco analizzato
-  STRIDE: 224            # 224 = Nessuna sovrapposizione (taglio netto)
-  THRESHOLD: 0.5         # Se prob. presenza < 0.5, il blocco viene ignorato
+# ============================================================
+# LOSS (DACE)
+# ============================================================
+LOSS_STAGE2:
+  WEIGHT_COUNT: 1.0      # Lambda nel paper
+  COUNT_LOSS: "dmcount"  # Usa la loss basata su OT
+  WEIGHT_OT: 0.1         # Default DMCount param
+  WEIGHT_TV: 0.01        # Default DMCount param
 
-
+#  
+#TRAIN_STAGE3:
+#  EPOCHS: 600
+#  BATCH_SIZE: 4          # Basso perché carichiamo 2 modelli in VRAM
+#  NUM_WORKERS: 4
+#  
+#  # Optimizer params (Learning Rate molto basso per non rovinare CLIP)
+#  #LR: 1.0e-5             
+#  LR: 1.0e-5           # Sperimentale leggermente più alto
+#  WEIGHT_DECAY: 1.0e-4
+#  LAMBDA_ZIP: 0.5    # Dà importanza alla precisione di ZIP
+#  LAMBDA_CLIP: 1.0   # Mantiene la capacità di conteggio di CLIP
+#  LAMBDA_CONS: 0.2   # <--- AGGIUNGI QUESTO: evita che ZIP "mangi" persone reali
+#  STEEPNESS_START: 1.0
+#  STEEPNESS_END: 20.0
+#    
+#  AMP: true
+#  CLIP_GRAD_NORM: 1.0
+#  LOG_EVERY: 50
+#  MASK_THR: 0.5
+#  MASK_EPS: 0.001
+#  # PERCORSI DEI PESI PRE-ADDESTRATI (Fondamentale!)
+#  # Sostituisci con i percorsi reali dei tuoi .pth migliori
+#  CHECKPOINT_STAGE1: "checkpoints/sha_vit/stage1/best_model.pth" 
+#  CHECKPOINT_STAGE2: "checkpoints/MOD_sha_vit/stage2/best_model.pth"
+#
+#EVAL_STAGE3:
+#  # Parametri per la strategia "Hard" (Divide et Impera)
+#  PATCH_SIZE: 224        # Dimensione del blocco analizzato
+#  STRIDE: 224            # 224 = Nessuna sovrapposizione (taglio netto)
+#  THRESHOLD: 0.5         # Se prob. presenza < 0.5, il blocco viene ignorato
+#
+#
 EXP:
   OUT_DIR: "./checkpoints"
   SAVE_BEST: true

@@ -1,203 +1,184 @@
 #!/usr/bin/env python3
 """
-Train Stage 2: CLIP-EBC Official Replica
+Train Stage 2: CLIP-EBC Official Replica (Fixed)
 """
 import os
 import yaml
-import argparse
+import json
 import math
+import argparse
 import torch
 import torch.nn as nn
-import shutil
 from torch.utils.data import DataLoader
 from torch.optim import AdamW
-from torch.amp import GradScaler, autocast
+from torch.cuda.amp import GradScaler, autocast # Import corretto per Mixed Precision
 from tqdm import tqdm
 
-from models.clip_ebc_model import CLIPEBCModel
-from datasets.sha import SHA # O SHB, assicurati di usare la classe giusta
-from datasets.transforms import build_transforms
+# --- IMPORTS AGGIORNATI ---
+# Assicurati che i file siano in models/clip/model.py e losses/clip_ebc_loss.py
+from models.clip.model import CLIP_EBC
 from losses.clip_ebc_loss import DACELoss
-from utils.eval_utils import sliding_window_predict
-# --- SCHEDULER UFFICIALE (Warmup + Cosine) ---
+
+# Assumi che tu abbia un dataset loader funzionante
+# Se non hai datasets/sha.py, devi usare il tuo loader custom
+try:
+    from datasets.sha import SHA 
+    from datasets.transforms import build_transforms
+except ImportError:
+    print("⚠️ Dataset SHA non trovato, assicurati di avere il file dataset corretto.")
+
 def adjust_learning_rate(optimizer, epoch, args):
-    """Decay the learning rate based on schedule"""
-    lr = args['lr_head']
-    # Warmup
-    if epoch < args['warmup_epochs']:
-        lr_ratio = (epoch + 1) / (args['warmup_epochs'] + 1e-8)
+    """Cosine schedule con Warmup"""
+    lr_max = args['TRAIN_STAGE2']['LR_HEAD']
+    warmup_epochs = args['TRAIN_STAGE2']['WARMUP_EPOCHS']
+    max_epochs = args['TRAIN_STAGE2']['EPOCHS']
+
+    if epoch < warmup_epochs:
+        lr = lr_max * (epoch + 1) / (warmup_epochs + 1e-8)
     else:
-        # Cosine Decay
-        progress = (epoch - args['warmup_epochs']) / (args['epochs'] - args['warmup_epochs'])
-        lr_ratio = 0.5 * (1. + math.cos(math.pi * progress))
+        # Cosine annealing
+        progress = (epoch - warmup_epochs) / (max_epochs - warmup_epochs)
+        lr = lr_max * 0.5 * (1. + math.cos(math.pi * progress))
     
-    # Applica i learning rate differenziati
     for param_group in optimizer.param_groups:
-        if "backbone" in param_group['name']:
-            param_group['lr'] = args['lr_backbone'] * lr_ratio
-        else:
-            param_group['lr'] = args['lr_head'] * lr_ratio
-            
-    return optimizer.param_groups[0]['lr']
+        param_group['lr'] = lr
 
-def crowd_collate(batch):
-    batch = [b for b in batch if b is not None]
-    if len(batch) == 0: return None
-    return {
-        'image': torch.stack([item['image'] for item in batch]),
-        'density': torch.stack([item['density'] for item in batch]),
-        'points': [item['points'] for item in batch],
-    }
+def main(config_path):
+    # 1. Load Config
+    with open(config_path, 'r') as f:
+        cfg = yaml.safe_load(f)
+    
+    device = torch.device(cfg['DEVICE'])
+    os.makedirs(f"checkpoints/{cfg['RUN_NAME']}", exist_ok=True)
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--config', type=str, default="configs/config_sha.yaml")
-    parser.add_argument('--gpu', type=int, default=0)
-    parser.add_argument('--out_dir', type=str, default="checkpoints/sha/stage2")
-    cmd_args = parser.parse_args()  # <--- Qui è definito come cmd_args
+    # 2. Load Bins & Anchors (CRUCIALE)
+    bins_path = cfg['CLIP_EBC_MODEL']['BINS_JSON']
+    if not os.path.exists(bins_path):
+        raise FileNotFoundError(f"❌ File bin non trovato: {bins_path}. Copia 'configs/reduction_16.json' dal repo originale.")
     
-    device = torch.device(f'cuda:{cmd_args.gpu}')
-    
-    if not os.path.exists(cmd_args.out_dir):
-        os.makedirs(cmd_args.out_dir, exist_ok=True)
-    
-    # --- CORREZIONE QUI ---
-    # Sostituisci 'args' con 'cmd_args' per coerenza con sopra
-    saved_config_path = os.path.join(cmd_args.out_dir, "config.yaml") 
-    shutil.copy(cmd_args.config, saved_config_path)
-    print(f"📄 Configuration saved to: {saved_config_path}")
-
-    with open(cmd_args.config, 'r') as f: config = yaml.safe_load(f)
-    
-    print(f"🚀 Training Stage 2 on {config['DATASET']} (Official Replica)")
-
-    # 1. Model
-    model = CLIPEBCModel(config).to(device)
-
-    # 2. Optimizer Groups (CORRETTO per ViT + VPT)
-    backbone_params = []
-    head_params = []
-    
-    for name, param in model.named_parameters():
-        if not param.requires_grad:
-            continue
+    with open(bins_path, 'r') as f:
+        bins_data = json.load(f)
+        # Il json ha chiavi stringa "0", "1"... li convertiamo
+        # bins format: [[0,0], [1,1], ..., [m, inf]]
+        bins_list = bins_data['bins']
+        anchor_points = bins_data['anchor_points']
         
-        # LOGICA CORRETTA:
-        # Se è un Prompt (vpt), un Upsample, un Decoder o la Proiezione -> HEAD (LR Alto)
-        if "vpt" in name or "upsample" in name or "decoder" in name or "projection" in name or "logit_scale" in name:
-            head_params.append(param)
-        # Se è il resto del visual_encoder -> BACKBONE (LR Zero o Basso)
-        elif "visual_encoder" in name or "clip_model" in name:
-            backbone_params.append(param)
-        else:
-            head_params.append(param)
+        # Conversione "inf" stringa a float('inf') se necessario
+        cleaned_bins = []
+        for b in bins_list:
+            start = b[0]
+            end = float('inf') if b[1] == "inf" else b[1]
+            cleaned_bins.append((float(start), float(end)))
+        
+        cleaned_anchors = [float(a) for a in anchor_points]
 
-    optimizer = AdamW([
-        {'params': backbone_params, 'lr': config['TRAIN_STAGE2']['LR_BACKBONE'], 'name': 'backbone'},
-        {'params': head_params, 'lr': config['TRAIN_STAGE2']['LR_HEAD'], 'name': 'head'}
-    ], weight_decay=config['TRAIN_STAGE2']['WEIGHT_DECAY'])
-    
-    print(f"✅ Optimizer Setup: {len(backbone_params)} backbone params (Frozen/Low), {len(head_params)} head params (Training).")
-    scaler = GradScaler('cuda', enabled=config['TRAIN_STAGE2']['AMP'])
+    print(f"✅ Loaded {len(cleaned_bins)} bins from {bins_path}")
 
-    # 3. Loss
-    criterion = DACELoss(
-        bins=config['BINS'],
-        reduction=config['CLIP_EBC_HEAD']['REDUCTION'],
-        weight_count=config['LOSS_STAGE2']['WEIGHT_COUNT_LOSS'],
-        weight_ot=config['LOSS_STAGE2']['WEIGHT_OT'],
-        weight_tv=config['LOSS_STAGE2']['WEIGHT_TV']
+    # 3. Initialize Model
+    print(f"🏗️ Building CLIP_EBC ({cfg['CLIP_EBC_MODEL']['BACKBONE']})...")
+    model = CLIP_EBC(
+        backbone=cfg['CLIP_EBC_MODEL']['BACKBONE'],
+        bins=cleaned_bins,
+        anchor_points=cleaned_anchors,
+        reduction=cfg['CLIP_EBC_MODEL']['REDUCTION'],
+        input_size=cfg['CLIP_EBC_MODEL']['INPUT_SIZE'],
+        num_vpt=cfg['CLIP_EBC_MODEL']['NUM_VPT'],
+        deep_vpt=cfg['CLIP_EBC_MODEL']['DEEP_VPT'],
+        vpt_drop=cfg['CLIP_EBC_MODEL']['VPT_DROP'],
+        prompt_type=cfg['CLIP_EBC_MODEL']['PROMPT_TYPE']
     ).to(device)
 
-    # 4. Data
-    # Nota: Assicurati che SHA/SHB dataset carichi i dati correttamente
-    train_ds = SHA(config['DATA']['ROOT'], 'train', build_transforms(config['DATA'], True))
-    val_ds = SHA(config['DATA']['ROOT'], 'val', build_transforms(config['DATA'], False))
+    # 4. Dataset & Dataloader
+    # Nota: Adatta questo pezzo al tuo dataset loader specifico
+    # SHA deve ritornare: image, density_map, point_list
+    train_transform = build_transforms(cfg, is_train=True)
+    val_transform = build_transforms(cfg, is_train=False)
     
-    train_loader = DataLoader(train_ds, batch_size=config['TRAIN_STAGE2']['BATCH_SIZE'], 
-                              shuffle=True, num_workers=config['TRAIN_STAGE2']['NUM_WORKERS'], 
-                              collate_fn=crowd_collate, drop_last=True)
-    val_loader = DataLoader(val_ds, batch_size=1, shuffle=False, num_workers=4, collate_fn=crowd_collate)
+    train_dataset = SHA(root=cfg['DATASET']['ROOT'], split=cfg['DATASET']['TRAIN_SPLIT'], transform=train_transform)
+    val_dataset = SHA(root=cfg['DATASET']['ROOT'], split=cfg['DATASET']['VAL_SPLIT'], transform=val_transform)
+    
+    # Collate function custom per gestire liste di punti di lunghezza variabile
+    def collate_fn(batch):
+        imgs = torch.stack([item[0] for item in batch])
+        densities = torch.stack([item[1] for item in batch])
+        points = [item[2] for item in batch] # Lista di tensor
+        # Se il dataset ritorna anche i nomi, gestiscili qui
+        return imgs, densities, points
 
-    # Scheduler Args
-    sched_args = {
-        'lr_head': config['TRAIN_STAGE2']['LR_HEAD'],
-        'lr_backbone': config['TRAIN_STAGE2']['LR_BACKBONE'],
-        'epochs': config['TRAIN_STAGE2']['TOTAL_EPOCHS'],
-        'warmup_epochs': config['TRAIN_STAGE2']['WARMUP_EPOCHS']
-    }
+    train_loader = DataLoader(train_dataset, batch_size=cfg['TRAIN']['BATCH_SIZE'], shuffle=True, num_workers=cfg['TRAIN']['NUM_WORKERS'], collate_fn=collate_fn)
+    val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False, num_workers=cfg['TRAIN']['NUM_WORKERS'], collate_fn=collate_fn)
 
+    # 5. Optimizer & Loss
+    # Filtriamo i parametri: Backone ViT è congelato, alleniamo VPT e decoder
+    params_to_optimize = [p for p in model.parameters() if p.requires_grad]
+    optimizer = AdamW(params_to_optimize, lr=cfg['TRAIN']['LR_HEAD'], weight_decay=cfg['TRAIN']['WEIGHT_DECAY'])
+    
+    criterion = DACELoss(
+        bins=cleaned_bins,
+        reduction=cfg['CLIP_EBC_MODEL']['REDUCTION'],
+        weight_count_loss=cfg['LOSS_STAGE2']['WEIGHT_COUNT'],
+        count_loss=cfg['LOSS_STAGE2']['COUNT_LOSS'], # "dmcount"
+        weight_ot=cfg['LOSS_STAGE2']['WEIGHT_OT'],
+        weight_tv=cfg['LOSS_STAGE2']['WEIGHT_TV'],
+        input_size=cfg['CLIP_EBC_MODEL']['INPUT_SIZE']
+    ).to(device)
+
+    scaler = GradScaler() # Per Mixed Precision
+
+    # 6. Training Loop
     best_mae = float('inf')
-
-    # --- TRAIN LOOP ---
-    for epoch in range(config['TRAIN_STAGE2']['TOTAL_EPOCHS']):
-        # Adjust LR
-        curr_lr = adjust_learning_rate(optimizer, epoch, sched_args)
-        
+    
+    for epoch in range(cfg['TRAIN']['EPOCHS']):
+        adjust_learning_rate(optimizer, epoch, cfg)
         model.train()
-        pbar = tqdm(train_loader, desc=f"Ep {epoch+1} | LR {curr_lr:.2e}")
+        epoch_loss = 0
         
-        loss_avg = 0
-        
-        for batch in pbar:
-            if batch is None: continue
-            images = batch['image'].to(device)
-            gt_density = batch['density'].to(device)
-            points = batch['points'] # Lista di tensori
-
+        pbar = tqdm(train_loader, desc=f"Ep {epoch+1}/{cfg['TRAIN']['EPOCHS']}")
+        for imgs, gt_density, gt_points in pbar:
+            imgs = imgs.to(device)
+            gt_density = gt_density.to(device)
+            # gt_points è una lista di tensori, li spostiamo su device dentro la loss o qui se serve
+            
             optimizer.zero_grad()
             
-            with autocast('cuda', enabled=config['TRAIN_STAGE2']['AMP']):
-                out = model(images)
-                # out['ebc_logits'] -> [B, N_bins, H, W]
-                # out['ebc_density'] -> [B, 1, H, W]
+            with autocast():
+                # CLIP_EBC in training ritorna (logits, density_map)
+                pred_logits, pred_density = model(imgs)
                 
-                loss, loss_dict = criterion(out['ebc_logits'], out['ebc_density'], gt_density, points)
+                # Calcolo Loss
+                loss, loss_dict = criterion(pred_logits, pred_density, gt_density, gt_points)
             
             scaler.scale(loss).backward()
-            
-            # Gradient Clipping (Importante per CLIP)
-            scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), config['TRAIN_STAGE2']['CLIP_GRAD_NORM'])
-            
             scaler.step(optimizer)
             scaler.update()
             
-            loss_avg += loss.item()
-            pbar.set_postfix({'Loss': f"{loss.item():.2f}"})
+            epoch_loss += loss.item()
+            pbar.set_postfix({'loss': loss.item(), 'ce': loss_dict.get('ce_loss', 0).item()})
 
-        # --- VALIDATION ---
+        # 7. Validation Loop
         model.eval()
-        val_mae = 0
-        window_size = config['DATA']['CROP_SIZE']
-        
+        val_mae = 0.0
         with torch.no_grad():
-            for batch in val_loader:
-                img = batch['image'].to(device)
-                gt_count = len(batch['points'][0])
+            for imgs, gt_density, gt_points in val_loader:
+                imgs = imgs.to(device)
+                gt_count = len(gt_points[0]) # Batch size 1 in validation
                 
-                if img.shape[2] > window_size or img.shape[3] > window_size:
-                    # Usa sliding window per immagini grandi (SOTA approach)
-                    pred_density = sliding_window_predict(model, img, window_size=window_size, stride=window_size, device=device)
-                    pred_count = pred_density.sum().item()
-                else:
-                    out = model(img)
-                    pred_count = out['final_count'].item()
+                # In eval, CLIP_EBC ritorna solo density_map (o expected count map)
+                pred_map = model(imgs)
+                pred_count = pred_map.sum().item()
                 
                 val_mae += abs(pred_count - gt_count)
-
-        val_mae /= len(val_loader)
-        print(f"📊 Ep {epoch+1} | Val MAE: {val_mae:.2f} (Best: {best_mae:.2f})")
+        
+        val_mae /= len(val_dataset)
+        print(f"📊 Epoch {epoch+1} Result: Val MAE: {val_mae:.2f} (Best: {best_mae:.2f})")
         
         if val_mae < best_mae:
             best_mae = val_mae
-            torch.save({
-                'model': model.state_dict(),
-                'epoch': epoch,
-                'mae': val_mae,
-                'config': config
-            }, os.path.join(cmd_args.out_dir, "best_model.pth"))
-            print("🌟 Saved Best Model")
+            torch.save(model.state_dict(), f"checkpoints/{cfg['RUN_NAME']}/best_model.pth")
+            print("💾 Model Saved!")
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--config', type=str, default='config_vit_sha.yaml')
+    args = parser.parse_args()
+    main(args.config)
