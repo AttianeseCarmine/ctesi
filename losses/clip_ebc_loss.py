@@ -167,7 +167,7 @@ class DACELoss(nn.Module):
         self,
         bins: List[Tuple[float, float]],
         reduction: int,
-        weight_count: float = 1.0, 
+        weight_count_loss: float = 1.0, 
         count_loss: str = "dmcount",
         weight_ot: float = 0.1,
         weight_tv: float = 0.01,
@@ -181,8 +181,10 @@ class DACELoss(nn.Module):
 
         count_loss = count_loss.lower()
         self.count_loss = count_loss
-        self.weight_count_loss = weight_count
+        self.weight_count_loss = weight_count_loss
         
+        # --- FIX: Rimuovi input_size da kwargs per evitare duplicati ---
+        input_size = kwargs.pop('input_size', 448)
         if self.count_loss == "mae":
             self.use_dm_loss = False
             self.count_loss_fn = nn.L1Loss(reduction="none")

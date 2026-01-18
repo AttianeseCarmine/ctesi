@@ -13,7 +13,7 @@ from torch.utils.data import DataLoader
 from torch.optim import AdamW
 from torch.cuda.amp import GradScaler, autocast # Import corretto per Mixed Precision
 from tqdm import tqdm
-
+import shutil
 # --- IMPORTS AGGIORNATI ---
 # Assicurati che i file siano in models/clip/model.py e losses/clip_ebc_loss.py
 from models.clip.model import CLIP_EBC
@@ -49,69 +49,107 @@ def main(config_path):
         cfg = yaml.safe_load(f)
     
     device = torch.device(cfg['DEVICE'])
-    os.makedirs(f"checkpoints/{cfg['RUN_NAME']}", exist_ok=True)
 
-    # 2. Load Bins & Anchors (CRUCIALE)
-    bins_path = cfg['CLIP_EBC_MODEL']['BINS_JSON']
-    if not os.path.exists(bins_path):
-        raise FileNotFoundError(f"❌ File bin non trovato: {bins_path}. Copia 'configs/reduction_16.json' dal repo originale.")
+    # --- MODIFICA: Creazione cartella e salvataggio Configurazione ---
+    output_dir = os.path.join("checkpoints", cfg['RUN_NAME'], "stage2")
+    os.makedirs(output_dir, exist_ok=True)
+    # Copia il file .yaml originale nella cartella di output
+    config_filename = os.path.basename(config_path)
+    saved_config_path = os.path.join(output_dir, config_filename)
+    shutil.copy(config_path, saved_config_path)
+    print(f"📄 Configuration saved to: {saved_config_path}")
+    # ---------------------------------------------------------------
+
+    # 2. Load Bins & Anchors (DAL CONFIGURATORE)
+    print(f"⚙️ Loading bins from YAML config...")
     
-    with open(bins_path, 'r') as f:
-        bins_data = json.load(f)
-        # Il json ha chiavi stringa "0", "1"... li convertiamo
-        # bins format: [[0,0], [1,1], ..., [m, inf]]
-        bins_list = bins_data['bins']
-        anchor_points = bins_data['anchor_points']
+    # Correzione chiavi e variabili
+    raw_bins = cfg['BINS']
+    raw_anchors = cfg['BIN_CENTERS'] # Corretto per matchare il YAML
+    
+    # 3. Pulizia dei bin e degli anchor
+    cleaned_bins = []
+    for b in raw_bins: # Usa raw_bins, non bins_list
+        start = float(b[0])
+        val_end = b[1]
         
-        # Conversione "inf" stringa a float('inf') se necessario
-        cleaned_bins = []
-        for b in bins_list:
-            start = b[0]
-            end = float('inf') if b[1] == "inf" else b[1]
-            cleaned_bins.append((float(start), float(end)))
-        
-        cleaned_anchors = [float(a) for a in anchor_points]
+        # Gestione flessibile per infinito (accetta "inf", 9999 o float('inf'))
+        if str(val_end).lower() == "inf" or val_end >= 9999:
+            end = float('inf')
+        else:
+            end = float(val_end)
+        cleaned_bins.append((start, end))
 
-    print(f"✅ Loaded {len(cleaned_bins)} bins from {bins_path}")
+    # Definisci cleaned_anchors (prima mancava)
+    cleaned_anchors = [float(a) for a in raw_anchors]
+
+    print(f"✅ Loaded {len(cleaned_bins)} bins: {cleaned_bins}")
+    print(f"✅ Loaded anchors: {cleaned_anchors}")
 
     # 3. Initialize Model
-    print(f"🏗️ Building CLIP_EBC ({cfg['CLIP_EBC_MODEL']['BACKBONE']})...")
     model = CLIP_EBC(
         backbone=cfg['CLIP_EBC_MODEL']['BACKBONE'],
         bins=cleaned_bins,
-        anchor_points=cleaned_anchors,
+        anchor_points=cleaned_anchors, # Ora la variabile esiste
         reduction=cfg['CLIP_EBC_MODEL']['REDUCTION'],
         input_size=cfg['CLIP_EBC_MODEL']['INPUT_SIZE'],
         num_vpt=cfg['CLIP_EBC_MODEL']['NUM_VPT'],
         deep_vpt=cfg['CLIP_EBC_MODEL']['DEEP_VPT'],
         vpt_drop=cfg['CLIP_EBC_MODEL']['VPT_DROP'],
-        prompt_type=cfg['CLIP_EBC_MODEL']['PROMPT_TYPE']
+        # Se PROMPT_TYPE non è nel yaml, usa un default "number"
+        prompt_type=cfg.get('PROMPT_TYPE', "number") 
     ).to(device)
+
+    print(f" -- MODELLO CON REDUCTION  -> {cfg['CLIP_EBC_MODEL']['REDUCTION']} -- ")
+    print(f" -- MODELLO CON WEIGHT_COUNT  -> {cfg['LOSS_STAGE2']['WEIGHT_COUNT']} -- ")
 
     # 4. Dataset & Dataloader
     # Nota: Adatta questo pezzo al tuo dataset loader specifico
     # SHA deve ritornare: image, density_map, point_list
-    train_transform = build_transforms(cfg, is_train=True)
-    val_transform = build_transforms(cfg, is_train=False)
+    train_transform = build_transforms(cfg['DATA'], is_train=True)
+    val_transform = build_transforms(cfg['DATA'], is_train=False)
     
-    train_dataset = SHA(root=cfg['DATASET']['ROOT'], split=cfg['DATASET']['TRAIN_SPLIT'], transform=train_transform)
-    val_dataset = SHA(root=cfg['DATASET']['ROOT'], split=cfg['DATASET']['VAL_SPLIT'], transform=val_transform)
+    train_dataset = SHA(cfg['DATA']['ROOT'], 'train', build_transforms(cfg['DATA'], True))
+    val_dataset = SHA(cfg['DATA']['ROOT'], 'val', build_transforms(cfg['DATA'], False))
     
     # Collate function custom per gestire liste di punti di lunghezza variabile
+    # --- COLLATE FUNCTION CORRETTA (Per Dizionari) ---
     def collate_fn(batch):
-        imgs = torch.stack([item[0] for item in batch])
-        densities = torch.stack([item[1] for item in batch])
-        points = [item[2] for item in batch] # Lista di tensor
-        # Se il dataset ritorna anche i nomi, gestiscili qui
+        """
+        Gestisce il batch quando il dataset restituisce un dizionario.
+        """
+        # 1. Estrazione Immagini (chiave 'image')
+        # Se fallisce qui, stampa le chiavi: print(batch[0].keys())
+        imgs = torch.stack([item['image'] for item in batch])
+        
+        # 2. Estrazione Density Map (chiave 'density' o 'label')
+        # Alcuni dataset usano 'density', altri 'label'. Li gestiamo entrambi.
+        if 'density' in batch[0]:
+            densities = torch.stack([item['density'] for item in batch])
+        elif 'label' in batch[0]:
+            densities = torch.stack([item['label'] for item in batch])
+        else:
+            raise KeyError(f"Chiave densità mancante. Chiavi trovate: {list(batch[0].keys())}")
+
+        # 3. Estrazione Punti (chiave 'points' o 'keypoints')
+        if 'points' in batch[0]:
+            points = [item['points'] for item in batch]
+        elif 'keypoints' in batch[0]:
+            points = [item['keypoints'] for item in batch]
+        else:
+            # Se non ci sono punti, proviamo a restituire una lista vuota o fallire
+            # Per SHA solitamente 'points' esiste.
+            raise KeyError(f"Chiave punti mancante. Chiavi trovate: {list(batch[0].keys())}")
+        
         return imgs, densities, points
 
-    train_loader = DataLoader(train_dataset, batch_size=cfg['TRAIN']['BATCH_SIZE'], shuffle=True, num_workers=cfg['TRAIN']['NUM_WORKERS'], collate_fn=collate_fn)
-    val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False, num_workers=cfg['TRAIN']['NUM_WORKERS'], collate_fn=collate_fn)
+    train_loader = DataLoader(train_dataset, batch_size=cfg['TRAIN_STAGE2']['BATCH_SIZE'], shuffle=True, num_workers=cfg['TRAIN_STAGE2']['NUM_WORKERS'], collate_fn=collate_fn)
+    val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False, num_workers=cfg['TRAIN_STAGE2']['NUM_WORKERS'], collate_fn=collate_fn)
 
     # 5. Optimizer & Loss
     # Filtriamo i parametri: Backone ViT è congelato, alleniamo VPT e decoder
     params_to_optimize = [p for p in model.parameters() if p.requires_grad]
-    optimizer = AdamW(params_to_optimize, lr=cfg['TRAIN']['LR_HEAD'], weight_decay=cfg['TRAIN']['WEIGHT_DECAY'])
+    optimizer = AdamW(params_to_optimize, lr=cfg['TRAIN_STAGE2']['LR_HEAD'], weight_decay=cfg['TRAIN_STAGE2']['WEIGHT_DECAY'])
     
     criterion = DACELoss(
         bins=cleaned_bins,
@@ -128,12 +166,12 @@ def main(config_path):
     # 6. Training Loop
     best_mae = float('inf')
     
-    for epoch in range(cfg['TRAIN']['EPOCHS']):
+    for epoch in range(cfg['TRAIN_STAGE2']['EPOCHS']):
         adjust_learning_rate(optimizer, epoch, cfg)
         model.train()
         epoch_loss = 0
         
-        pbar = tqdm(train_loader, desc=f"Ep {epoch+1}/{cfg['TRAIN']['EPOCHS']}")
+        pbar = tqdm(train_loader, desc=f"Ep {epoch+1}/{cfg['TRAIN_STAGE2']['EPOCHS']}")
         for imgs, gt_density, gt_points in pbar:
             imgs = imgs.to(device)
             gt_density = gt_density.to(device)
@@ -174,7 +212,7 @@ def main(config_path):
         
         if val_mae < best_mae:
             best_mae = val_mae
-            torch.save(model.state_dict(), f"checkpoints/{cfg['RUN_NAME']}/best_model.pth")
+            torch.save(model.state_dict(), f"checkpoints/{cfg['RUN_NAME']}/stage2/best_model.pth")
             print("💾 Model Saved!")
 
 if __name__ == "__main__":

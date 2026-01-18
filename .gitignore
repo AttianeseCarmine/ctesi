@@ -16,6 +16,7 @@ data/*
 *.cpython-3*
 *.pyo
 *.err   
+*.json
 *.out
 *.pyc
 *.jpg

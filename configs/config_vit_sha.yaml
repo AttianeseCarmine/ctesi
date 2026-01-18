@@ -3,14 +3,15 @@
 # ZIP-CLIP-EBC: Configurazione STABILE (MAE ~84)
 # ============================================================
 
-RUN_NAME: "reproduce_vit_sha"
+RUN_NAME: "vit_sha_reduction_16_"
 SEED: 42
 DEVICE: "cuda"
 
 # ============================================================
 # DATASET
 # ============================================================
-DATASET:
+DATASET: "sha"
+DATA:
   NAME: "sha"
   ROOT: "./data/sha/"  # Assicurati che il path sia corretto
   TRAIN_SPLIT: "train"
@@ -41,8 +42,19 @@ CLIP_EBC_MODEL:
 
   # Bin Configuration
   # È CRUCIALE che questo file esista (es. copiato da configs/reduction_16.json)
-  BINS_JSON: "./configs/reduction_16.json" 
-  PROMPT_TYPE: "number"   # "There is 1 person"
+BINS:
+  - [0, 0]
+  - [1, 1]
+  - [2, 2]
+  - [3, 3]
+  - [4, 5]       # Accorpa
+  - [6, 7]       # Accorpa
+  - [8, "inf"]   # Alza la soglia dell'infinito
+
+NUM_BINS: 7
+# Anchor points stimati per SHA a riduzione 16
+BIN_CENTERS: [0.0, 1.0, 2.0, 3.0, 4.5, 6.5, 12.5]
+
 
 # ============================================================
 # TRAINING STAGES
@@ -64,7 +76,7 @@ EVAL_STAGE1:
 # TRAINING (Stage 2)
 # ============================================================
 TRAIN_STAGE2:
-  EPOCHS: 200 # Il paper usa ~500-1000 per dataset piccoli, 200 per start
+  EPOCHS: 1300 # Il paper usa ~500-1000 per dataset piccoli, 200 per start
   BATCH_SIZE: 8 # 8 va bene su GPU medie (es. 24GB), scendi a 4 se OOM
   NUM_WORKERS: 4
   
@@ -80,7 +92,7 @@ TRAIN_STAGE2:
 # LOSS (DACE)
 # ============================================================
 LOSS_STAGE2:
-  WEIGHT_COUNT: 1.0      # Lambda nel paper
+  WEIGHT_COUNT: 5      # Lambda nel paper
   COUNT_LOSS: "dmcount"  # Usa la loss basata su OT
   WEIGHT_OT: 0.1         # Default DMCount param
   WEIGHT_TV: 0.01        # Default DMCount param

@@ -3,7 +3,7 @@
 # ZIP-CLIP-EBC: Configurazione STABILE (MAE ~84)
 # ============================================================
 
-RUN_NAME: "sha_res50"
+RUN_NAME: "res50_sha_reduction16"
 SEED: 42
 DEVICE: "cuda"
 
@@ -30,12 +30,15 @@ BACKBONE:
 # ============================================================
 # MODEL: CLIP RN50 (ResNet50)
 # ============================================================
-CLIP_EBC_HEAD:
-  CLIP_MODEL: "RN50"       # ResNet50
-  PRETRAINED: "openai"
-  PROMPT_TYPE: "word"      # Usa "one", "two", "three"...
-  WINDOW_SIZE: 16          # Finestra di attenzione
-  REDUCTION: 8           # RN50 riduce di 32x, ma con dilation diventa 16x
+CLIP_EBC_MODEL:
+  BACKBONE: "resnet50"    # "resnet50" o "vit_b_16"
+  REDUCTION: 16           # 8 per ResNet, 16 per ViT-B (nativo)
+  INPUT_SIZE: 448
+  
+  # Parametri Visual Prompt Tuning (VPT) - Specifici per ViT
+  NUM_VPT: 32             # Dal paper: 32 token è ottimale
+  DEEP_VPT: True          # Prompt su tutti i layer
+  VPT_DROP: 0.0
 
 # ============================================================
 # BINS PER DENSITÀ BASSA (SHA)
@@ -45,11 +48,14 @@ BINS:
   - [1, 1]
   - [2, 2]
   - [3, 3]
-  - [4, 9999]
+  - [4, 5]       # Accorpa
+  - [6, 7]       # Accorpa
+  - [8, "inf"]   # Alza la soglia dell'infinito
 
-NUM_BINS: 5
-# Il valore 4.29992 è calcolato statisticamente dal repo ufficiale per SHA
-BIN_CENTERS: [0.0, 1.0, 2.0, 3.0, 4.29992]
+NUM_BINS: 7
+# Anchor points stimati per SHA a riduzione 16
+BIN_CENTERS: [0.0, 1.0, 2.0, 3.0, 4.5, 6.5, 12.5]
+
 
 
 # ============================================================
@@ -72,26 +78,23 @@ EVAL_STAGE1:
 # TRAINING (Stage 2)
 # ============================================================
 TRAIN_STAGE2:
-  TOTAL_EPOCHS: 2600       
-  BATCH_SIZE: 8   
-  EVAL_FREQ: 15     
+  EPOCHS: 1300 # Il paper usa ~500-1000 per dataset piccoli, 200 per start
+  BATCH_SIZE: 8 # 8 va bene su GPU medie (es. 24GB), scendi a 4 se OOM
   NUM_WORKERS: 4
-  # Strategia Learning Rate Ufficiale
-  OPTIMIZER: "adamw"
-  LR_BACKBONE: 1.0e-5      
-  LR_HEAD: 1.0e-4          
+  
+  # Optimizer
+  LR_BACKBONE: 0.0        # 0.0 perché CLIP ViT è congelato! (Solo VPT si allena)
+  LR_HEAD: 1.0e-4         # Learning rate per VPT e Decoder
   WEIGHT_DECAY: 1.0e-4
-  CLIP_GRAD_NORM: 10.0
-  WARMUP_EPOCHS: 50        
-  AMP: true
+  
+  # Scheduler
+  WARMUP_EPOCHS: 5
 
 LOSS_STAGE2:
-  TYPE: "dace"
-  COUNT_LOSS: "dmcount"   
-  WEIGHT_OT: 0.1
-  WEIGHT_TV: 0.01
-  WEIGHT_COUNT_LOSS: 1.0  # Peso per MAE loss ausiliaria
-  LABEL_SMOOTHING: 0.0
+  WEIGHT_COUNT: 10      # Lambda nel paper
+  COUNT_LOSS: "dmcount"  # Usa la loss basata su OT
+  WEIGHT_OT: 0.1         # Default DMCount param
+  WEIGHT_TV: 0.01     
 
 TRAIN_STAGE3:
   EPOCHS: 600
