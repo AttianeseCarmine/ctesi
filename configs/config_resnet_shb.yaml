@@ -1,141 +1,80 @@
-# configs/config_shb.yaml
 # ============================================================
-# ZIP-CLIP-EBC: Configurazione per SHANGHAITECH B (ResNet50)
+# ZIP-CLIP-EBC: Configurazione Completa a 3 Stadi
+# Dataset: ShanghaiTech B (SHB) - Backbone: ViT-B/16 (CLIP)
 # ============================================================
 
-RUN_NAME: "shb_res50"  # <--- Nome univoco per SHB con ResNet
-SEED: 42
-DEVICE: "cuda"
-
-# ============================================================
-# DATASET
-# ============================================================
+# Questi valori vengono usati se non specificati nei singoli stage o da terminale
 DATASET: "shb"
-DATA:
-  ROOT: "./data/shb/"
-  TRAIN_SPLIT: "train"
-  VAL_SPLIT: "val"
-  # CLIP-EBC usa standard ImageNet mean/std per RN50
-  NORM_MEAN: [0.48145466, 0.4578275, 0.40821073]
-  NORM_STD:  [0.26862954, 0.26130258, 0.27577711]
-  CROP_SIZE: 448
-  CROP_SCALE: [0.5, 2.0]
-  IMG_EXTS: [".jpg", ".png"]
+MODEL: "clip_resnet50"   # STAGE2 !!
+INPUT_SIZE: 224          # FONDAMENTALE: CLIP richiede 224x224 (o multipli/crop)
+REDUCTION: 8             # Fattore di riduzione delle feature map
+TRUNCATION: 4            # Max count per bin (EBC logic)
+GRANULARITY: "fine"      # Granularità dei bin
+PROMPT_TYPE: "word"      # Prompt per CLIP ("word" o "number")
+SEED: 42
 
-# Modifica per Stage 1 (ZIP)
+
 BACKBONE:
-  TYPE: "resnet50"       # <--- Usa ResNet50 anche per ZIP
+  TYPE: "resnet50"       # STAGE1 !!
   PRETRAINED: True
   FREEZE_BN: True
 
-# ============================================================
-# MODEL: CLIP RN50 (ResNet50)
-# ============================================================
-CLIP_EBC_HEAD:
-  CLIP_MODEL: "RN50"       # <--- Usa ResNet50 per CLIP
-  PRETRAINED: "openai"
-  PROMPT_TYPE: "word"      # Usa "one", "two", "three"...
-  WINDOW_SIZE: 16          # Finestra di attenzione
-  REDUCTION: 8           # RN50 riduce di 32x, ma con dilation diventa 16x
 
 # ============================================================
-# BINS PER DENSITÀ BASSA (SHB)
-# ============================================================
-# SHB è molto sparso. Usiamo bin fini e un overflow basso (8+).
-# Range continui per catturare densità float.
-BINS:
-  - [-0.1, 0.5]   # Bin 0
-  - [0.5, 1.5]    # Bin 1
-  - [1.5, 2.5]    # Bin 2
-  - [2.5, 3.5]    # Bin 3
-  - [3.5, 4.5]    # Bin 4
-  - [4.5, 5.5]    # Bin 5
-  - [5.5, 6.5]    # Bin 6
-  - [6.5, 9999]   # Bin 7 (Overflow > 6.5)
-
-NUM_BINS: 8
-
-# Centri calcolati (media del range). L'ultimo è una media statistica per >6.5 in SHB.
-BIN_CENTERS: [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0]
-
-# ============================================================
-# TRAINING STAGES
+# STAGE 1: ZIP (Zero-Inflated Poisson) Pre-training
+# Obiettivo: Addestrare la rete a distinguere Background (0) da Folla (>0)
 # ============================================================
 TRAIN_STAGE1:
-  EPOCHS: 1000
-  BATCH_SIZE: 32
+  TOTAL_EPOCHS: 2000
+  BATCH_SIZE: 16
   NUM_WORKERS: 8
-  VAL_INTERVAL: 5
-  OPTIMIZER: "adamw"
-  LR_BACKBONE: 1.0e-5
-  LR_HEAD: 5.0e-4
+  
+  # Learning Rates
+  LR: 1.0e-4
+  LR_BACKBONE: 1.0e-5    # Basso per non rovinare i pesi iniziali
+  LR_HEAD: 1.0e-4        # Normale per la testa di classificazione binaria (pi_head)
   WEIGHT_DECAY: 1.0e-4
-  POS_WEIGHT: 7
-
-EVAL_STAGE1:
-  THRESHOLD: 0.3
+  
+  # Parametri specifici (assunti gestiti internamente da train_stage1)
+  POS_WEIGHT: 10         # Peso maggiore per la classe "Folla" (che è minoritaria nei patch)
 
 # ============================================================
-# TRAINING (Stage 2)
+# STAGE 2: CLIP-EBC Pure Training
+# Obiettivo: Addestrare il contatore EBC sulle patch NON vuote usando CLIP
+# Nota: Qui usiamo la logica "Pura" con pesi OpenAI
 # ============================================================
 TRAIN_STAGE2:
-  TOTAL_EPOCHS: 1500       # Il paper dice 300-500
-  BATCH_SIZE: 16          # 16 o 32 a seconda della VRAM
+  TOTAL_EPOCHS: 2000      # Aumenta se il loss scende lentamente
+  BATCH_SIZE: 16         # CLIP consuma VRAM, riduci a 8 se vai OOM (Out Of Memory)
   NUM_WORKERS: 8
-  EVAL_FREQ: 10
-  NUM_WORKERS: 4
-  # Strategia Learning Rate Ufficiale
-  OPTIMIZER: "adamw"
-  LR_BACKBONE: 1.0e-5      # ResNet regge bene questo LR (più alto di ViT)
-  LR_HEAD: 1.0e-4
+  EVAL_FREQ: 5           # Valuta ogni 5 epoche per risparmiare tempo
+  
+  # Optimizer & Scheduler
+  LR: 1.0e-5             # LR Base
+  LR_BACKBONE: 0.0       # 0.0 = FREEZE CLIP (Usiamo i pesi puri OpenAI senza modificarli)
+                         # Metti 1.0e-6 se vuoi fare fine-tuning leggerissimo della backbone
+  LR_HEAD: 1.0e-4        # Addestra il decoder EBC e i bin
   WEIGHT_DECAY: 1.0e-4
-  WARMUP_EPOCHS: 5        # FONDAMENTALE!
-  AMP: true
-  CLIP_GRAD_NORM: 1.0     
-
-LOSS_STAGE2:
-  TYPE: "dace"
-  WEIGHT_COUNT_LOSS: 1.0  # Peso per MAE loss ausiliaria
-  COUNT_LOSS: "dmcount"   # Usa DM Count (OT Based)
-  WEIGHT_OT: 0.1
-  WEIGHT_TV: 0.1
-  LABEL_SMOOTHING: 0.0
+  WARMUP_EPOCHS: 10      # Warmup più lungo per stabilità
+  
+  # Loss Function (DACE / EBC)
+  WEIGHT_COUNT_LOSS: 1.0
+  COUNT_LOSS: "dmcount"  # Distribution Matching Loss (consigliata per EBC)
+  WEIGHT_OT: 0.1         # Optimal Transport Loss (aiuta la convergenza spaziale)
+  WEIGHT_TV: 0.01        # Total Variation Loss (riduce il rumore nella density map)
 
 # ============================================================
-# STAGE 3: JOINT REFINEMENT
+# STAGE 3: JOINT Fine-tuning
+# Obiettivo: Unire ZIP e CLIP-EBC e rifinire il modello completo
 # ============================================================
 TRAIN_STAGE3:
-  EPOCHS: 600
-  BATCH_SIZE: 4          # Basso perché carichiamo 2 modelli in VRAM
+  TOTAL_EPOCHS: 50
+  BATCH_SIZE: 4          # Molto basso: ora abbiamo in memoria Backbone + ZIP Head + EBC Head
   NUM_WORKERS: 4
   
-  # Optimizer params (Learning Rate molto basso per non rovinare CLIP)
-  #LR: 1.0e-5             
-  LR: 1.0e-5           # Sperimentale leggermente più alto
-  WEIGHT_DECAY: 1.0e-4
-  LAMBDA_ZIP: 0.5    # Dà importanza alla precisione di ZIP
-  LAMBDA_CLIP: 1.0   # Mantiene la capacità di conteggio di CLIP
-  LAMBDA_CONS: 0.2   # <--- AGGIUNGI QUESTO: evita che ZIP "mangi" persone reali
-  STEEPNESS_START: 1.0
-  STEEPNESS_END: 20.0
+  # Learning Rate "Chirurgico"
+  LR: 1.0e-6             # LR infinitesimale per non distruggere ciò che Stage 1 e 2 hanno imparato
+  LR_BACKBONE: 1.0e-7    # Praticamente fermo
   
-  AMP: true
-  CLIP_GRAD_NORM: 1.0
-  LOG_EVERY: 50
-  MASK_THR: 0.5
-  MASK_EPS: 0.001
-  
-  # PERCORSI DEI PESI PRE-ADDESTRATI (Aggiornati per shb_res50)
-  CHECKPOINT_STAGE1: "checkpoints/shb_res50/stage1/best_model.pth" 
-  CHECKPOINT_STAGE2: "checkpoints/shb_res50/stage2/best_model.pth"
-
-EVAL_STAGE3:
-  # Parametri per la strategia "Hard" (Divide et Impera)
-  PATCH_SIZE: 224        # Dimensione del blocco analizzato
-  STRIDE: 224            # 224 = Nessuna sovrapposizione (taglio netto)
-  THRESHOLD: 0.5         # Se prob. presenza < 0.5, il blocco viene ignorato
-
-EXP:
-  OUT_DIR: "./checkpoints/shb_res50"
-  SAVE_BEST: true
-  LOG_INTERVAL: 50
+  EVAL_FREQ: 1
+  SAVE_FREQ: 5

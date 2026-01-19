@@ -1,6 +1,6 @@
 #!/bin/bash -l
 
-#SBATCH --job-name=sha_resnet50_allStage_train
+#SBATCH --job-name=s1sha_resnet50_train
 #SBATCH --account=did_crowd_counting_339
 #SBATCH --partition=aiq
 #SBATCH --gres=gpu:1
@@ -38,8 +38,8 @@ echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
 python -c "import torch; print('torch', torch.__version__); print('cuda_available', torch.cuda.is_available()); print('torch_cuda', torch.version.cuda)"
 nvidia-smi
 
-srun python train_stage1.py --config configs/config_resnet_sha.yaml --out checkpoints/sha_res50/stage1
+srun python train_stage1.py --config configs/config_resnet_sha.yaml --data_dir data --batch_size 16
 
-#srun python train_stage2.py --config configs/config_resnet_sha.yaml  --out checkpoints/sha_res50/stage2 
+#srun python trainer.py --config configs/config_resnet_sha.yaml --model clip_resnet50  --anchor_points average --prompt_type word --dataset sha --sliding_window --window_size 448 --stride 448 --count_loss dmcount 
 
 #srun python train_stage3_v2.py --config configs/config_resnet_sha.yaml --s1 checkpoints/sha_res50/stage1/best_model.pth --s2 checkpoints/sha_res50/stage2/best_model.pth --out checkpoints/sha_res50/stage3

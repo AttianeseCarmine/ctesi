@@ -128,7 +128,7 @@ def main(args):
     
     print(f"\n🚀 AVVIO VISUALIZZAZIONE CHECK")
     print(f"   Run Name: {run_name}")
-    print(f"   Modello:  {config['BACKBONE']['TYPE']}")
+    print(f"   Modello:  {config['BACKBONE']}")
     print(f"   Soglia:   {args.threshold}")
 
     # 1. Carica Modello

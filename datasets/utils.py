@@ -5,9 +5,8 @@ from typing import Optional, List, Tuple
 
 
 def get_id(x: str) -> int:
-    filename_no_ext = x.split(".")[0]
-    id_str = filename_no_ext.replace("IMG_", "") # Rimuove il prefisso
-    return int(id_str)
+    return int(x.split(".")[0])
+
 
 def generate_density_map(label: Tensor, height: int, width: int, sigma: Optional[float] = None) -> Tensor:
     """
@@ -29,39 +28,36 @@ def generate_density_map(label: Tensor, height: int, width: int, sigma: Optional
     return density_map
 
 
-def safe_collate_fn(batch):
-    # Chiama il collate_fn originale
-    images, points, density_maps = collate_fn(batch)
-    
-    # ✅ SANITIZZA NaN/Inf nelle immagini
-    if torch.isnan(images).any():
-        print(f"⚠️ NaN rilevato in {torch.isnan(images).sum()} pixel, sostituisco con 0")
-        images = torch.nan_to_num(images, nan=0.0)
-    
-    if torch.isinf(images).any():
-        print(f"⚠️ Inf rilevato in {torch.isinf(images).sum()} pixel, clamppo")
-        images = torch.clamp(images, -10, 10)
-    
-    return images, points, density_maps
+def collate_fn(batch: List[Tensor]) -> Tuple[Tensor, List[Tensor], Tensor]:
+    batch = list(zip(*batch))
+    images = batch[0]
+    assert len(images[0].shape) == 4, f"images should be a 4D tensor, got {images[0].shape}."
+    if len(batch) == 4:  # image, label, density_map, image_name
+        images = torch.cat(images, 0)
+        points = batch[1]  # list of lists of tensors, flatten it
+        points = [p for points_ in points for p in points_]
+        densities = torch.cat(batch[2], 0)
+        image_names = batch[3]  # list of lists of strings, flatten it
+        image_names = [name for names_ in image_names for name in names_]
 
+        return images, points, densities, image_names
 
-def collate_fn(batch):
-    # 1. Decomprimi i 3 valori restituiti da Crowd.__getitem__
-    #    Ogni elemento è (image_crops, label_crops, density_crops)
-    #    image_crops shape: [num_crops, 3, H, W]
-    images, labels, density_maps = zip(*batch)
+    elif len(batch) == 3:  # image, label, density_map
+        images = torch.cat(images, 0)
+        points = batch[1]
+        points = [p for points_ in points for p in points_]
+        densities = torch.cat(batch[2], 0)
+
+        return images, points, densities
     
-    # 2. Usa torch.cat invece di torch.stack.
-    #    torch.cat concatena lungo la dimensione 0, fondendo la dimensione del batch
-    #    con quella dei crop.
-    #    Da lista di [num_crops, 3, H, W] -> Tensore [Batch*num_crops, 3, H, W]
-    images = torch.cat(images, 0)
-    density_maps = torch.cat(density_maps, 0)
-    
-    # 3. Appiattisci la lista dei punti.
-    #    'labels' è una tupla di liste (una lista di tensori per ogni immagine nel batch).
-    #    Dobbiamo ottenere una singola lista lunga quanto il batch effettivo (Batch * num_crops).
-    points = [p for sublist in labels for p in sublist]
-    
-    # 4. Restituisci la tupla nell'ordine corretto per il Trainer
-    return images, points, density_maps
+    elif len(batch) == 2:  # image, image_name. NWPU test dataset
+        images = torch.cat(images, 0)
+        image_names = batch[1]
+        image_names = [name for names_ in image_names for name in names_]
+
+        return images, image_names
+
+    else:
+        images = torch.cat(images, 0)
+
+        return images

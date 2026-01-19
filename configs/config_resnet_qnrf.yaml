@@ -1,151 +1,80 @@
-# configs/config_qnrf_resnet.yaml
 # ============================================================
-# ZIP-CLIP-EBC: Configurazione UFFICIALE QNRF (ResNet50)
+# ZIP-CLIP-EBC: Configurazione Completa a 3 Stadi
+# Dataset: QNRF - Backbone: resnet (CLIP)
 # ============================================================
 
-RUN_NAME: "qnrf_res50"
-SEED: 42
-DEVICE: "cuda"
-
-# ============================================================
-# DATASET
-# ============================================================
+# Questi valori vengono usati se non specificati nei singoli stage o da terminale
 DATASET: "qnrf"
-DATA:
-  ROOT: "./data/qnrf/"  # <--- Assicurati che il percorso sia giusto
-  TRAIN_SPLIT: "train"
-  VAL_SPLIT: "val"         
-  
-  # Normalizzazione Standard CLIP
-  NORM_MEAN: [0.48145466, 0.4578275, 0.40821073]
-  NORM_STD:  [0.26862954, 0.26130258, 0.27577711]
-  
-  # ResNet lavora benissimo a 448 (miglior dettaglio per folla densa)
-  CROP_SIZE: 448
-  CROP_SCALE: [0.5, 2.0]
-  IMG_EXTS: [".jpg", ".png"]
+MODEL: "clip_resnet50"   # STAGE2 !!
+INPUT_SIZE: 224          # FONDAMENTALE: CLIP richiede 224x224 (o multipli/crop)
+REDUCTION: 8             # Fattore di riduzione delle feature map
+TRUNCATION: 4            # Max count per bin (EBC logic)
+GRANULARITY: "fine"      # Granularità dei bin
+PROMPT_TYPE: "word"      # Prompt per CLIP ("word" o "number")
+SEED: 42
 
-# ============================================================
-# BACKBONE (Stage 1)
-# ============================================================
+
 BACKBONE:
-  TYPE: "resnet50"       # ResNet50 Standard
+  TYPE: "resnet50"       # STAGE1 !!
   PRETRAINED: True
   FREEZE_BN: True
 
-# ============================================================
-# MODEL: CLIP HEAD (Stage 2)
-# ============================================================
-CLIP_EBC_HEAD:
-  CLIP_MODEL: "RN50"     # Nome ufficiale CLIP per ResNet50
-  PRETRAINED: "openai"
-  PROMPT_TYPE: "word"
-  WINDOW_SIZE: 16
-  
-  # Usiamo Reduction 8 per la massima precisione (standard SOTA)
-  # Il modello userà l'upsample che abbiamo fixato (16 -> 8)
-  REDUCTION: 8
-  
-  # NOTA: ResNet NON usa VPT (Visual Prompt Tuning).
-  # Questi parametri vengono ignorati, ma li lasciamo a 0 per pulizia.
-  NUM_VPT: 0
-  VPT_DROP: 0.0
 
 # ============================================================
-# BIN CONFIGURATION (QNRF - Fine Granularity)
-# Fonte: reduction_8.json -> key "8" -> "qnrf" -> "bins" -> "fine"
-# ============================================================
-# QNRF è molto denso, usiamo una classificazione più fine (0..8)
-BINS:
-  - [0, 0]
-  - [1, 1]
-  - [2, 2]
-  - [3, 3]
-  - [4, 4]
-  - [5, 5]
-  - [6, 6]
-  - [7, 7]
-  - [8, 99999] 
-
-NUM_BINS: 9
-# Fonte: reduction_8.json -> key "8" -> "qnrf" -> "anchor_points" -> "fine" -> "average"
-BIN_CENTERS: [0, 1, 2, 3, 4, 5, 6, 7, 9.23349]
-
-# ============================================================
-# TRAINING STAGE 1 (ZIP Pre-training)
+# STAGE 1: ZIP (Zero-Inflated Poisson) Pre-training
+# Obiettivo: Addestrare la rete a distinguere Background (0) da Folla (>0)
 # ============================================================
 TRAIN_STAGE1:
-  EPOCHS: 1000
-  BATCH_SIZE: 16         # ResNet 448x448 occupa memoria
+  TOTAL_EPOCHS: 2000
+  BATCH_SIZE: 16
   NUM_WORKERS: 8
-  VAL_INTERVAL: 5
-  OPTIMIZER: "adamw"
-  LR_BACKBONE: 1.0e-5
-  LR_HEAD: 1.0e-4        # Un po' più basso per stabilità su QNRF
+  
+  # Learning Rates
+  LR: 1.0e-4
+  LR_BACKBONE: 1.0e-5    # Basso per non rovinare i pesi iniziali
+  LR_HEAD: 1.0e-4        # Normale per la testa di classificazione binaria (pi_head)
   WEIGHT_DECAY: 1.0e-4
-  POS_WEIGHT: 10         # Peso per il bilanciamento classi background/foreground
-
-EVAL_STAGE1:
-  THRESHOLD: 0.8        # Soglia leggermente più alta per QNRF
+  
+  # Parametri specifici (assunti gestiti internamente da train_stage1)
+  POS_WEIGHT: 10         # Peso maggiore per la classe "Folla" (che è minoritaria nei patch)
 
 # ============================================================
-# TRAINING STAGE 2 (CLIP-EBC)
+# STAGE 2: CLIP-EBC Pure Training
+# Obiettivo: Addestrare il contatore EBC sulle patch NON vuote usando CLIP
+# Nota: Qui usiamo la logica "Pura" con pesi OpenAI
 # ============================================================
 TRAIN_STAGE2:
-  TOTAL_EPOCHS: 2600       
-  BATCH_SIZE: 8   
-  EVAL_FREQ: 15     
-  NUM_WORKERS: 4
-  # Strategia Learning Rate Ufficiale
-  OPTIMIZER: "adamw"
-  LR_BACKBONE: 1.0e-5      
-  LR_HEAD: 1.0e-4          
+  TOTAL_EPOCHS: 2000      # Aumenta se il loss scende lentamente
+  BATCH_SIZE: 16         # CLIP consuma VRAM, riduci a 8 se vai OOM (Out Of Memory)
+  NUM_WORKERS: 8
+  EVAL_FREQ: 5           # Valuta ogni 5 epoche per risparmiare tempo
+  
+  # Optimizer & Scheduler
+  LR: 1.0e-5             # LR Base
+  LR_BACKBONE: 0.0       # 0.0 = FREEZE CLIP (Usiamo i pesi puri OpenAI senza modificarli)
+                         # Metti 1.0e-6 se vuoi fare fine-tuning leggerissimo della backbone
+  LR_HEAD: 1.0e-4        # Addestra il decoder EBC e i bin
   WEIGHT_DECAY: 1.0e-4
-  CLIP_GRAD_NORM: 1
-  WARMUP_EPOCHS: 50        
-  AMP: true
-
-LOSS_STAGE2:
-  TYPE: "dace"
+  WARMUP_EPOCHS: 10      # Warmup più lungo per stabilità
+  
+  # Loss Function (DACE / EBC)
   WEIGHT_COUNT_LOSS: 1.0
-  COUNT_LOSS: "dmcount"
-  WEIGHT_OT: 0.1
-  WEIGHT_TV: 0.01
-  LABEL_SMOOTHING: 0.0
+  COUNT_LOSS: "dmcount"  # Distribution Matching Loss (consigliata per EBC)
+  WEIGHT_OT: 0.1         # Optimal Transport Loss (aiuta la convergenza spaziale)
+  WEIGHT_TV: 0.01        # Total Variation Loss (riduce il rumore nella density map)
 
 # ============================================================
-# TRAINING STAGE 3 (Refinement)
+# STAGE 3: JOINT Fine-tuning
+# Obiettivo: Unire ZIP e CLIP-EBC e rifinire il modello completo
 # ============================================================
 TRAIN_STAGE3:
-  EPOCHS: 600
-  BATCH_SIZE: 4
+  TOTAL_EPOCHS: 50
+  BATCH_SIZE: 4          # Molto basso: ora abbiamo in memoria Backbone + ZIP Head + EBC Head
   NUM_WORKERS: 4
   
-  LR: 1.0e-5
-  WEIGHT_DECAY: 1.0e-4
+  # Learning Rate "Chirurgico"
+  LR: 1.0e-6             # LR infinitesimale per non distruggere ciò che Stage 1 e 2 hanno imparato
+  LR_BACKBONE: 1.0e-7    # Praticamente fermo
   
-  LAMBDA_ZIP: 0.5
-  LAMBDA_CLIP: 1.0
-  LAMBDA_CONS: 0.2
-  
-  STEEPNESS_START: 1.0
-  STEEPNESS_END: 20.0
-    
-  AMP: true
-  CLIP_GRAD_NORM: 1.0
-  LOG_EVERY: 50
-  MASK_THR: 0.35
-  MASK_EPS: 0.001
-  
-  CHECKPOINT_STAGE1: "checkpoints/qnrf_resnet50/stage1/best_model.pth" 
-  CHECKPOINT_STAGE2: "checkpoints/qnrf_resnet50/stage2/best_model.pth"
-
-EVAL_STAGE3:
-  PATCH_SIZE: 448        # Patch grande per QNRF
-  STRIDE: 448
-  THRESHOLD: 0.35
-
-EXP:
-  OUT_DIR: "./checkpoints"
-  SAVE_BEST: true
-  LOG_INTERVAL: 50
+  EVAL_FREQ: 1
+  SAVE_FREQ: 5
