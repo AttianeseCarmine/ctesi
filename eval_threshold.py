@@ -1,247 +1,168 @@
 import argparse
-import os
 import yaml
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
+import os
 from tqdm import tqdm
 
-# Import dal tuo progetto
-from utils import get_dataloader, setup, init_seeds
 from models.zip_model import ZIPModel
-from models import get_model 
+from utils import get_dataloader
 
-# =============================================================================
-# WRAPPER CLASS
-# =============================================================================
-class InferencePipeline(nn.Module):
-    def __init__(self, config, stage1_path, stage2_path):
-        super().__init__()
-        
-        # --- 1. Carica Modello Stage 1 (ZIP / Mask) ---
-        print(f"🔹 Loading Stage 1 (Mask) from: {stage1_path}")
-        self.stage1 = ZIPModel(config)
-        
-        # Carica pesi Stage 1
-        ckpt1 = torch.load(stage1_path, map_location='cpu')
-        state1 = ckpt1['model_state_dict'] if 'model_state_dict' in ckpt1 else ckpt1
-        self.stage1.load_state_dict(state1, strict=False)
-        
-        # --- 2. Carica Modello Stage 2 (Density / CLIP-EBC) ---
-        print(f"🔹 Loading Stage 2 (Density) from: {stage2_path}")
-        
-        backbone_type = config.get('model', 'vit_b_16')
-        inp_size = config.get('input_size', 224)
-        reduction = config.get('reduction', 8)
-        
-        # --- FIX DEFINITIVO PER BINS E ANCHOR POINTS ---
-        truncation = config.get('truncation', 4) 
-        
-        # Il modello vuole una LISTA DI TUPLE per i bin, non un tensore.
-        # Creiamo dei bin "puntiformi" [(0,0), (1,1), (2,2)...] che rappresentano i conteggi interi.
-        # Questo soddisfa il requisito "len(b) == 2".
-        bins = [(float(i), float(i)) for i in range(truncation + 1)]
-        
-        # Gli anchor points devono corrispondere. Usiamo un tensore semplice.
-        anchor_points = torch.tensor([float(i) for i in range(truncation + 1)])
-        
-        self.stage2 = get_model(
-            backbone=backbone_type,
-            input_size=inp_size,
-            reduction=reduction,
-            bins=bins,           # <--- Ora è una lista di tuple [(0,0), (1,1)...]
-            anchor_points=anchor_points, # <--- Tensore lunghezza 5
-            prompt_type=config.get('prompt_type', 'word'),
-            num_vpt=config.get('num_vpt', 32),
-            vpt_drop=config.get('vpt_drop', 0.0),
-            deep_vpt=not config.get('shallow_vpt', False)
-        )
-        
-        # Carica pesi Stage 2
-        ckpt2 = torch.load(stage2_path, map_location='cpu')
-        state2 = ckpt2['model_state_dict'] if 'model_state_dict' in ckpt2 else ckpt2
-        state2 = {k.replace('module.', ''): v for k, v in state2.items()}
-        
-        self.stage2.load_state_dict(state2, strict=False)
+def get_args():
+    parser = argparse.ArgumentParser(description='Valutazione Stage 1 - Patch Level (Coerente con Training)')
+    parser.add_argument('--config', type=str, default='config_stage1.yaml', help='Path al file di config')
+    parser.add_argument('--gpu', default='0', type=str, help='ID della GPU')
+    parser.add_argument('--ckpt', type=str, default=None, help='Path al checkpoint')
+    return parser.parse_args()
 
-    def forward(self, x):
-        # Forward Stage 1
-        out1 = self.stage1(x)
-        logits_mask = out1['pi_logits'] if isinstance(out1, dict) else out1
-        
-        # Forward Stage 2
-        out2 = self.stage2(x)
-        # Gestione output CLIP-EBC (può essere tupla o tensore)
-        if isinstance(out2, tuple):
-            _, density_map = out2
-        elif isinstance(out2, dict):
-            density_map = out2.get('density', out2.get('ebc_density'))
-        else:
-            density_map = out2
-            
-        return logits_mask, density_map
-
-# =============================================================================
-# EVALUATION LOGIC
-# =============================================================================
-def evaluate_thresholds(model, loader, device, thresholds):
+@torch.no_grad()
+def evaluate_patch_level(model, dataloader, device, thresholds):
     model.eval()
     
-    mae_results = {th: 0.0 for th in thresholds}
-    mse_results = {th: 0.0 for th in thresholds}
-    num_samples = 0
+    # Statistiche per ogni soglia
+    stats = [{'tp': 0, 'tn': 0, 'fp': 0, 'fn': 0, 'retained_density': 0.0, 'total_density': 0.0} for _ in thresholds]
     
-    print("🚀 Running Inference...")
+    print("[*] Avvio valutazione PATCH-LEVEL (simulazione logica di training)...")
     
-    with torch.no_grad():
-        for batch in tqdm(loader, desc="Eval"):
-            # Gestione input eterogenei (dict o tuple)
-            if isinstance(batch, dict):
-                images = batch['image'].to(device)
-                gt_points = batch['points']
-            else:
-                images, gt_points, _ = batch
-                images = images.to(device)
-            
-            # Conta persone reali (Ground Truth)
-            gt_counts = [len(p) for p in gt_points]
+    for batch in tqdm(dataloader, desc="Valutazione"):
+        img = None
+        gt_density = None
 
-            # Forward pass
-            logits_mask, density_map = model(images)
-            
-            # Calcola probabilità (Sigmoide sui logits)
-            prob_mask = torch.sigmoid(logits_mask)
+        # --- 1. Recupero Dati ---
+        if isinstance(batch, dict):
+            img = batch['image'].to(device)
+            if 'density' in batch: gt_density = batch['density'].to(device)
+            elif 'labels' in batch: gt_density = batch['labels'].to(device)
+        elif isinstance(batch, (list, tuple)):
+            img = batch[0].to(device)
+            # Fix per il tuo dataset che ritorna (img, points, density)
+            if len(batch) >= 3:
+                gt_density = batch[2].to(device)
+            elif len(batch) == 2 and isinstance(batch[1], torch.Tensor):
+                gt_density = batch[1].to(device)
 
-            # --- ALLINEAMENTO DIMENSIONI ---
-            # Interpolazione: Porta la maschera (es. 32x32) alla dimensione della densità (es. 56x56)
-            if prob_mask.shape[-2:] != density_map.shape[-2:]:
-                prob_mask = F.interpolate(
-                    prob_mask,
-                    size=density_map.shape[-2:],
-                    mode='bilinear',
-                    align_corners=False
-                )
+        if img is None or gt_density is None: continue
 
-            # --- LOOP SULLE SOGLIE ---
-            # Calcoliamo i risultati per tutte le soglie in una sola passata
-            for th in thresholds:
-                # Logica ZIP: Se prob > th consideriamo "sfondo" o "folla"?
-                # DIPENDE da come è stato addestrato Stage 1.
-                # Caso A: Output è probabilità di "Zero/Sfondo". -> Mask = (prob < th)
-                # Caso B: Output è probabilità di "Folla".       -> Mask = (prob > th)
-                # ZIP solitamente predice p(Zero), quindi usiamo (prob < th) per tenere la folla.
-                # Se i risultati sono terribili, prova a invertire la disuguaglianza.
-                
-                # Assumiamo Caso A (Standard ZIP): p = probabilità di essere vuoto.
-                # Vogliamo mantenere i pixel dove la probabilità di essere vuoto è BASSA.
-                # Esempio th=0.8 -> Teniamo tutto ciò che ha prob_vuoto < 0.2 (molto severo) o < 0.8 (lasco)?
-                # Solitamente si usa: mask = (prob_sfondo < threshold)
-                
-                mask = (prob_mask < (1.0 - th)).float() 
+        # --- 2. Forward Pass ---
+        output = model(img)
+        # Il modello restituisce logits di dimensione [B, 1, H/16, W/16] (es. 14x14)
+        logits = output['pi_logits'] if isinstance(output, dict) else output
+        probs = torch.sigmoid(logits)
 
-                final_density = density_map * mask
-                pred_counts = final_density.sum(dim=(1, 2, 3))
-                
-                for pred, gt in zip(pred_counts, gt_counts):
-                    err = abs(pred.item() - gt)
-                    mae_results[th] += err
-                    mse_results[th] += err ** 2
-            
-            num_samples += len(images)
-
-    # Aggregazione finale
-    final_results = []
-    for th in thresholds:
-        mae = mae_results[th] / num_samples
-        mse = (mse_results[th] / num_samples) ** 0.5
-        final_results.append((th, mae, mse))
+        # --- 3. Generazione Ground Truth a Patch (Logica Training) ---
+        # Per confrontare con l'output 14x14, dobbiamo sapere se nel blocco originale 16x16 c'era folla.
+        # Usiamo MaxPool sulla densità: se nel blocco 16x16 c'è un picco > 0, il patch è POSITIVO.
+        # Calcoliamo il kernel size in base al rapporto di riduzione
+        h_in, w_in = img.shape[2], img.shape[3]
+        h_out, w_out = logits.shape[2], logits.shape[3]
+        stride_h, stride_w = h_in // h_out, w_in // w_out
         
-    return final_results
+        # GT Binaria a livello di Patch (14x14)
+        # Se la somma della densità nel patch è > epsilon, allora è folla.
+        gt_patch_density = F.avg_pool2d(gt_density, kernel_size=(stride_h, stride_w), stride=(stride_h, stride_w)) * (stride_h * stride_w)
+        gt_binary_patch = (gt_patch_density > 0.001).float()
 
-# =============================================================================
-# MAIN
-# =============================================================================
-def main():
-    parser = argparse.ArgumentParser()
-    # Argomenti principali
-    parser.add_argument('--config', type=str, required=True, help="Path al config YAML")
-    parser.add_argument('--dataset', type=str, required=True, help="Nome dataset (es: sha)")
-    
-    # Path modelli
-    parser.add_argument('--ckpt_stage1', type=str, required=True)
-    parser.add_argument('--ckpt_stage2', type=str, required=True)
-    
-    # Parametri tecnici
-    parser.add_argument('--device', type=str, default='cuda')
-    parser.add_argument('--gpu', type=int, default=0)
-    
-    args = parser.parse_args()
-    
-    # Setup Device
-    device = torch.device(f'cuda:{args.gpu}' if torch.cuda.is_available() else 'cpu')
-    print(f"⚙️  Using device: {device}")
-
-    # 1. Caricamento Configurazione
-    with open(args.config, 'r') as f:
-        config_dict = yaml.safe_load(f)
-    
-    # 2. Creazione Namespace per get_dataloader
-    # Convertiamo il dict in Namespace e sovrascriviamo con argomenti da terminale se necessario
-    args_ds = argparse.Namespace(**config_dict)
-    
-    # Forziamo parametri specifici per la validazione
-    args_ds.dataset = args.dataset
-    args_ds.batch_size = 1        # Batch size 1 è più sicura per eval (immagini dimensioni diverse)
-    args_ds.sliding_window = False 
-    args_ds.local_rank = -1       # Disabilita DDP
-    args_ds.distributed = False
-    
-    # Assicuriamo che esistano chiavi che get_dataloader potrebbe cercare
-    if not hasattr(args_ds, 'num_workers'): args_ds.num_workers = 4
-    if not hasattr(args_ds, 'data_dir'): args_ds.data_dir = './data'
-
-    # 3. Dataloader
-    # IMPORTANTE: Se non hai la cartella 'val', cambia 'val' in 'test' qui sotto
-    split_name = 'val' 
-    print(f"📊 Loading Data split: {split_name} for {args.dataset}...")
-    
-    try:
-        val_loader = get_dataloader(args_ds, split=split_name, ddp=False)
-    except Exception as e:
-        print(f"⚠️  Errore caricamento 'val': {e}")
-        print("🔄 Provo con split 'test'...")
-        val_loader = get_dataloader(args_ds, split='test', ddp=False)
-
-    # 4. Inizializzazione Pipeline
-    model = InferencePipeline(config_dict, args.ckpt_stage1, args.ckpt_stage2).to(device)
-
-    # 5. Esecuzione Test
-    thresholds = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
-    print(f"\n🔎 Testing Thresholds: {thresholds}")
-    
-    results = evaluate_thresholds(model, val_loader, device, thresholds)
-    
-    # 6. Report
-    print("\n" + "="*45)
-    print(f"{'Threshold':<10} | {'MAE':<10} | {'MSE':<10}")
-    print("-" * 45)
-    
-    best_res = None
-    best_mae = float('inf')
-    
-    for th, mae, mse in results:
-        print(f"{th:<10.2f} | {mae:<10.4f} | {mse:<10.4f}")
-        if mae < best_mae:
-            best_mae = mae
-            best_res = (th, mae, mse)
+        # --- 4. Calcolo Metriche per ogni Soglia ---
+        for i, th in enumerate(thresholds):
+            # A. Metriche di Classificazione (F1, Accuracy) su PATCH
+            pred_binary = (probs > th).float()
             
-    print("="*45)
-    print(f"🏆 BEST RESULT:")
-    print(f"   Threshold: {best_res[0]}")
-    print(f"   MAE:       {best_res[1]:.4f}")
-    print(f"   MSE:       {best_res[2]:.4f}")
-    print("="*45)
+            tp = ((pred_binary == 1) & (gt_binary_patch == 1)).sum().item()
+            tn = ((pred_binary == 0) & (gt_binary_patch == 0)).sum().item()
+            fp = ((pred_binary == 1) & (gt_binary_patch == 0)).sum().item()
+            fn = ((pred_binary == 0) & (gt_binary_patch == 1)).sum().item()
+            
+            stats[i]['tp'] += tp
+            stats[i]['tn'] += tn
+            stats[i]['fp'] += fp
+            stats[i]['fn'] += fn
+
+            # B. Metrica "Simil-MAE" (Quanto densità reale perdiamo mascherando?)
+            # Upsample della maschera per applicarla alla densità originale
+            mask_up = F.interpolate(pred_binary, size=gt_density.shape[-2:], mode='nearest')
+            
+            # Densità che "sopravvive" al filtro
+            retained = (gt_density * mask_up).sum().item()
+            total = gt_density.sum().item()
+            
+            stats[i]['retained_density'] += retained
+            stats[i]['total_density'] += total
+
+    return stats
+
+def main():
+    args = get_args()
+    os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    # Configurazione
+    with open(args.config, 'r') as f: config = yaml.safe_load(f)
+    for key, value in config.items(): setattr(args, key, value)
+    
+    # Defaults
+    if not hasattr(args, 'dataset'): args.dataset = 'sha'
+    args.sliding_window = False
+    args.resize_to_multiple = False
+    args.zero_pad_to_multiple = False
+    args.regression = False
+    args.prompt_type = None
+    
+    # Loader & Modello
+    print(f"[*] Loading Dataset & Model...")
+    loader = get_dataloader(args, split='val', ddp=False)
+    model = ZIPModel(config).to(device)
+    
+    # Pesi
+    ckpt_path = args.ckpt
+    if ckpt_path is None: ckpt_path = os.path.join(config.get('ckpt_dir', ''), 'best_model.pth')
+    
+    if os.path.exists(ckpt_path):
+        print(f"[*] Loading weights: {ckpt_path}")
+        checkpoint = torch.load(ckpt_path, map_location=device)
+        state_dict = checkpoint['model_state_dict'] if 'model_state_dict' in checkpoint else checkpoint
+        model.load_state_dict({k.replace('module.', ''): v for k, v in state_dict.items()}, strict=False)
+    else:
+        print(f"[!] Errore: Checkpoint {ckpt_path} non trovato.")
+        return
+
+    # Range Soglie
+    thresholds = np.arange(0.0, 1.05, 0.05)
+    stats = evaluate_patch_level(model, loader, device, thresholds)
+    
+    # Stampa Tabella
+    print("\n" + "="*95)
+    print(f"{'Thr':<5} | {'F1 (Patch)':<10} | {'Acc (Patch)':<10} | {'Prec':<8} | {'Rec':<8} | {'Dens. Kept%':<12}")
+    print("-" * 95)
+    
+    best_f1 = -1.0
+    best_th = -1.0
+    
+    for i, th in enumerate(thresholds):
+        s = stats[i]
+        epsilon = 1e-7
+        
+        # Metriche Classificazione
+        tp, tn, fp, fn = s['tp'], s['tn'], s['fp'], s['fn']
+        acc = (tp + tn) / (tp + tn + fp + fn + epsilon)
+        prec = tp / (tp + fp + epsilon)
+        rec = tp / (tp + fn + epsilon)
+        f1 = 2 * (prec * rec) / (prec + rec + epsilon)
+        
+        # Metrica Ritenzione Densità (Simile al tuo vecchio script)
+        # Percentuale di folla reale che non viene cancellata dalla maschera
+        dens_kept_pct = (s['retained_density'] / (s['total_density'] + epsilon)) * 100
+        
+        if f1 > best_f1:
+            best_f1 = f1
+            best_th = th
+            
+        print(f"{th:<5.2f} | {f1:<10.4f} | {acc:<10.4f} | {prec:<8.4f} | {rec:<8.4f} | {dens_kept_pct:<10.2f}%")
+        
+    print("-" * 95)
+    print(f"🏆 BEST F1 (Patch-Level): {best_f1:.4f} @ Threshold: {best_th:.2f}")
+    print("   Nota: 'Dens. Kept%' indica quanta folla reale viene preservata dalla maschera.")
+    print("="*95 + "\n")
 
 if __name__ == '__main__':
     main()
