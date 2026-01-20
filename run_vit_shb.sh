@@ -1,6 +1,6 @@
 #!/bin/bash -l
 
-#SBATCH --job-name=s3shb_vit_train
+#SBATCH --job-name=s2shb_vit_train
 #SBATCH --account=did_crowd_counting_339
 #SBATCH --partition=aiq
 #SBATCH --gres=gpu:1
@@ -9,8 +9,8 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH --time=07:00:00
-#SBATCH -o logs/shb_vit_stage3_%j.out
-#SBATCH -e logs/shb_vit_stage3_%j.err
+#SBATCH -o logs/shb_vit_stage2_%j.out
+#SBATCH -e logs/shb_vit_stage2_%j.err
 #SBATCH --mail-user=c.attianese13@studenti.unisa.it
 #SBATCH --mail-type=ALL
 
@@ -38,9 +38,10 @@ echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
 python -c "import torch; print('torch', torch.__version__); print('cuda_available', torch.cuda.is_available()); print('torch_cuda', torch.version.cuda)"
 nvidia-smi
 
-#srun python train_stage1.py --config configs/config_vit_shb.yaml --data_dir data --batch_size 16
+#srun python train_stage1.py --config configs/config_vit_shb.yaml --data_dir data --batch_size 16 --out checkpoints/shb/vit_b_16/stage1
 
-#srun python trainer.py --config configs/config_vit_sha.yaml --model clip_vit_b_16  --anchor_points average --prompt_type word --dataset shb --sliding_window --window_size 448 --stride 448 --count_loss dmcount 
-#srun python train_stage3_v2.py --config configs/config_vit_shb.yaml --s1 checkpoints/shb_vit/stage1/best_model.pth --s2 checkpoints/shb_vit/stage2/best_model.pth --out checkpoints/shb_vit/stage3
+srun python trainer.py --config configs/config_vit_shb.yaml --model clip_vit_b_16  --anchor_points average --prompt_type word --dataset sha --sliding_window --window_size 224 --stride 224 --count_loss dmcount --out checkpoints/shb/vit_b_16/stage2 
 
-python train_stage3_v2.py --config configs/config_vit_shb.yaml --dataset shb --s1 checkpoints/shb/vit_b_16/stage1/best_model.pth --s2 checkpoints/shb/clip_vit_b_16_shb/stage2/best_mae_0.pth --out checkpoints/shb/stage3 --amp
+#srun python train_stage3_v2.py --config configs/config_vit_shb.yaml --s1 checkpoints/shb/vit_b_16/stage1/best_model.pth --s2 checkpoints/shb/vit_b_16/stage2/best_mae_0.pth --out checkpoints/shb/vit_b_16/stage3 
+
+

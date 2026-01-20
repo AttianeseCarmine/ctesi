@@ -38,8 +38,10 @@ echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
 python -c "import torch; print('torch', torch.__version__); print('cuda_available', torch.cuda.is_available()); print('torch_cuda', torch.version.cuda)"
 nvidia-smi
 
-srun python train_stage1.py --config configs/config_vit_sha.yaml --data_dir data --batch_size 16
-#srun python trainer.py --config configs/config_vit_sha.yaml --model clip_vit_b_16  --anchor_points average --prompt_type word --dataset sha --sliding_window --window_size 448 --stride 448 --count_loss dmcount 
+srun python train_stage1.py --config configs/config_vit_sha.yaml --data_dir data --batch_size 16 --out checkpoints/sha/vit_b_16/stage1
+#srun python trainer.py --config configs/config_vit_sha.yaml --model clip_vit_b_16  --anchor_points average --prompt_type word --dataset sha --sliding_window --window_size 224 --stride 224 --count_loss dmcount --out checkpoints/sha/vit_b_16/stage2 
+#srun python trainer.py --config configs/config_vit_sha.yaml --model clip_vit_b_16  --anchor_points average --prompt_type word --dataset sha --sliding_window --window_size 224 --stride 224 --count_loss dmcount --out checkpoints/sha/vit_b_16/stage2 
 
+#srun python train_stage3_v2.py --config configs/config_vit_sha.yaml --s1 checkpoints/sha/vit_b_16/stage1/best_model.pth --s2 checkpoints/sha/vit_b_16/stage2/best_mae_0.pth --out checkpoints/sha/vit_b_16/stage3 
 
-#srun python train_stage3_v2.py --config configs/config_vit_sha.yaml --s1 checkpoints/sha_vit/stage1/best_model.pth --s2 checkpoints/sha_vit/stage2/best_model.pth --out checkpoints/sha_vit/stage3
+#python -c "import torch; ck=torch.load('checkpoints/sha/vit_b_16/stage1/best_model.pth', map_location='cpu'); sd=ck.get('model_state_dict', ck); k=[x for x in sd if 'zip_head.shared.0.weight' in x][0]; print('key=',k,'shape=',sd[k].shape)"

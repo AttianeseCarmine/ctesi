@@ -69,7 +69,7 @@ TRAIN_STAGE2:
 # Obiettivo: Unire ZIP e CLIP-EBC e rifinire il modello completo
 # ============================================================
 TRAIN_STAGE3:
-  TOTAL_EPOCHS: 50
+  TOTAL_EPOCHS: 2000
   BATCH_SIZE: 4          # Molto basso: ora abbiamo in memoria Backbone + ZIP Head + EBC Head
   NUM_WORKERS: 4
   

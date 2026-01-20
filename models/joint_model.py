@@ -27,9 +27,15 @@ class ZIPCLIPJointModel(nn.Module):
 
         # 2. CLIP Stage (Contatore)
         out2 = self.stage2(x)
-        raw_density = out2['ebc_density']
-        ebc_logits = out2['ebc_logits']
-        
+
+        if isinstance(out2, (tuple, list)):
+            # Stage2 ritorna (pred_class, pred_density)
+            ebc_logits, raw_density = out2[0], out2[1]
+        else:
+            # regression case: ritorna direttamente la density
+            raw_density = out2
+            ebc_logits = None
+            
         # --- ALLINEAMENTO ---
         if raw_density.shape[2:] != pi_logits_raw.shape[2:]:
             pi_logits_raw = F.interpolate(

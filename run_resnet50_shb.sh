@@ -1,6 +1,6 @@
 #!/bin/bash -l
 
-#SBATCH --job-name=s2shb_resnet50_train
+#SBATCH --job-name=s3shb_resnet50_train
 #SBATCH --account=did_crowd_counting_339
 #SBATCH --partition=aiq
 #SBATCH --gres=gpu:1
@@ -9,8 +9,8 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH --time=07:00:00
-#SBATCH -o logs/shb_resnet50_stage2_%j.out
-#SBATCH -e logs/shb_resnet50_stage2_%j.err
+#SBATCH -o logs/shb_resnet50_stage3_%j.out
+#SBATCH -e logs/shb_resnet50_stage3_%j.err
 #SBATCH --mail-user=c.attianese13@studenti.unisa.it
 #SBATCH --mail-type=ALL
 
@@ -40,6 +40,5 @@ nvidia-smi
 
 #srun python train_stage1.py --config configs/config_resnet_shb.yaml --data_dir data --batch_size 16
 
-srun python trainer.py --config configs/config_resnet_sha.yaml --model clip_resnet50  --anchor_points average --prompt_type word --dataset shb --sliding_window --window_size 448 --stride 448 --count_loss dmcount 
 
-#srun python train_stage3_v2.py --config configs/config_resnet_shb.yaml --s1 checkpoints/shb_res50/stage1/best_model.pth --s2 checkpoints/shb_res50/stage2/best_model.pth --out checkpoints/shb_res50/stage3
+srun python train_stage3_v2.py --config configs/config_resnet_shb.yaml --s1 checkpoints/shb/resnet50/stage1/best_model.pth --s2 checkpoints/shb/resnet50/stage2/best_mae_0.pth --out checkpoints/shb/resnet50/stage3 

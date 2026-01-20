@@ -1,363 +1,528 @@
-import argparse
+# visualize_stage2.py
 import os
-import json
+import argparse
 import yaml
-import re
-import math
+import numpy as np
 import torch
 import torch.nn.functional as F
-import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
-from PIL import Image
-from torchvision import transforms
-from scipy.ndimage import gaussian_filter
 
-# Import moduli del progetto
-from models import get_model
 from datasets import standardize_dataset_name
-from datasets.utils import generate_density_map
+from models import get_model
+from utils import get_dataloader
 
-# ==============================================================================
-# 1. CONFIGURAZIONE & PARAMETRI
-# ==============================================================================
 
-def load_config_and_parameters(args):
+# -------------------------
+# YAML loader that supports !!python/tuple
+# -------------------------
+class SafeTupleLoader(yaml.SafeLoader):
+    pass
+
+
+def construct_python_tuple(loader, node):
+    return tuple(loader.construct_sequence(node))
+
+
+SafeTupleLoader.add_constructor("tag:yaml.org,2002:python/tuple", construct_python_tuple)
+
+
+# -------------------------
+# Helpers
+# -------------------------
+def _unwrap_pred_density(model_out):
     """
-    Carica config e parametri. 
-    Cerca SOLO 'model'/'MODEL' per definire l'architettura Stage 2.
+    Stage2 può ritornare:
+      - Tensor pred_density
+      - (pred_class, pred_density)
+      - dict con chiavi tipo 'density', 'ebc_density', 'pred_density', 'final_density'
+    Qui estraiamo SEMPRE un Tensor Bx1xhxw.
     """
-    config_path = args.config
-    if not os.path.exists(config_path):
-        raise FileNotFoundError(f"Config non trovato: {config_path}")
-        
-    with open(config_path, 'r') as f:
-        try:
-            config = yaml.load(f, Loader=yaml.UnsafeLoader)
-        except AttributeError:
-            config = yaml.load(f, Loader=yaml.Loader)
-    
-    # --- 1. Determinazione Nome Modello ---
-    model_name = None
-    
-    # A. Override da riga di comando (Priorità Massima)
-    if args.model_name is not None:
-        model_name = args.model_name
-    
-    # B. Dal Config (Cerca solo MODEL o model, NON backbone)
-    if model_name is None:
-        keys_to_check = ['model', 'MODEL']
-        for k in keys_to_check:
-            if k in config and config[k]:
-                val = config[k]
-                if isinstance(val, dict):
-                    model_name = val.get('TYPE') or val.get('type')
-                else:
-                    model_name = val
-                break
-    
-    # C. Fallback Euristico dal Path del Checkpoint
-    if model_name is None:
-        ckpt_path_str = args.checkpoint.lower()
-        if "resnet50" in ckpt_path_str:
-            model_name = "clip_resnet50"
-            print("⚠️ 'model' non trovato nel config. Dedotto dal path: clip_resnet50")
-        elif "vit_b_16" in ckpt_path_str:
-            model_name = "clip_vit_b_16"
-            print("⚠️ 'model' non trovato nel config. Dedotto dal path: clip_vit_b_16")
-        else:
-            print("⚠️ Impossibile determinare il modello. Uso default: clip_vit_b_16")
-            model_name = "clip_vit_b_16"
+    if isinstance(model_out, torch.Tensor):
+        return model_out
 
-    args.model = model_name
-    
-    # --- 2. Altri Parametri ---
-    args.dataset = config.get('dataset') or config.get('DATASET', 'sha')
-    args.dataset = standardize_dataset_name(args.dataset)
-    
-    args.input_size = config.get('input_size') or config.get('INPUT_SIZE', 224)
-    args.reduction = config.get('reduction') or config.get('REDUCTION', 8)
-    args.truncation = config.get('truncation') or config.get('TRUNCATION', 4)
-    args.granularity = config.get('granularity') or config.get('GRANULARITY', 'fine')
-    args.anchor_points_type = config.get('anchor_points') or 'average'
-    args.prompt_type = config.get('prompt_type') or config.get('PROMPT_TYPE', 'word')
-    
-    args.num_vpt = config.get('num_vpt', 32)
-    args.vpt_drop = config.get('vpt_drop', 0.0)
-    args.deep_vpt = not config.get('shallow_vpt', False)
-
-    # --- 3. Caricamento Bins & Anchors ---
-    if 'bins' in config and 'anchor_points' in config:
-        args.bins = config['bins']
-        args.anchor_points = config['anchor_points']
-    else:
-        possible_paths = [
-            os.path.join("configs", f"reduction_{args.reduction}.json"),
-            os.path.join(os.path.dirname(config_path), f"reduction_{args.reduction}.json"),
-            f"reduction_{args.reduction}.json"
-        ]
-        
-        json_path = None
-        for p in possible_paths:
-            if os.path.exists(p):
-                json_path = p
-                break
-        
-        if json_path:
-            with open(json_path, "r") as f:
-                reduction_cfg = json.load(f)[str(args.truncation)][args.dataset]
-            
-            raw_bins = reduction_cfg["bins"][args.granularity]
-            if args.anchor_points_type == "average":
-                raw_anchors = reduction_cfg["anchor_points"][args.granularity]["average"]
-            else:
-                raw_anchors = reduction_cfg["anchor_points"][args.granularity]["middle"]
-                
-            args.bins = [(float(b[0]), float(b[1])) for b in raw_bins]
-            args.anchor_points = [float(p) for p in raw_anchors]
-        else:
-            print(f"❌ ERRORE: File reduction_{args.reduction}.json non trovato!")
-            args.bins = None
-            args.anchor_points = None
-    
-    return args
-
-# ==============================================================================
-# 2. UTILS VISUALIZZAZIONE (CORRETTA)
-# ==============================================================================
-
-def denormalize(tensor):
-    mean = np.array([0.485, 0.456, 0.406])
-    std = np.array([0.229, 0.224, 0.225])
-    tensor = tensor.clone().detach().cpu()
-    if tensor.dim() == 4: tensor = tensor.squeeze(0)
-    img = tensor.permute(1, 2, 0).numpy()
-    img = (img * std) + mean
-    return np.clip(img, 0, 1)
-
-def create_density_overlay(image, density_map, alpha=0.6, sigma=2):
-    """
-    Crea l'overlay della mappa di densità gestendo correttamente le dimensioni.
-    """
-    H, W = image.shape[:2]
-    
-    # --- FIX DIMENSIONI ---
-    # Trasforma numpy in tensor
-    d_tensor = torch.tensor(density_map).float()
-    
-    # Normalizza le dimensioni a (1, 1, H_curr, W_curr) per l'interpolazione
-    if d_tensor.dim() == 2:   # (H, W)
-        d_tensor = d_tensor.unsqueeze(0).unsqueeze(0)
-    elif d_tensor.dim() == 3: # (1, H, W) o (C, H, W)
-        d_tensor = d_tensor.unsqueeze(0)
-        
-    # Resize density map se necessario
-    if d_tensor.shape[-2:] != (H, W):
-        d_tensor = F.interpolate(
-            d_tensor,
-            size=(H, W), 
-            mode='bilinear', 
-            align_corners=False
+    if isinstance(model_out, (tuple, list)):
+        # convenzione comune: (pred_class, pred_density)
+        if len(model_out) >= 2 and isinstance(model_out[1], torch.Tensor):
+            return model_out[1]
+        # fallback: primo tensore 4D
+        for x in model_out:
+            if isinstance(x, torch.Tensor) and x.dim() == 4:
+                return x
+        raise TypeError(
+            f"Tuple/list output but no density tensor found. Types: {[type(x) for x in model_out]}"
         )
-    
-    # Ritorna a numpy (H, W)
-    density_map_resized = d_tensor.squeeze().numpy()
-    
-    # Smoothing
-    if sigma > 0: 
-        density_smooth = gaussian_filter(density_map_resized, sigma=sigma)
-    else: 
-        density_smooth = density_map_resized
-    
-    # Normalize [0,1] per colormap
-    max_val = density_smooth.max()
-    density_norm = density_smooth / max_val if max_val > 1e-6 else density_smooth
-    
-    # Colormap: Blu -> Ciano -> Verde -> Giallo -> Rosso
-    colors = [
-        (0.0, 0.0, 0.3), (0.0, 0.0, 0.8), (0.0, 0.8, 1.0), 
-        (0.0, 1.0, 0.5), (0.5, 1.0, 0.0), (1.0, 1.0, 0.0), 
-        (1.0, 0.5, 0.0), (1.0, 0.0, 0.0)
-    ]
-    cmap = mcolors.LinearSegmentedColormap.from_list('density', colors, N=256)
-    density_colored = cmap(density_norm)[:, :, :3]
-    
-    # Maschera background (trasparenza)
-    mask = (density_norm > 0.05)[..., None]
-    
-    overlay = np.where(mask, (1 - alpha) * image + alpha * density_colored, image)
-    return np.clip(overlay, 0, 1)
 
-def get_transform(h, w, model_name):
-    # ResNet usa stride 32, ViT usa 16
-    stride = 32 if "resnet" in str(model_name).lower() else 16
-    new_h = math.ceil(h / stride) * stride
-    new_w = math.ceil(w / stride) * stride
-    return transforms.Compose([
-        transforms.Resize((new_h, new_w)),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-    ])
+    if isinstance(model_out, dict):
+        for k in ["pred_density", "density", "ebc_density", "final_density"]:
+            if k in model_out and isinstance(model_out[k], torch.Tensor):
+                return model_out[k]
+        raise KeyError(f"Dict output but no known density key found. Keys: {list(model_out.keys())}")
 
-def load_gt_points(image_path):
-    try:
-        path_no_ext = os.path.splitext(image_path)[0]
-        fname = os.path.basename(path_no_ext)
-        base_dir = os.path.dirname(os.path.dirname(image_path))
-        
-        candidates = [
-            os.path.join(base_dir, 'labels', fname + '.npy'), # data/sha/val/labels/IMG.npy
-            image_path.replace('images', 'labels').replace('.jpg', '.npy') # Stessa cartella ma labels
-        ]
-        for p in candidates:
-            if os.path.exists(p): return np.load(p)
-    except:
-        pass
+    raise TypeError(f"Unsupported model output type: {type(model_out)}")
+
+
+def _denorm_image(img_chw, mean, std):
+    """
+    Se mean/std mancano nel config, usa ImageNet default (evita colori strani).
+    """
+    if mean is None or std is None:
+        mean = [0.485, 0.456, 0.406]
+        std = [0.229, 0.224, 0.225]
+
+    mean = torch.tensor(mean, device=img_chw.device).view(3, 1, 1)
+    std = torch.tensor(std, device=img_chw.device).view(3, 1, 1)
+    x = img_chw * std + mean
+    return x.clamp(0, 1)
+
+
+def _resize_density_preserve_sum(density_b1hw, out_h, out_w):
+    """
+    Resize bilinear + scaling per conservare la somma (conteggio).
+    density_b1hw: Tensor 1x1xhxw
+    """
+    in_h, in_w = density_b1hw.shape[-2:]
+    if (in_h, in_w) == (out_h, out_w):
+        return density_b1hw
+
+    resized = F.interpolate(density_b1hw, size=(out_h, out_w), mode="bilinear", align_corners=False)
+    scale = (in_h * in_w) / float(out_h * out_w)
+    return resized * scale
+
+
+def _robust_vmax(m_2d, q=0.995):
+    """
+    vmax robusto (percentile) così la mappa pred non resta “tutta blu”.
+    """
+    x = m_2d.detach().float().cpu()
+    if x.numel() == 0:
+        return 1.0
+    vmax = torch.quantile(x.flatten(), q).item()
+    if not np.isfinite(vmax) or vmax <= 0:
+        vmax = float(x.max().item()) if x.max().item() > 0 else 1.0
+    return vmax
+
+
+def _resolve_subset_index(ds, idx):
+    """Se ds è Subset (torch.utils.data.Subset), ritorna (base_ds, real_idx)."""
+    if hasattr(ds, "indices") and hasattr(ds, "dataset"):
+        try:
+            return ds.dataset, int(ds.indices[idx])
+        except Exception:
+            return ds, idx
+    return ds, idx
+
+
+def _dataset_get_path(ds, idx):
+    """
+    Cerca di recuperare il path/nome immagine dal dataset (o subset).
+    Non assume un solo campo: prova varie opzioni comuni.
+    """
+    base_ds, real_idx = _resolve_subset_index(ds, idx)
+
+    for attr in ["img_paths", "image_paths", "imgs", "images", "im_list", "paths", "files", "img_list"]:
+        if hasattr(base_ds, attr):
+            arr = getattr(base_ds, attr)
+            try:
+                return arr[real_idx]
+            except Exception:
+                pass
+
+    if hasattr(base_ds, "samples"):
+        try:
+            s = base_ds.samples[real_idx]
+            if isinstance(s, (list, tuple)) and len(s) > 0:
+                return s[0]
+        except Exception:
+            pass
+
     return None
 
-# ==============================================================================
-# MAIN
-# ==============================================================================
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--config', type=str, required=True)
-    parser.add_argument('--checkpoint', type=str, required=True)
-    parser.add_argument('--image_path', type=str, required=True)
-    parser.add_argument('--device', type=str, default='cuda')
-    parser.add_argument('--sigma', type=float, default=4.0, help="Sigma GT Heatmap")
-    
-    # Opzione per forzare il modello
-    parser.add_argument('--model_name', type=str, default=None)
-    
-    args = parser.parse_args()
-    device = torch.device(args.device if torch.cuda.is_available() else "cpu")
-    
-    # 1. Caricamento Configurazione
-    try:
-        cfg = load_config_and_parameters(args)
-        print(f"✅ Config Caricato.")
-        print(f"   Modello: {cfg.model}")
-        print(f"   Dataset: {cfg.dataset}")
-    except Exception as e:
-        print(f"❌ Errore Config: {e}")
-        return
 
-    # 2. Costruzione Modello
-    print("🏗️  Costruzione Modello...")
+def _find_indices_by_names(ds, names):
+    """
+    names: lista di stringhe (es. ["075.jpg","143.jpg"]).
+    Match per basename (case-insensitive) o substring.
+    """
+    wanted = [n.strip() for n in names if n.strip()]
+    if not wanted:
+        return []
+
+    wanted_low = [w.lower() for w in wanted]
+    found = []
+
+    N = len(ds)
+    for i in range(N):
+        p = _dataset_get_path(ds, i)
+        if not p:
+            continue
+        base = os.path.basename(str(p)).lower()
+        full = str(p).lower()
+        for w in wanted_low:
+            if w == base or w in base or w in full:
+                found.append(i)
+                break
+
+    # unique keep order
+    seen = set()
+    out = []
+    for i in found:
+        if i not in seen:
+            seen.add(i)
+            out.append(i)
+    return out
+
+
+def _count_points(target_points):
+    """
+    Conteggio robusto:
+    - Tensor Nx2 => N
+    - list/tuple di punti => len
+    - list/tuple con dentro [Tensor Nx2] => N (NON 1)
+    - numpy Nx2 => N
+    """
+    if target_points is None:
+        return 0
+
+    if isinstance(target_points, torch.Tensor):
+        if target_points.ndim >= 2:
+            return int(target_points.shape[0])
+        return int(target_points.numel())
+
+    if isinstance(target_points, np.ndarray):
+        if target_points.ndim >= 2:
+            return int(target_points.shape[0])
+        return int(target_points.size)
+
+    if isinstance(target_points, (list, tuple)):
+        if len(target_points) == 0:
+            return 0
+        first = target_points[0]
+        # caso tipico: [Tensor(N,2)]
+        if isinstance(first, torch.Tensor) and getattr(first, "ndim", 0) == 2:
+            return int(first.shape[0])
+        if isinstance(first, np.ndarray) and getattr(first, "ndim", 0) == 2:
+            return int(first.shape[0])
+        # altrimenti lista di punti (x,y)
+        return int(len(target_points))
+
+    # fallback
+    try:
+        return int(len(target_points))
+    except Exception:
+        return 0
+
+
+def _points_to_xy(target_points):
+    """
+    Converte target_points in due array (xs, ys) float (immagine coords).
+    Supporta:
+    - Tensor Nx2
+    - numpy Nx2
+    - list di (x,y)
+    - [Tensor Nx2] (batch wrapper)
+    """
+    if target_points is None:
+        return None, None
+
+    # unwrap batch wrapper [Nx2]
+    if isinstance(target_points, (list, tuple)) and len(target_points) > 0:
+        if isinstance(target_points[0], (torch.Tensor, np.ndarray)) and getattr(target_points[0], "ndim", 0) == 2:
+            target_points = target_points[0]
+
+    if isinstance(target_points, torch.Tensor):
+        pts = target_points.detach().cpu().float()
+        if pts.numel() == 0:
+            return None, None
+        xs = pts[:, 0].numpy()
+        ys = pts[:, 1].numpy()
+        return xs, ys
+
+    if isinstance(target_points, np.ndarray):
+        pts = target_points.astype(np.float32)
+        if pts.size == 0:
+            return None, None
+        xs = pts[:, 0]
+        ys = pts[:, 1]
+        return xs, ys
+
+    # list di tuple
+    pts = np.array(target_points, dtype=np.float32)
+    if pts.size == 0:
+        return None, None
+    xs = pts[:, 0]
+    ys = pts[:, 1]
+    return xs, ys
+
+
+def _make_args_for_dataloader(cfg, dataset, input_size):
+    """
+    get_dataloader nel tuo progetto usa args.<attributo>.
+    Qui creiamo un Namespace completo con default sicuri.
+    """
+    args = argparse.Namespace()
+
+    args.dataset = standardize_dataset_name(dataset)
+    args.batch_size = 1
+    args.num_workers = 0
+    args.input_size = int(cfg.get("input_size", input_size)) if isinstance(cfg.get("input_size", input_size), (int, float)) else input_size
+
+    # flags used in data_utils.get_dataloader
+    args.sliding_window = bool(cfg.get("sliding_window", False))
+    args.stride = cfg.get("stride", None)
+    args.window_size = cfg.get("window_size", None)
+    args.resize_to_multiple = bool(cfg.get("resize_to_multiple", False))
+    args.zero_pad_to_multiple = bool(cfg.get("zero_pad_to_multiple", False))
+
+    # augmentation knobs (safe defaults)
+    args.num_crops = int(cfg.get("num_crops", 1)) if isinstance(cfg.get("num_crops", 1), (int, float)) else 1
+    args.min_scale = float(cfg.get("min_scale", 1.0))
+    args.max_scale = float(cfg.get("max_scale", 2.0))
+    args.brightness = float(cfg.get("brightness", 0.0))
+    args.contrast = float(cfg.get("contrast", 0.0))
+    args.saturation = float(cfg.get("saturation", 0.0))
+    args.hue = float(cfg.get("hue", 0.0))
+    args.kernel_size = int(cfg.get("kernel_size", 5)) if isinstance(cfg.get("kernel_size", 5), (int, float)) else 5
+    args.saltiness = float(cfg.get("saltiness", 0.0))
+    args.spiciness = float(cfg.get("spiciness", 0.0))
+    args.jitter_prob = float(cfg.get("jitter_prob", 0.0))
+    args.blur_prob = float(cfg.get("blur_prob", 0.0))
+    args.noise_prob = float(cfg.get("noise_prob", 0.0))
+
+    return args
+
+
+# -------------------------
+# Main visualize
+# -------------------------
+def visualize_stage2(
+    config_path: str,
+    ckpt_path: str,
+    out_png: str,
+    dataset: str,
+    model_name: str,
+    input_size: int,
+    reduction: int,
+    num_rows: int = 3,
+    names: str = None,      # comma-separated
+    seed: int = 0,
+    alpha_pred: float = 0.55,
+    alpha_gt_bg: float = 0.97,     # SFONDO COLONNA 2 quasi pieno
+    point_size: float = 28.0,      # PUNTI PIU GRANDI
+    point_edge: float = 0.5,       # bordo nero sottile
+    device: str = "cuda:0",
+):
+    # device (CPU fallback)
+    if torch.cuda.is_available():
+        device = torch.device(device)
+    else:
+        print("ℹ️ CUDA non disponibile: uso CPU.")
+        device = torch.device("cpu")
+
+    # ---- load YAML config ----
+    if not (config_path and os.path.exists(config_path)):
+        raise FileNotFoundError(f"Config not found: {config_path}")
+
+    with open(config_path, "r") as f:
+        cfg = yaml.load(f, Loader=SafeTupleLoader) or {}
+
+    # bins/anchor_points
+    if "bins" not in cfg or "anchor_points" not in cfg:
+        raise ValueError("Nel config non trovo 'bins' e/o 'anchor_points'.")
+
+    bins = []
+    for a, b in cfg["bins"]:
+        a = float(a)
+        if isinstance(b, str) and b.strip().lower() in [".inf", "inf"]:
+            b = float("inf")
+        else:
+            b = float(b)
+        bins.append((a, b))
+
+    anchor_points_list = [float(x) for x in cfg["anchor_points"]]
+
+    mean = cfg.get("NORM_MEAN", None)
+    std = cfg.get("NORM_STD", None)
+
+    # dataloader args
+    dl_args = _make_args_for_dataloader(cfg, dataset=dataset, input_size=input_size)
+
+    # ---- build model ----
     model = get_model(
-        backbone=cfg.model,
-        input_size=cfg.input_size,
-        reduction=cfg.reduction,
-        bins=cfg.bins,
-        anchor_points=cfg.anchor_points,
-        prompt_type=cfg.prompt_type,
-        num_vpt=cfg.num_vpt,
-        vpt_drop=cfg.vpt_drop,
-        deep_vpt=cfg.deep_vpt
+        backbone=model_name,
+        input_size=input_size,
+        reduction=reduction,
+        bins=bins,
+        anchor_points=anchor_points_list,
+        prompt_type=cfg.get("prompt_type", cfg.get("PROMPT_TYPE", "word")),
+        num_vpt=int(cfg.get("num_vpt", cfg.get("NUM_VPT", 32))),
+        vpt_drop=float(cfg.get("vpt_drop", cfg.get("VPT_DROP", 0.0))),
+        deep_vpt=not bool(cfg.get("shallow_vpt", cfg.get("SHALLOW_VPT", False))),
     ).to(device)
 
-    # 3. Caricamento Pesi
-    if os.path.exists(args.checkpoint):
-        print(f"📥 Loading Weights: {args.checkpoint}")
-        ckpt = torch.load(args.checkpoint, map_location=device)
-        state_dict = ckpt['model_state_dict'] if 'model_state_dict' in ckpt else ckpt
-        new_state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
-        
-        try:
-            model.load_state_dict(new_state_dict, strict=False)
-        except RuntimeError as e:
-            print(f"❌ ERRORE CARICAMENTO PESI: Mismatch architettura/pesi.\n{e}")
-            return
-        model.eval()
-    else:
-        print("❌ Checkpoint non trovato.")
-        return
+    # ---- load ckpt ----
+    ckpt = torch.load(ckpt_path, map_location="cpu")
+    sd = ckpt.get("model_state_dict", ckpt)
+    if any(k.startswith("module.") for k in sd.keys()):
+        sd = {k.replace("module.", "", 1): v for k, v in sd.items()}
+    model.load_state_dict(sd, strict=False)
+    model.eval()
 
-    # 4. Immagine
-    if not os.path.exists(args.image_path):
-        print("❌ Immagine non trovata.")
-        return
-    
-    raw_img = Image.open(args.image_path).convert('RGB')
-    W_orig, H_orig = raw_img.size
-    
-    # Transform corretto
-    trans = get_transform(H_orig, W_orig, cfg.model)
-    img_tensor = trans(raw_img).unsqueeze(0).to(device)
-    
-    # 5. Inferenza
+    # ---- dataloader ----
+    val_loader = get_dataloader(dl_args, split="val", ddp=False)
+    ds = val_loader.dataset
+
+    # ---- choose indices ----
+    rng = np.random.default_rng(seed)
+    chosen = None
+
+    if names:
+        name_list = [x.strip() for x in names.split(",") if x.strip()]
+        idxs = _find_indices_by_names(ds, name_list)
+        if not idxs:
+            print("⚠️ Nessuna immagine trovata con quei nomi (o dataset non espone i path). Userò random dal validation set.")
+        else:
+            chosen = idxs[:num_rows]
+
+    if chosen is None:
+        N = len(ds)
+        if N < num_rows:
+            chosen = list(range(N))
+        else:
+            chosen = rng.choice(N, size=num_rows, replace=False).tolist()
+
+    # ---- output ----
+    if not out_png.lower().endswith(".png"):
+        out_png = out_png + ".png"
+    os.makedirs(os.path.dirname(out_png) or ".", exist_ok=True)
+
+    # ---- plot ----
+    fig, axes = plt.subplots(num_rows, 3, figsize=(15, 4.5 * num_rows))
+    if num_rows == 1:
+        axes = axes.reshape(1, 3)
+
     with torch.no_grad():
-        pred_density = model(img_tensor)
-        if isinstance(pred_density, (tuple, list)): 
-            pred_density = pred_density[-1]
+        for row, idx in enumerate(chosen):
+            sample = ds[idx]  # atteso: (image, points, density) o simile
+            if not (isinstance(sample, (tuple, list)) and len(sample) >= 2):
+                raise TypeError(f"Dataset item non tuple/list. idx={idx} type={type(sample)}")
 
-    pred_count = pred_density.sum().item()
-    
-    # Squeeze robusto: assicura che sia numpy array senza dimensioni batch inutili
-    pred_den_np = pred_density.squeeze().cpu().numpy()
+            # prova a leggere in modo robusto
+            image = sample[0]
+            target_points = sample[1] if len(sample) >= 2 else None
 
-    # 6. GT & Plotting
-    gt_points = load_gt_points(args.image_path)
-    gt_den_np = None
-    gt_count = 0
-    
-    if gt_points is not None:
-        gt_count = len(gt_points)
-        H_net, W_net = pred_den_np.shape # Usa la dimensione di output della rete
-        pts_tensor = torch.from_numpy(gt_points).float()
-        pts_tensor[:, 0] *= (W_net / W_orig)
-        pts_tensor[:, 1] *= (H_net / H_orig)
-        
-        # Genera e fai subito squeeze per avere (H, W)
-        gt_den_tensor = generate_density_map(pts_tensor, H_net, W_net, sigma=args.sigma)
-        gt_den_np = gt_den_tensor.squeeze().numpy()
+            # batch dimension
+            if isinstance(image, torch.Tensor) and image.dim() == 3:
+                image_b = image.unsqueeze(0).to(device)
+            else:
+                image_b = image.to(device)
 
-    # Visualizzazione
-    img_vis = denormalize(img_tensor)
-    overlay_pred = create_density_overlay(img_vis, pred_den_np, alpha=0.6, sigma=2)
-    
-    if gt_den_np is not None:
-        overlay_gt = create_density_overlay(img_vis, gt_den_np, alpha=0.6, sigma=args.sigma)
-    else:
-        overlay_gt = np.zeros_like(img_vis)
+            # pred
+            out = model(image_b)
+            pred_density = _unwrap_pred_density(out)  # Bx1xhxw
 
-    fig, axes = plt.subplots(1, 3, figsize=(24, 8))
-    
-    # P1: Originale
-    axes[0].imshow(img_vis)
-    axes[0].set_title(f"Input ({W_orig}x{H_orig})", fontsize=16)
-    axes[0].axis('off')
-    
-    # P2: GT
-    axes[1].imshow(overlay_gt)
-    axes[1].set_title(f"Ground Truth\nCount: {gt_count}", fontsize=16, color='green', fontweight='bold')
-    axes[1].axis('off')
-    if gt_den_np is None: axes[1].text(0.5,0.5, "GT Missing", ha='center', color='white')
-    
-    # P3: Prediction
-    axes[2].imshow(overlay_pred)
-    err = abs(gt_count - pred_count)
-    col = 'blue' if err < max(1, gt_count*0.1) else 'red'
-    axes[2].set_title(f"Pred ({cfg.model})\nCount: {pred_count:.2f} | Err: {err:.1f}", 
-                      fontsize=16, color=col, fontweight='bold')
-    axes[2].axis('off')
+            # counts
+            gt_count = _count_points(target_points)
+            pred_count = float(pred_density.sum().item())
 
-    # Salvataggio
-    base_name = os.path.basename(args.image_path)
-    name_no_ext = os.path.splitext(base_name)[0]
-    match = re.search(r'\d+', name_no_ext)
-    img_num = match.group(0) if match else name_no_ext
-    backbone_name = str(cfg.model).replace("clip_", "")
-    
-    os.makedirs("visualize", exist_ok=True)
-    out_path = f"visualize/stage2_{img_num}_{backbone_name}.png"
-    
+            # denorm image for display
+            img = _denorm_image(image_b[0].detach().cpu(), mean, std)  # 3xHxW
+            H, W = img.shape[-2], img.shape[-1]
+
+            # pred map resized for overlay
+            pr_map = _resize_density_preserve_sum(pred_density[0:1].detach().cpu(), H, W)[0, 0]
+            vmax_pr = _robust_vmax(pr_map, q=0.995)
+
+            # filename / idx
+            pth = _dataset_get_path(ds, idx)
+            name_show = os.path.basename(str(pth)) if pth else f"idx={idx}"
+
+            # ---- COL 1: input ----
+            ax = axes[row, 0]
+            ax.imshow(img.permute(1, 2, 0).numpy())
+            ax.set_title(f"{name_show} | GT: {gt_count}")
+            ax.axis("off")
+
+            # ---- COL 2: input + GT points (white bigger) ----
+            ax = axes[row, 1]
+            ax.imshow(img.permute(1, 2, 0).numpy(), alpha=alpha_gt_bg)
+
+            xs, ys = _points_to_xy(target_points)
+            if xs is not None and ys is not None:
+                # clamp per sicurezza
+                xs = np.clip(xs, 0, W - 1)
+                ys = np.clip(ys, 0, H - 1)
+                ax.scatter(
+                    xs, ys,
+                    s=point_size,
+                    c="white",
+                    edgecolors="black",
+                    linewidths=point_edge,
+                )
+            ax.set_title("GT Points (Sharp)")
+            ax.axis("off")
+
+            # ---- COL 3: pred overlay ----
+            ax = axes[row, 2]
+            ax.imshow(img.permute(1, 2, 0).numpy())
+            ax.imshow(pr_map.numpy(), cmap="jet", vmin=0, vmax=vmax_pr, alpha=alpha_pred)
+            ax.set_title(f"Prediction Overlay | Pred: {pred_count:.1f}")
+            ax.axis("off")
+
     plt.tight_layout()
-    plt.savefig(out_path, dpi=100, bbox_inches='tight')
-    plt.close()
-    
-    print(f"\n✅ Salvato: {out_path}")
-    print(f"   GT: {gt_count} | Pred: {pred_count:.2f}")
+    plt.savefig(out_png, dpi=200)
+    plt.close(fig)
+    print(f"✅ Saved visualization to: {out_png}")
 
+
+# -------------------------
+# CLI
+# -------------------------
 if __name__ == "__main__":
-    main()
+    p = argparse.ArgumentParser()
+    p.add_argument("--config", type=str, required=True)
+    p.add_argument("--ckpt", type=str, required=True)
+    p.add_argument("--dataset", type=str, required=True)
+
+    p.add_argument("--model", type=str, required=True)  # es: clip_resnet50 / clip_vit_b_16
+    p.add_argument("--input_size", type=int, default=224)
+    p.add_argument("--reduction", type=int, default=8)
+
+    p.add_argument("--out_png", type=str, default="stage2_vis.png")
+    p.add_argument("--num_rows", type=int, default=3)
+
+    # scegli manualmente immagini: match su basename o substring
+    p.add_argument("--names", type=str, default=None, help='Esempio: --names "075.jpg,143.jpg,067.jpg"')
+
+    # random seed se non passi --names
+    p.add_argument("--seed", type=int, default=0)
+
+    # overlay params
+    p.add_argument("--alpha_pred", type=float, default=0.55)
+    p.add_argument("--alpha_gt_bg", type=float, default=0.97)
+    p.add_argument("--point_size", type=float, default=28.0)
+    p.add_argument("--point_edge", type=float, default=0.5)
+
+    p.add_argument("--device", type=str, default="cuda:0")
+
+    args = p.parse_args()
+
+    visualize_stage2(
+        config_path=args.config,
+        ckpt_path=args.ckpt,
+        out_png=args.out_png,
+        dataset=args.dataset,
+        model_name=args.model,
+        input_size=args.input_size,
+        reduction=args.reduction,
+        num_rows=args.num_rows,
+        names=args.names,
+        seed=args.seed,
+        alpha_pred=args.alpha_pred,
+        alpha_gt_bg=args.alpha_gt_bg,
+        point_size=args.point_size,
+        point_edge=args.point_edge,
+        device=args.device,
+    )
+
+
+# python visualize_stage2.py   --config checkpoints/shb/resnet50/stage2/config_stage2.yaml   --ckpt checkpoints/shb/resnet50/stage2/best_mae_0.pth   --dataset shb   --model clip_resnet50   --out_png visualize.png   --num_rows 3  

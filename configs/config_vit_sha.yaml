@@ -26,18 +26,18 @@ BACKBONE:
 # Obiettivo: Addestrare la rete a distinguere Background (0) da Folla (>0)
 # ============================================================
 TRAIN_STAGE1:
-  TOTAL_EPOCHS: 2000
+  TOTAL_EPOCHS: 2500
   BATCH_SIZE: 16
   NUM_WORKERS: 8
   
   # Learning Rates
   LR: 1.0e-4
-  LR_BACKBONE: 1.0e-5    # Basso per non rovinare i pesi iniziali
+  LR_BACKBONE: 1.0e-4    # Basso per non rovinare i pesi iniziali
   LR_HEAD: 1.0e-4        # Normale per la testa di classificazione binaria (pi_head)
   WEIGHT_DECAY: 1.0e-4
   
   # Parametri specifici (assunti gestiti internamente da train_stage1)
-  POS_WEIGHT: 10         # Peso maggiore per la classe "Folla" (che è minoritaria nei patch)
+  POS_WEIGHT: 15         # Peso maggiore per la classe "Folla" (che è minoritaria nei patch)
 
 # ============================================================
 # STAGE 2: CLIP-EBC Pure Training
@@ -45,7 +45,7 @@ TRAIN_STAGE1:
 # Nota: Qui usiamo la logica "Pura" con pesi OpenAI
 # ============================================================
 TRAIN_STAGE2:
-  TOTAL_EPOCHS: 2000      # Aumenta se il loss scende lentamente
+  TOTAL_EPOCHS: 2500      # Aumenta se il loss scende lentamente
   BATCH_SIZE: 16         # CLIP consuma VRAM, riduci a 8 se vai OOM (Out Of Memory)
   NUM_WORKERS: 8
   EVAL_FREQ: 5           # Valuta ogni 5 epoche per risparmiare tempo
@@ -69,7 +69,7 @@ TRAIN_STAGE2:
 # Obiettivo: Unire ZIP e CLIP-EBC e rifinire il modello completo
 # ============================================================
 TRAIN_STAGE3:
-  TOTAL_EPOCHS: 50
+  TOTAL_EPOCHS: 1000
   BATCH_SIZE: 4          # Molto basso: ora abbiamo in memoria Backbone + ZIP Head + EBC Head
   NUM_WORKERS: 4
   

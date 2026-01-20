@@ -1,6 +1,6 @@
 #!/bin/bash -l
 
-#SBATCH --job-name=s1sha_resnet50_train
+#SBATCH --job-name=s3sha_resnet50_train
 #SBATCH --account=did_crowd_counting_339
 #SBATCH --partition=aiq
 #SBATCH --gres=gpu:1
@@ -9,8 +9,8 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH --time=07:00:00
-#SBATCH -o logs/sha_resnet50_stage1_%j.out
-#SBATCH -e logs/sha_resnet50_stage1_%j.err
+#SBATCH -o logs/sha_resnet50_stage3_%j.out
+#SBATCH -e logs/sha_resnet50_stage3_%j.err
 #SBATCH --mail-user=c.attianese13@studenti.unisa.it
 #SBATCH --mail-type=ALL
 
@@ -38,8 +38,13 @@ echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
 python -c "import torch; print('torch', torch.__version__); print('cuda_available', torch.cuda.is_available()); print('torch_cuda', torch.version.cuda)"
 nvidia-smi
 
-srun python train_stage1.py --config configs/config_resnet_sha.yaml --data_dir data --batch_size 16
+#srun python train_stage1.py --config configs/config_resnet_sha.yaml --data_dir data --batch_size 16
 
 #srun python trainer.py --config configs/config_resnet_sha.yaml --model clip_resnet50  --anchor_points average --prompt_type word --dataset sha --sliding_window --window_size 448 --stride 448 --count_loss dmcount 
 
 #srun python train_stage3_v2.py --config configs/config_resnet_sha.yaml --s1 checkpoints/sha_res50/stage1/best_model.pth --s2 checkpoints/sha_res50/stage2/best_model.pth --out checkpoints/sha_res50/stage3
+
+srun python train_stage3_v2.py --config configs/config_resnet_sha.yaml --s1 checkpoints/sha/resnet50/stage1/best_model.pth --s2 checkpoints/sha/resnet50/stage2/best_mae_0.pth --out checkpoints/sha/resnet50/stage3 
+
+#python -c "import torch; ck=torch.load('checkpoints/sha/resnet50/stage1/best_model.pth', map_location='cpu'); sd=ck.get('model_state_dict', ck); k=[x for x in sd if 'zip_head.shared.0.weight' in x][0]; print('key=',k,'shape=',sd[k].shape)"
+#python -c "import torch; ck=torch.load('checkpoints/sha/resnet50/stage2/best_mae_0.pth', map_location='cpu'); sd=ck.get('model_state_dict', ck); k=[x for x in sd if 'zip_head.shared.0.weight' in x][0]; print('key=',k,'shape=',sd[k].shape)"
