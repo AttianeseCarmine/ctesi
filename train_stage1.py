@@ -35,19 +35,21 @@ parser.add_argument("--config", type=str, default=None, help="Path to the .yaml 
 parser.add_argument("--model", type=str, default="vit_b_16", help="Backbone model name.")
 parser.add_argument("--input_size", type=int, default=448, help="Input image size.")
 parser.add_argument("--reduction", type=int, default=16, help="Reduction factor (16 for ViT).")
-
+parser.add_argument("--out",type=str,default=None,help="checkpoints/<dataset>/<model>/stage1.")
 # Parametri Dataset
 parser.add_argument("--dataset", type=str, required=False, help="Dataset name (sha, shb, qnrf).")
 parser.add_argument("--data_dir", type=str, default="./data", help="Root directory of data.")
 parser.add_argument("--batch_size", type=int, default=16, help="Training batch size.")
 parser.add_argument("--num_workers", type=int, default=8, help="Data loading workers.")
-
+parser.add_argument("--resume", type=str, default=None, help="Resume checkpoint")
 # Parametri Training Stage 1
 parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate for the Head.")
-parser.add_argument("--lr_backbone", type=float, default=1e-5, help="Learning rate for the Backbone.")
+parser.add_argument("--lr_backbone", type=float, default=1e-5, help="Learning rate for the Backbone (old style: lr*0.1).")
+parser.add_argument("--pos_weight", type=float, default=15.0, help="Positive class weight (old style default).")
+
 parser.add_argument("--weight_decay", type=float, default=1e-4)
 parser.add_argument("--total_epochs", type=int, default=50)
-parser.add_argument("--pos_weight", type=float, default=10.0, help="Weight for positive class (Crowd) in BCE Loss.")
+
 
 # Augmentations
 parser.add_argument("--num_crops", type=int, default=1)
@@ -199,7 +201,6 @@ def train_one_epoch(model, loader, criterion, optimizer, scaler, device, rank, n
 def evaluate_stage1(model, loader, device):
     model.eval()
     tp, tn, fp, fn = 0, 0, 0, 0
-    threshold = 0.2 
     
     for batch in tqdm(loader, desc="Eval S1", disable=False):
         if isinstance(batch, dict):
@@ -218,7 +219,9 @@ def evaluate_stage1(model, loader, device):
         gt_down = F.adaptive_avg_pool2d(target_density, (h_out, w_out)) * scale_factor
         gt_binary = (gt_down > 0.001).float()
 
-        pred_binary = (pi_logits > threshold).float()
+        pred_prob = torch.sigmoid(pi_logits)
+        pred_binary = (pred_prob > threshold).float()   # threshold in [0,1]
+
 
         tp += ((pred_binary == 1) & (gt_binary == 1)).sum().item()
         tn += ((pred_binary == 0) & (gt_binary == 0)).sum().item()
@@ -246,8 +249,13 @@ def run(local_rank: int, nprocs: int, args: ArgumentParser) -> None:
     ddp = nprocs > 1
 
     # --- MODEL SETUP ---
-    cfg = vars(args) 
+    cfg = vars(args)
+    cfg["BACKBONE"] = {"TYPE": args.model}   # oppure args.backbone se lo chiami così
     model = ZIPModel(cfg).to(device)
+
+    if local_rank == 0:
+        print("DEBUG BACKBONE:", cfg.get("BACKBONE", None))
+
 
     for p in model.parameters():
         p.requires_grad = True 
@@ -273,8 +281,18 @@ def run(local_rank: int, nprocs: int, args: ArgumentParser) -> None:
     config_name = f"{args.model}_{args.dataset}" # Non usato per la folder ma utile per log
     
     # args.model ora contiene la backbone corretta letta dal YAML (es. vit_b_16 o resnet50)
-    args.ckpt_dir = os.path.join(current_dir, "checkpoints", args.dataset, args.model, "stage1")
+    # --- DIRECTORIES ---
+    # Default: checkpoints/<dataset>/<model>/stage1
+    default_ckpt_dir = os.path.join(current_dir, "checkpoints", args.dataset, args.model, "stage1")
+
+    # If --out is provided, use it (absolute or relative to current working dir)
+    if args.out is not None and str(args.out).strip() != "":
+        args.ckpt_dir = os.path.abspath(args.out)
+    else:
+        args.ckpt_dir = default_ckpt_dir
+
     os.makedirs(args.ckpt_dir, exist_ok=True)
+
 
     if local_rank == 0:
         print(f"📂 Checkpoints will be saved to: {args.ckpt_dir}")
@@ -322,7 +340,6 @@ def run(local_rank: int, nprocs: int, args: ArgumentParser) -> None:
         if local_rank == 0:
             update_train_result(epoch, train_stats, writer)
             log(logger, None, None, loss_info=train_stats)
-            
             # --- EVALUATION ---
             is_best = False
             val_stats = {} 
@@ -335,7 +352,17 @@ def run(local_rank: int, nprocs: int, args: ArgumentParser) -> None:
                 
                 # STAMPA METRICHE
                 print(f"📊 Eval Ep {epoch}: F1={val_stats['f1']:.4f} | Acc={val_stats['acc']:.4f} | Prec={val_stats['prec']:.4f} | Rec={val_stats['rec']:.4f}")
-                
+                # STAMPO LE METRICHE SUL LOG
+                log(logger, epoch, args.total_epochs,
+                   message=(
+                        f"Eval Stage1 | "
+                        f"F1={val_stats['f1']:.4f} | "
+                        f"Acc={val_stats['acc']:.4f} | "
+                        f"Prec={val_stats['prec']:.4f} | "
+                        f"Rec={val_stats['rec']:.4f}"
+                    )
+                )
+
                 for k, v in val_stats.items():
                     writer.add_scalar(f"val/{k}", v, epoch)
 

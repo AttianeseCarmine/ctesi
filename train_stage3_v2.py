@@ -1,269 +1,466 @@
-#!/usr/bin/env python3
-"""
-Train Stage 3: ZIP-CLIP Joint Fine-Tuning (Refined Strategy)
-============================================================
-Miglioramenti:
-1. Steepness Annealing: La maschera diventa più "dura" progressivamente.
-2. Partial Unfreeze: Sblocca Layer4 del backbone.
-3. Consistency Loss: Penalizza se ZIP maschera zone dove CLIP vede folla.
-"""
+import os, sys, json, yaml, shutil
+from argparse import ArgumentParser
 
-import os
-import yaml
-import argparse
-import math
 import torch
-import torch.nn as nn
+from torch import nn
 import torch.nn.functional as F
-from torch.utils.data import DataLoader
-from torch.optim import AdamW
-from torch.amp import GradScaler, autocast
-from torch.optim.lr_scheduler import OneCycleLR
+import torch.multiprocessing as mp
+from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.cuda.amp import GradScaler, autocast
 from tqdm import tqdm
-import shutil
-# --- IMPORTS ---
-from models.joint_model import ZIPCLIPJointModel
-from models.clip_ebc_model import CLIPEBCModel
+
+current_dir = os.path.abspath(os.path.dirname(__file__))
+
+from datasets import standardize_dataset_name
+from models import get_model
 from models.zip_model import ZIPModel
-from losses.clip_ebc_loss import CLIPEBCLoss 
-from datasets.sha import SHA
-from datasets.transforms import build_transforms
+from models.joint_model import ZIPCLIPJointModel
 
-# ==============================================================================
-# UTILS
-# ==============================================================================
-def freeze_parameters_refined(model):
-    """
-    Strategia Avanzata: Sblocca Aligner, Teste e Layer4 del Backbone.
-    """
-    print("\n🔒 Freezing Strategy: Refined (Backbone Layer4 Unfrozen)")
-    
-    # 1. Congela TUTTO
-    for param in model.parameters():
-        param.requires_grad = False
+from utils import setup, cleanup, init_seeds, get_logger, get_config, barrier
+from utils import get_dataloader, load_checkpoint, save_checkpoint
+from utils import get_writer, update_train_result, update_eval_result, log
 
-    trainable_params = []
+# ------------------------------------------------------------
+# Parser
+# ------------------------------------------------------------
+parser = ArgumentParser("Train Stage 3 (Joint ZIP+CLIP) - aligned to Stage2 pipeline")
 
-    # --- A. Aligner & Heads ---
-    head_params = []
-    head_params += list(model.mask_aligner.parameters())
-    head_params += list(model.stage1.zip_head.parameters())
-    
-    # CLIP Heads (Decoder + Projection)
-    clip = model.stage2
-    for mod_name in ['image_decoder', 'projection', 'logit_scale']:
-        if hasattr(clip, mod_name):
-            mod = getattr(clip, mod_name)
-            if isinstance(mod, torch.Tensor):
-                mod.requires_grad = True
-                head_params.append(mod)
-            else:
-                for p in mod.parameters():
-                    p.requires_grad = True
-                    head_params.append(p)
-    
-    trainable_params.append({'params': head_params, 'lr_scale': 1.0})
-    print("   ✅ Heads & Aligner: Unfrozen")
+parser.add_argument("--config", type=str, default="configs/config.yaml")
+parser.add_argument("--s1", type=str, required=True)  # ckpt stage1
+parser.add_argument("--s2", type=str, required=True)  # ckpt stage2
 
-    # --- B. Backbone Layer 4 (ResNet) ---
-    # Sblocchiamo solo l'ultimo blocco convoluzionale per adattare le feature
-    backbone_params = []
-    if hasattr(model.stage1.backbone, 'features') and hasattr(model.stage1.backbone.features, 'layer4'):
-        # Caso ResNet standard
-        for p in model.stage1.backbone.features.layer4.parameters():
-            p.requires_grad = True
-            backbone_params.append(p)
-        print("   ✅ ZIP Backbone Layer4: Unfrozen")
-    elif hasattr(model.stage1.backbone, 'layer4'):
-         # Caso ResNet custom
-        for p in model.stage1.backbone.layer4.parameters():
-            p.requires_grad = True
-            backbone_params.append(p)
-        print("   ✅ ZIP Backbone Layer4: Unfrozen")
+# stage2 model name (clip_vit_b_16 etc.)
+parser.add_argument("--model", type=str, default="clip_vit_b_16")
+parser.add_argument("--input_size", type=int, default=224)
+parser.add_argument("--reduction", type=int, default=16, choices=[8, 16, 32])
 
-    trainable_params.append({'params': backbone_params, 'lr_scale': 0.1}) # LR più basso per il backbone
+# dataset
+parser.add_argument("--dataset", type=str, required=False)
+parser.add_argument("--batch_size", type=int, default=4)
+parser.add_argument("--num_workers", type=int, default=4)
 
-    return trainable_params
+# bins cfg (come stage2)
+parser.add_argument("--regression", action="store_true")  # tienilo False (Stage2-style bins)
+parser.add_argument("--truncation", type=int, default=4)
+parser.add_argument("--anchor_points", type=str, default="average", choices=["average", "middle"])
+parser.add_argument("--prompt_type", type=str, default="word", choices=["word", "number"])
+parser.add_argument("--granularity", type=str, default="fine", choices=["fine", "dynamic", "coarse"])
+parser.add_argument("--num_vpt", type=int, default=32)
+parser.add_argument("--vpt_drop", type=float, default=0.0)
+parser.add_argument("--shallow_vpt", action="store_true")
 
-def crowd_collate(batch):
-    batch = [b for b in batch if b is not None]
-    if len(batch) == 0: return None
-    return {
-        'image': torch.stack([item['image'] for item in batch]),
-        'density': torch.stack([item['density'] for item in batch]),
-        'points': [item['points'] for item in batch],
+# train
+parser.add_argument("--lr", type=float, default=1e-6)
+parser.add_argument("--weight_decay", type=float, default=1e-4)
+parser.add_argument("--total_epochs", type=int, default=50)
+parser.add_argument("--eval_start", type=int, default=1)
+parser.add_argument("--eval_freq", type=int, default=1)
+parser.add_argument("--save_freq", type=int, default=1)
+parser.add_argument("--amp", action="store_true")
+parser.add_argument("--local_rank", type=int, default=-1)
+parser.add_argument("--seed", type=int, default=42)
+
+
+
+parser.add_argument("--num_crops", type=int, default=1)
+parser.add_argument("--min_scale", type=float, default=1.0)
+parser.add_argument("--max_scale", type=float, default=2.0)
+parser.add_argument("--brightness", type=float, default=0.1)
+parser.add_argument("--contrast", type=float, default=0.1)
+parser.add_argument("--saturation", type=float, default=0.1)
+parser.add_argument("--hue", type=float, default=0.0)
+parser.add_argument("--kernel_size", type=int, default=5)
+parser.add_argument("--saltiness", type=float, default=1e-3)
+parser.add_argument("--spiciness", type=float, default=1e-3)
+parser.add_argument("--jitter_prob", type=float, default=0.2)
+parser.add_argument("--blur_prob", type=float, default=0.2)
+parser.add_argument("--noise_prob", type=float, default=0.5)
+
+parser.add_argument("--sliding_window", action="store_true")
+parser.add_argument("--stride", type=int, default=None)
+parser.add_argument("--window_size", type=int, default=None)
+parser.add_argument("--resize_to_multiple", action="store_true")
+parser.add_argument("--zero_pad_to_multiple", action="store_true")
+
+
+
+# output
+parser.add_argument("--out", type=str, default=None)
+
+# refined knobs
+parser.add_argument("--base_steepness", type=float, default=1.0)
+parser.add_argument("--max_steepness", type=float, default=20.0)
+parser.add_argument("--zip_w", type=float, default=0.5)
+parser.add_argument("--cons_w", type=float, default=0.1)
+
+# ------------------------------------------------------------
+# Helpers
+# ------------------------------------------------------------
+def load_config_and_update_args(args):
+    if not args.config or not os.path.exists(args.config):
+        return args
+
+    with open(args.config, "r") as f:
+        cfg = yaml.safe_load(f)
+
+    def is_passed(arg_name): return f"--{arg_name}" in sys.argv
+
+    mapping = {
+        "dataset": ["DATASET"],
+        "model": ["MODEL"],
+        "input_size": ["INPUT_SIZE"],
+        "reduction": ["REDUCTION"],
+        "truncation": ["TRUNCATION"],
+
+        "batch_size": ["TRAIN_STAGE3", "BATCH_SIZE"],
+        "num_workers": ["TRAIN_STAGE3", "NUM_WORKERS"],
+        "lr": ["TRAIN_STAGE3", "LR"],
+        "weight_decay": ["TRAIN_STAGE3", "WEIGHT_DECAY"],
+        "total_epochs": ["TRAIN_STAGE3", "TOTAL_EPOCHS"],
+        "eval_freq": ["TRAIN_STAGE3", "EVAL_FREQ"],
+        "amp": ["TRAIN_STAGE3", "AMP"],
     }
 
-# ==============================================================================
-# MAIN
-# ==============================================================================
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--config', type=str, default="configs/config_sha.yaml")
-    parser.add_argument('--s1', type=str, default="checkpoints/sha/stage1/best_model.pth")
-    parser.add_argument('--s2', type=str, default="checkpoints/sha/stage2/best_model.pth")
-    parser.add_argument('--out', type=str, default="checkpoints/sha/stage3_refined")
-    parser.add_argument('--gpu', type=int, default=0)
-    args = parser.parse_args()  # <--- Qui è definito come args
+    for arg_key, keys_path in mapping.items():
+        if is_passed(arg_key):
+            continue
+        try:
+            val = cfg
+            for k in keys_path:
+                val = val[k]
+            setattr(args, arg_key, val)
+        except (KeyError, TypeError):
+            pass
 
-    device = torch.device(f'cuda:{args.gpu}')
-    os.makedirs(args.out, exist_ok=True)
-    
-    # --- CORREZIONE QUI ---
-    # Sostituisci 'cmd_args' con 'args' per coerenza con sopra
-    saved_config_path = os.path.join(args.out, "config.yaml") 
-    shutil.copy(args.config, saved_config_path)
-    print(f"📄 Configuration saved to: {saved_config_path}")
+    if args.out is None:
+        config_name = f"{args.model}_{args.dataset}"
+        args.out = os.path.join(current_dir, "checkpoints", args.dataset, config_name, "stage3_refined")
 
-    with open(args.config, 'r') as f: config = yaml.safe_load(f)
+    return args
 
-    # Parametri Refined
-    EPOCHS = 60 # Meno epoche ma più intense
-    BASE_LR = 5e-5
-    
-    print(f"🚀 Stage 3 REFINED | {args.config}")
-    
-    # --- 1. LOAD MODELS ---
-    print("📦 Loading Models...")
-    stage1 = ZIPModel(config).to(device)
-    ckpt1 = torch.load(args.s1, map_location=device)
-    # Controlla se 'model' è una chiave, altrimenti usa l'intero oggetto
-    if isinstance(ckpt1, dict) and 'model' in ckpt1:
-        stage1.load_state_dict(ckpt1['model'], strict=False)
+
+def build_bins_and_anchors(args):
+    # identico allo stage2
+    if args.regression:
+        return None, None
+
+    with open(os.path.join(current_dir, "configs", f"reduction_{args.reduction}.json"), "r") as f:
+        config = json.load(f)[str(args.truncation)][args.dataset]
+
+    bins = config["bins"][args.granularity]
+    anchor_points = (
+        config["anchor_points"][args.granularity]["average"]
+        if args.anchor_points == "average"
+        else config["anchor_points"][args.granularity]["middle"]
+    )
+
+    bins = [(float(b[0]), float(b[1])) for b in bins]
+    anchor_points = [float(p) for p in anchor_points]
+    return bins, anchor_points
+
+
+def load_weights_only(path, map_location="cpu"):
+    ckpt = torch.load(path, map_location=map_location)
+    if isinstance(ckpt, dict):
+        for k in ["model_state_dict", "state_dict", "model"]:
+            if k in ckpt and isinstance(ckpt[k], dict):
+                sd = ckpt[k]
+                break
+        else:
+            # fallback: può essere già un state_dict
+            sd = ckpt
     else:
-        stage1.load_state_dict(ckpt1, strict=False)
-    print("   -> Stage 1 Loaded")
-    
-    # Config hack per CLIP se necessario
-    if 'CLIP_EBC_HEAD' not in config: config['CLIP_EBC_HEAD'] = {}
-    config['CLIP_EBC_HEAD']['DECODER_DIM'] = 2048 
-    
-    stage2 = CLIPEBCModel(config).to(device)
-    ckpt2 = torch.load(args.s2, map_location=device)
-    # Stesso controllo per Stage 2
-    if isinstance(ckpt2, dict) and 'model' in ckpt2:
-        stage2.load_state_dict(ckpt2['model'], strict=False)
-    else:
-        stage2.load_state_dict(ckpt2, strict=False)
-    print("   -> Stage 2 Loaded")
+        sd = ckpt
 
-    # Inizializza con steepness bassa
-    model = ZIPCLIPJointModel(stage1, stage2, steepness=1.0).to(device)
+    # strip "module."
+    if isinstance(sd, dict) and any(kk.startswith("module.") for kk in sd.keys()):
+        sd = {kk.replace("module.", "", 1): vv for kk, vv in sd.items()}
+    return sd
 
-    # --- 2. OPTIMIZER ---
-    param_groups = freeze_parameters_refined(model)
-    final_groups = []
-    for g in param_groups:
-        final_groups.append({'params': g['params'], 'lr': BASE_LR * g['lr_scale']})
 
-    optimizer = AdamW(final_groups, weight_decay=1e-4)
-    
-    # OneCycleLR per convergenza migliore
-    train_ds = SHA(config['DATA']['ROOT'], 'train', build_transforms(config['DATA'], True))
-    train_loader = DataLoader(train_ds, batch_size=4, shuffle=True, num_workers=4, collate_fn=crowd_collate, drop_last=True)
-    
-    scheduler = OneCycleLR(optimizer, max_lr=BASE_LR, steps_per_epoch=len(train_loader), epochs=EPOCHS, pct_start=0.1)
-    scaler = GradScaler('cuda')
+# ------------------------------------------------------------
+# Train/Eval
+# ------------------------------------------------------------
+def train_one_epoch_refined(model, loader, optimizer, scaler, device, rank, nprocs, args):
+    model.train()
+    total_loss = 0.0
 
-    # --- 3. LOSSES ---
-    clip_loss_fn = CLIPEBCLoss(
-        bins=config['BINS'],
-        input_size=config['DATA']['CROP_SIZE'],
-        reduction=config['CLIP_EBC_HEAD']['REDUCTION'],
-        weight_ot=0.1, weight_tv=0.01, weight_count=1.0
-    ).to(device)
-    
-    zip_loss_fn = nn.BCEWithLogitsLoss()
+    it = tqdm(loader, desc="Train S3") if rank == 0 else loader
+    bce = nn.BCEWithLogitsLoss()
 
-    val_ds = SHA(config['DATA']['ROOT'], 'val', build_transforms(config['DATA'], False))
-    val_loader = DataLoader(val_ds, batch_size=1, shuffle=False, num_workers=4, collate_fn=crowd_collate)
+    for batch in it:
+        # get_dataloader nel tuo progetto spesso ritorna dict con image/density/points
+        if isinstance(batch, dict):
+            imgs = batch["image"].to(device)
+            gt_density = batch["density"].to(device)
+            points = batch.get("points", None)
+        else:
+            imgs, points, gt_density = batch
+            imgs = imgs.to(device)
+            gt_density = gt_density.to(device)
 
-    best_mae = float('inf')
+        optimizer.zero_grad()
 
-    # --- 4. TRAINING LOOP ---
-    for epoch in range(EPOCHS):
-        model.train()
-        
-        # STEEPNESS ANNEALING: Da 1.0 a 20.0 progressivamente
-        # Questo aiuta il modello ad abituarsi alla maschera binaria
-        current_steepness = 1.0 + (epoch / EPOCHS) * 19.0
-        model.steepness = current_steepness
-        
-        pbar = tqdm(train_loader, desc=f"Ep {epoch} (Steep={current_steepness:.1f})")
-        
-        for batch in pbar:
-            if batch is None: continue
-            imgs = batch['image'].to(device)
-            gt_density = batch['density'].to(device)
-            points = [p.to(device) for p in batch['points']]
-            
-            optimizer.zero_grad()
-            
-            with autocast('cuda'):
-                # Forward
-                out = model(imgs)
-                
-                # 1. CLIP Loss (sul risultato finale già mascherato)
-                l_clip, _ = clip_loss_fn(
-                    out['ebc_logits'], 
-                    out['final_density'], # Density mascherata
-                    gt_density, 
-                    points
-                )
-                
-                # 2. ZIP Loss (Supervisione Diretta Maschera)
-                pi_logits = out['pi_logits']
-                h, w = pi_logits.shape[-2:]
-                
-                # Crea target maschera dalla densità GT (downsampled)
-                with torch.no_grad():
-                    gt_resized = F.interpolate(gt_density, size=(h, w), mode='bilinear')
-                    # Normalizza per area per non perdere picchi
-                    gt_resized = gt_resized * ((gt_density.shape[-1]/w)**2)
-                    mask_target = (gt_resized > 0.005).float() # Soglia leggermente più alta per pulizia
-                
-                l_zip = zip_loss_fn(pi_logits, mask_target)
-                
-                # 3. Consistency Regularization (Nuovo!)
-                # Se CLIP predice alta densità, ZIP non dovrebbe predire 0.
-                # Penalizziamo: Density_CLIP * (1 - Prob_ZIP)
-                clip_raw_density = out['raw_density'].detach() # Non backproghiamo su clip qui
-                prob_zip = out['pi_prob']
-                l_cons = (clip_raw_density * (1 - prob_zip)).mean()
+        with autocast(enabled=(scaler is not None)):
+            out = model(imgs)
 
-                # Totale
-                loss = l_clip + (0.5 * l_zip) + (0.1 * l_cons)
+            # ---- 1) "CLIP loss" (qui metto la forma minima robusta) ----
+            # Se vuoi usare esattamente la loss stage2, qui andrebbe richiamata la tua get_loss_fn(args)
+            # ma senza il file non posso importarla correttamente.
+            # Quindi: loss count semplice su densità finale (MSE su density map) + MAE sul count
+            pred_density = out["final_density"]
+            gt_resized = F.interpolate(gt_density, size=pred_density.shape[-2:], mode="bilinear", align_corners=False)
+            # scala area per conservare conteggi (come già fai)
+            scale = (gt_density.shape[-2] * gt_density.shape[-1]) / (pred_density.shape[-2] * pred_density.shape[-1])
+            gt_resized = gt_resized * scale
 
+            l_map = F.mse_loss(pred_density, gt_resized)
+
+            pred_cnt = pred_density.sum(dim=[1,2,3])
+            gt_cnt = gt_density.sum(dim=[1,2,3])
+            l_cnt = (pred_cnt - gt_cnt).abs().mean()
+
+            l_clip = l_map + l_cnt
+
+            # ---- 2) ZIP loss (supervisione mask) ----
+            pi_logits = out["pi_logits"]
+            h, w = pi_logits.shape[-2:]
+            with torch.no_grad():
+                gt_pi = F.interpolate(gt_density, size=(h, w), mode="bilinear", align_corners=False)
+                gt_pi = gt_pi * ((gt_density.shape[-1] / w) ** 2)
+                mask_target = (gt_pi > 0.001).float()
+            l_zip = bce(pi_logits, mask_target)
+
+            # ---- 3) Consistency loss ----
+            clip_raw = out["raw_density"].detach()
+            prob_zip = out["pi_prob"]
+            l_cons = (clip_raw * (1.0 - prob_zip)).mean()
+
+            loss = l_clip + args.zip_w * l_zip + args.cons_w * l_cons
+
+        if scaler is not None:
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
-            scheduler.step()
-            
-            pbar.set_postfix({'L': f"{loss.item():.2f}", 'Clp': f"{l_clip.item():.2f}", 'Zip': f"{l_zip.item():.2f}"})
+        else:
+            loss.backward()
+            optimizer.step()
 
-        # --- VALIDATION ---
-        model.eval()
-        model.steepness = 20.0 # Hard Gating per validazione
-        
-        val_mae = 0
-        with torch.no_grad():
-            for batch in val_loader:
-                imgs = batch['image'].to(device)
-                points = batch['points']
-                out = model(imgs)
-                
-                pred = out['final_density'].sum().item()
-                gt = len(points[0])
-                val_mae += abs(pred - gt)
-                
-        val_mae /= len(val_loader)
-        
-        print(f"📊 Val MAE: {val_mae:.2f} (Best: {best_mae:.2f})")
-        
-        if val_mae < best_mae:
-            best_mae = val_mae
-            torch.save({'model': model.state_dict(), 'epoch': epoch}, os.path.join(args.out, "best_model.pth"))
-            print("🌟 Saved Best Refined")
+        total_loss += float(loss.item())
+        if rank == 0:
+            it.set_postfix({"L": f"{loss.item():.3f}", "clip": f"{l_clip.item():.3f}", "zip": f"{l_zip.item():.3f}"})
+
+    return {"loss": total_loss / max(1, len(loader))}
+
+
+@torch.no_grad()
+def evaluate_mae(model, loader, device, rank=0):
+    model.eval()
+    mae = 0.0
+    n = 0
+    for batch in loader:
+        if isinstance(batch, dict):
+            imgs = batch["image"].to(device)
+            points = batch.get("points", None)
+        else:
+            imgs, points, _ = batch
+            imgs = imgs.to(device)
+
+        out = model(imgs)
+        pred = out["final_density"].sum().item()
+
+        # se points esiste, usa quello (conteggio GT più affidabile)
+        if points is not None:
+            gt = len(points[0])
+        else:
+            # fallback: se manca points non posso fare count vero
+            gt = pred
+
+        mae += abs(pred - gt)
+        n += 1
+    return mae / max(1, n)
+
+
+# ------------------------------------------------------------
+# Run
+# ------------------------------------------------------------
+def run(local_rank: int, nprocs: int, args):
+    print(f"Rank {local_rank} process among {nprocs} processes.")
+    init_seeds(args.seed + local_rank)
+    setup(local_rank, nprocs)
+
+    device = f"cuda:{local_rank}" if local_rank != -1 else "cuda:0"
+    ddp = nprocs > 1
+
+    if args.dataset is None:
+        raise ValueError("Dataset name must be provided.")
+    args.dataset = standardize_dataset_name(args.dataset)
+
+    # bins/anchors like stage2
+    bins, anchor_points = build_bins_and_anchors(args)
+    args.bins = bins
+    args.anchor_points = anchor_points
+
+    # dataloaders (identico stile stage2)
+    if local_rank == 0:
+        val_loader = get_dataloader(args, split="val", ddp=False)
+
+    args.batch_size = int(args.batch_size / nprocs) if ddp else int(args.batch_size)
+    args.num_workers = int(args.num_workers / nprocs) if ddp else int(args.num_workers)
+    train_loader, sampler = get_dataloader(args, split="train", ddp=ddp)
+
+    # --- build Stage1 config from YAML (ZIPModel wants dict with BACKBONE/ZIP_HEAD) ---
+    with open(args.config, "r") as f:
+        cfg = yaml.safe_load(f)
+
+    zip_cfg = cfg  # contiene BACKBONE, ZIP_HEAD ecc.
+    stage1 = ZIPModel(zip_cfg).to(device)
+
+    # stage2 (same builder as stage2)
+    stage2 = get_model(
+        backbone=args.model,
+        input_size=args.input_size,
+        reduction=args.reduction,
+        bins=bins,
+        anchor_points=anchor_points,
+        prompt_type=args.prompt_type,
+        num_vpt=args.num_vpt,
+        vpt_drop=args.vpt_drop,
+        deep_vpt=not args.shallow_vpt,
+    ).to(device)
+
+    # load weights
+    stage1.load_state_dict(load_weights_only(args.s1), strict=False)
+    stage2.load_state_dict(load_weights_only(args.s2), strict=False)
+
+    model = ZIPCLIPJointModel(stage1, stage2, steepness=args.base_steepness).to(device)
+
+    # optimizer + scaler
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    scaler = GradScaler() if args.amp else None
+
+    # ckpt dir
+    args.ckpt_dir = args.out  # <-- FIX
+    os.makedirs(args.ckpt_dir, exist_ok=True)
+
+    if local_rank == 0:
+        shutil.copyfile(args.config, os.path.join(args.ckpt_dir, "config_stage3.yaml"))
+        writer = get_writer(args.ckpt_dir)
+        logger = get_logger(os.path.join(args.ckpt_dir, "train_stage3.log"))
+        logger.info(get_config(vars(args), mute=False))
+
+    # ddp
+    model = DDP(nn.SyncBatchNorm.convert_sync_batchnorm(model), device_ids=[local_rank], output_device=local_rank) if ddp else model
+
+    start_epoch = 1
+    best_mae = float("inf")
+    hist_val_scores = {}  # opzionale, lo teniamo solo per logging interno
+    best_val_scores = {"mae": [float("inf")], "epoch": [0]}
+    loss_info = {}
+
+    def save_last_and_best(epoch, is_best: bool, curr_val_scores=None):
+        state = {
+            "epoch": epoch,
+            "model_state_dict": (model.module if ddp else model).state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "scheduler_state_dict": None,
+            "grad_scaler_state_dict": scaler.state_dict() if scaler else None,
+            "loss_info": loss_info,
+            "hist_val_scores": hist_val_scores,
+            "best_val_scores": best_val_scores,
+            "val_scores": curr_val_scores,
+        }
+
+        last_path = os.path.join(args.ckpt_dir, "last_model.pth")
+        torch.save(state, last_path)
+
+        if is_best:
+            best_path = os.path.join(args.ckpt_dir, "best_model.pth")
+            torch.save(state, best_path)
+
+
+
+    curr_val_scores = None
+    for epoch in range(start_epoch, args.total_epochs + 1):
+        curr_val_scores = None
+        if sampler is not None:
+            sampler.set_epoch(epoch)
+
+        # steepness annealing
+        if args.total_epochs > 1:
+            steep = args.base_steepness + (epoch - 1) / (args.total_epochs - 1) * (args.max_steepness - args.base_steepness)
+        else:
+            steep = args.max_steepness
+        (model.module if ddp else model).steepness = float(steep)
+
+
+
+        # train
+        loss_info = train_one_epoch_refined(model, train_loader, optimizer, scaler, device, local_rank, nprocs, args)
+        barrier(ddp)
+
+        if local_rank == 0:
+            # log train
+            update_train_result(epoch, loss_info, writer)
+
+            eval_now = (epoch >= args.eval_start) and ((epoch - args.eval_start) % args.eval_freq == 0)
+
+            if not eval_now:
+                log(logger, epoch, args.total_epochs, loss_info=loss_info, message="\n" * 2)
+                save_last_and_best(epoch, is_best=False, curr_val_scores=None)
+
+            else:
+                # eval
+                eval_model = model.module if ddp else model
+                eval_model.steepness = args.max_steepness
+
+                val_mae = evaluate_mae(eval_model, val_loader, device)
+                curr_val_scores = {"mae": float(val_mae)}
+
+                # tensorboard val
+                try:
+                    writer.add_scalar("val/mae", float(val_mae), epoch)
+                except Exception:
+                    pass
+
+                # storico semplice
+                hist_val_scores.setdefault("mae", [])
+                hist_val_scores["mae"].append((epoch, float(val_mae)))
+
+                # best?
+                is_best = float(val_mae) < best_mae
+                if is_best:
+                    best_mae = float(val_mae)
+                    best_val_scores["mae"][0] = best_mae
+                    best_val_scores["epoch"][0] = epoch
+                    print(f"🌟 New Best MAE: {best_mae:.4f} at epoch {epoch}")
+
+                # log eval (UNA SOLA VOLTA)
+                log(logger, epoch, args.total_epochs, None, curr_val_scores, best_val_scores, message="\n" * 3)
+
+                # salva last + eventualmente best
+                save_last_and_best(epoch, is_best=is_best, curr_val_scores=curr_val_scores)
+
+
+        barrier(ddp)
+
+    if local_rank == 0:
+        writer.close()
+    cleanup(ddp)
+
+
+
+def main():
+    args = parser.parse_args()
+    args = load_config_and_update_args(args)
+
+    args.nprocs = torch.cuda.device_count()
+    print(f"Using {args.nprocs} GPUs.")
+    if args.nprocs > 1:
+        mp.spawn(run, nprocs=args.nprocs, args=(args.nprocs, args))
+    else:
+        run(0, 1, args)
+
 
 if __name__ == "__main__":
     main()

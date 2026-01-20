@@ -25,6 +25,7 @@ parser = ArgumentParser(description="Train an EBC model (Stage 2).")
 # --- ARGOMENTO CONFIG (Corretto Default) ---
 # Se l'utente non specifica nulla, prova a caricare configs/config.yaml
 parser.add_argument("--config", type=str, default="configs/config.yaml", help="Path to the .yaml configuration file.")
+parser.add_argument("--out", type=str,default=None, help=" checkpoints/<dataset>/<model_dataset>/stage2.")
 
 # Parameters for model
 parser.add_argument("--model", type=str, default="clip_vit_b_16", help="The model to train.")
@@ -128,8 +129,14 @@ def run(local_rank: int, nprocs: int, args: ArgumentParser) -> None:
 
     # --- DIRECTORIES (Nuova Logica Ordinata: .../stage2) ---
     config_name = f"{args.model}_{args.dataset}"
-    args.ckpt_dir = os.path.join(current_dir, "checkpoints", args.dataset, config_name, "stage2")
+    default_ckpt_dir = os.path.join(current_dir, "checkpoints", args.dataset, config_name, "stage2")
+    if args.out is not None and str(args.out).strip() != "":
+        args.ckpt_dir = os.path.abspath(args.out)
+    else:
+        args.ckpt_dir = default_ckpt_dir
     os.makedirs(args.ckpt_dir, exist_ok=True)
+    if local_rank == 0:
+        print(f"📂 Checkpoints will be saved to: {args.ckpt_dir}")
     
     # *** NOVITÀ: Salvataggio Configurazione su File ***
     if local_rank == 0:
