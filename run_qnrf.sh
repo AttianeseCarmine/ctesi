@@ -1,6 +1,6 @@
 #!/bin/bash -l
 
-#SBATCH --job-name=s2vitqnrf_train
+#SBATCH --job-name=s3RESqnrf_train
 #SBATCH --account=did_crowd_counting_339
 #SBATCH --partition=aiq
 #SBATCH --gres=gpu:1
@@ -9,8 +9,8 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH --time=07:00:00
-#SBATCH -o logs/s2_qnrf_vit_%j.out
-#SBATCH -e logs/s2_qnrf_vit_%j.err
+#SBATCH -o logs/s3_qnrf_resnet_%j.out
+#SBATCH -e logs/s3_qnrf_resnet_%j.err
 #SBATCH --mail-user=c.attianese13@studenti.unisa.it
 #SBATCH --mail-type=ALL
 
@@ -50,5 +50,5 @@ srun python trainer.py  --dataset qnrf  --model clip_vit_b_16  --input_size 448 
 
 
 #srun python train_stage3_v2.py --config configs/config_vit_nwpu.yaml --s1 checkpoints/nwpu/vit_b_16/stage1/best_model.pth --s2 checkpoints/nwpu/vit_b_16/stage2/best_mae_0.pth --input_size 448 --sliding_window --window_size 448 --stride 448  --out checkpoints/nwpu/vit_b_16/stage3 
-
+python train_stage3_v2.py  --config configs/config_resnet_qnrf.yaml  --dataset qnrf  --model clip_resnet50  --s1 checkpoints/qnrf/resnet50/stage1/best_model.pth  --s2 checkpoints/qnrf/resnet50/stage2/best_mae_0.pth  --input_size 448  --batch_size 4  --lr 1e-6  --total_epochs 300  --eval_freq 1  --save_freq 10  --out checkpoints/qnrf/resnet50/stage3
 #CON QUESTO AVVI STAGE3 NWPU VIT

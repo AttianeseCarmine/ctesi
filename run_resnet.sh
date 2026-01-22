@@ -59,3 +59,6 @@ srun python trainer.py --dataset nwpu --model clip_resnet50 --input_size 448 --r
 
 
 #srun python train_stage3_v2.py --config configs/config_resnet_qnrf.yaml --s1 checkpoints/qnrf/resnet50/stage1/best_model.pth --s2 checkpoints/qnrf/resnet50/stage2/best_mae_0.pth --input_size 448 --sliding_window --window_size 448 --stride 448 --out checkpoints/qnrf/resnet50/stage3 
+
+
+srun python trainer.py  --dataset nwpu  --model clip_resnet50  --input_size 448  --reduction 8  --truncation 4  --granularity fine  --prompt_type word  --batch_size 8  --num_workers 2  --lr 1e-4  --weight_decay 1e-4  --warmup_epochs 10  --warmup_lr 1e-6  --count_loss dmcount  --weight_count_loss 1.0  --amp  --num_crops 2  --sliding_window  --window_size 448  --stride 448  --out checkpoints/nwpu/resnet50/stage2

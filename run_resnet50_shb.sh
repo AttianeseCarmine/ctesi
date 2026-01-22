@@ -41,4 +41,4 @@ nvidia-smi
 #srun python train_stage1.py --config configs/config_resnet_shb.yaml --data_dir data --batch_size 16
 
 
-srun python train_stage3_v2.py --config configs/config_resnet_shb.yaml --s1 checkpoints/shb/resnet50/stage1/best_model.pth --s2 checkpoints/shb/resnet50/stage2/best_mae_0.pth --out checkpoints/shb/resnet50/stage3 
+srun python train_stage3_v2.py --config configs/config_resnet_shb.yaml --s1 checkpoints/shb/resnet50/stage1/best_model.pth --s2 checkpoints/shb/resnet50/stage2/best_mae_0.pth --lr 1e-4 --out checkpoints/shb/resnet50/stage3_refined

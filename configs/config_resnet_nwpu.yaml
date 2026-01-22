@@ -48,8 +48,8 @@ TRAIN_STAGE1:
 # ============================================================
 TRAIN_STAGE2:
   TOTAL_EPOCHS: 2500      # Aumenta se il loss scende lentamente
-  BATCH_SIZE: 16         # CLIP consuma VRAM, riduci a 8 se vai OOM (Out Of Memory)
-  NUM_WORKERS: 8
+  BATCH_SIZE: 8         # CLIP consuma VRAM, riduci a 8 se vai OOM (Out Of Memory)
+  NUM_WORKERS: 4
   EVAL_FREQ: 5           # Valuta ogni 5 epoche per risparmiare tempo
   
   # Optimizer & Scheduler

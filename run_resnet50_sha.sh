@@ -44,7 +44,8 @@ nvidia-smi
 
 #srun python train_stage3_v2.py --config configs/config_resnet_sha.yaml --s1 checkpoints/sha_res50/stage1/best_model.pth --s2 checkpoints/sha_res50/stage2/best_model.pth --out checkpoints/sha_res50/stage3
 
-srun python train_stage3_v2.py --config configs/config_resnet_sha.yaml --s1 checkpoints/sha/resnet50/stage1/best_model.pth --s2 checkpoints/sha/resnet50/stage2/best_mae_0.pth --out checkpoints/sha/resnet50/stage3 
+srun python train_stage3_v2.py --config configs/config_resnet_sha.yaml --s1 checkpoints/sha/resnet50/stage1/best_model.pth --s2 checkpoints/sha/resnet50/stage2/best_mae_0.pth --lr 1e-4 --out checkpoints/sha/resnet50/stage3_refined
+#srun python train_stage3_v2.py --config configs/config_resnet_sha.yaml --model clip_resnet50 --dataset sha --s1 checkpoints/sha/resnet50/stage1/best_model.pth --s2 checkpoints/sha/resnet50/stage2/best_mae_0.pth --out checkpoints/sha/resnet50/stage3_resid --lr 1e-4 --zip_w 0.1 --refine_w 1.0
 
 #python -c "import torch; ck=torch.load('checkpoints/sha/resnet50/stage1/best_model.pth', map_location='cpu'); sd=ck.get('model_state_dict', ck); k=[x for x in sd if 'zip_head.shared.0.weight' in x][0]; print('key=',k,'shape=',sd[k].shape)"
 #python -c "import torch; ck=torch.load('checkpoints/sha/resnet50/stage2/best_mae_0.pth', map_location='cpu'); sd=ck.get('model_state_dict', ck); k=[x for x in sd if 'zip_head.shared.0.weight' in x][0]; print('key=',k,'shape=',sd[k].shape)"
