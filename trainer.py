@@ -6,8 +6,8 @@ from torch.cuda.amp import GradScaler
 
 from argparse import ArgumentParser
 import os, json
-import yaml 
-import sys  
+import yaml
+import sys
 
 current_dir = os.path.abspath(os.path.dirname(__file__))
 
@@ -20,100 +20,101 @@ from utils import get_writer, update_train_result, update_eval_result, log
 from train_stage2 import train
 from eval import evaluate
 
-parser = ArgumentParser(description="Train an EBC model (Stage 2).")
-
-# --- ARGOMENTO CONFIG (Corretto Default) ---
-# Se l'utente non specifica nulla, prova a caricare configs/config.yaml
-parser.add_argument("--config", type=str, default="configs/config.yaml", help="Path to the .yaml configuration file.")
-parser.add_argument("--out", type=str,default=None, help=" checkpoints/<dataset>/<model_dataset>/stage2.")
+parser = ArgumentParser(description="Train an EBC model.")
 
 # Parameters for model
-parser.add_argument("--model", type=str, default="clip_vit_b_16", help="The model to train.")
+parser.add_argument("--model", type=str, default="vgg19_ae", help="The model to train.")
 parser.add_argument("--input_size", type=int, default=448, help="The size of the input image.")
-parser.add_argument("--reduction", type=int, default=16, choices=[8, 16, 32], help="Reduction factor.")
-parser.add_argument("--regression", action="store_true", help="Use blockwise regression.")
-parser.add_argument("--truncation", type=int, default=4, help="The truncation of the count.")
-parser.add_argument("--anchor_points", type=str, default="average", choices=["average", "middle"])
-parser.add_argument("--prompt_type", type=str, default="word", choices=["word", "number"])
-parser.add_argument("--granularity", type=str, default="fine", choices=["fine", "dynamic", "coarse"])
-parser.add_argument("--num_vpt", type=int, default=32)
-parser.add_argument("--vpt_drop", type=float, default=0.0)
-parser.add_argument("--shallow_vpt", action="store_true")
+parser.add_argument("--reduction", type=int, default=8, choices=[8, 16, 32], help="The reduction factor of the model.")
+parser.add_argument("--regression", action="store_true", help="Use blockwise regression instead of classification.")
+parser.add_argument("--truncation", type=int, default=None, help="The truncation of the count.")
+parser.add_argument("--anchor_points", type=str, default="average", choices=["average", "middle"], help="The representative count values of bins.")
+parser.add_argument("--prompt_type", type=str, default="word", choices=["word", "number"], help="The prompt type for CLIP.")
+parser.add_argument("--granularity", type=str, default="fine", choices=["fine", "dynamic", "coarse"], help="The granularity of bins.")
+parser.add_argument("--num_vpt", type=int, default=32, help="The number of visual prompt tokens.")
+parser.add_argument("--vpt_drop", type=float, default=0.0, help="The dropout rate for visual prompt tokens.")
+parser.add_argument("--shallow_vpt", action="store_true", help="Use shallow visual prompt tokens.")
 
 # Parameters for dataset
-parser.add_argument("--dataset", type=str, required=False)
-parser.add_argument("--batch_size", type=int, default=8)
-parser.add_argument("--num_crops", type=int, default=1)
-parser.add_argument("--min_scale", type=float, default=1.0)
-parser.add_argument("--max_scale", type=float, default=2.0)
-parser.add_argument("--brightness", type=float, default=0.1)
-parser.add_argument("--contrast", type=float, default=0.1)
-parser.add_argument("--saturation", type=float, default=0.1)
-parser.add_argument("--hue", type=float, default=0.0)
-parser.add_argument("--kernel_size", type=int, default=5)
-parser.add_argument("--saltiness", type=float, default=1e-3)
-parser.add_argument("--spiciness", type=float, default=1e-3)
-parser.add_argument("--jitter_prob", type=float, default=0.2)
-parser.add_argument("--blur_prob", type=float, default=0.2)
-parser.add_argument("--noise_prob", type=float, default=0.5)
+parser.add_argument("--dataset", type=str, required=True, help="The dataset to train on.")
+parser.add_argument("--batch_size", type=int, default=8, help="The training batch size.")
+parser.add_argument("--num_crops", type=int, default=1, help="The number of crops for multi-crop training.")
+parser.add_argument("--min_scale", type=float, default=1.0, help="The minimum scale for random scale augmentation.")
+parser.add_argument("--max_scale", type=float, default=2.0, help="The maximum scale for random scale augmentation.")
+parser.add_argument("--brightness", type=float, default=0.1, help="The brightness factor for random color jitter augmentation.")
+parser.add_argument("--contrast", type=float, default=0.1, help="The contrast factor for random color jitter augmentation.")
+parser.add_argument("--saturation", type=float, default=0.1, help="The saturation factor for random color jitter augmentation.")
+parser.add_argument("--hue", type=float, default=0.0, help="The hue factor for random color jitter augmentation.")
+parser.add_argument("--kernel_size", type=int, default=5, help="The kernel size for Gaussian blur augmentation.")
+parser.add_argument("--saltiness", type=float, default=1e-3, help="The saltiness for pepper salt noise augmentation.")
+parser.add_argument("--spiciness", type=float, default=1e-3, help="The spiciness for pepper salt noise augmentation.")
+parser.add_argument("--jitter_prob", type=float, default=0.2, help="The probability for random color jitter augmentation.")
+parser.add_argument("--blur_prob", type=float, default=0.2, help="The probability for Gaussian blur augmentation.")
+parser.add_argument("--noise_prob", type=float, default=0.5, help="The probability for pepper salt noise augmentation.")
 
 # Parameters for evaluation
-parser.add_argument("--sliding_window", action="store_true")
-parser.add_argument("--stride", type=int, default=None)
-parser.add_argument("--window_size", type=int, default=None)
-parser.add_argument("--resize_to_multiple", action="store_true")
-parser.add_argument("--zero_pad_to_multiple", action="store_true")
+parser.add_argument("--sliding_window", action="store_true", help="Use sliding window strategy for evaluation.")
+parser.add_argument("--stride", type=int, default=None, help="The stride for sliding window strategy.")
+parser.add_argument("--window_size", type=int, default=None, help="The window size for in prediction.")
+parser.add_argument("--resize_to_multiple", action="store_true", help="Resize the image to the nearest multiple of the input size.")
+parser.add_argument("--zero_pad_to_multiple", action="store_true", help="Zero pad the image to the nearest multiple of the input size.")
 
-# Loss & Optimizer
-parser.add_argument("--weight_count_loss", type=float, default=1.0)
-parser.add_argument("--count_loss", type=str, default="dmcount", choices=["mae", "mse", "dmcount"])
-parser.add_argument("--lr", type=float, default=1e-4)
-parser.add_argument("--weight_decay", type=float, default=1e-4)
+# Parameters for loss function
+parser.add_argument("--weight_count_loss", type=float, default=1.0, help="The weight for count loss.")
+parser.add_argument("--count_loss", type=str, default="mae", choices=["mae", "mse", "dmcount"], help="The loss function for count.")
 
-# Scheduler & Train
-parser.add_argument("--warmup_epochs", type=int, default=50)
-parser.add_argument("--warmup_lr", type=float, default=1e-6)
-parser.add_argument("--T_0", type=int, default=5)
-parser.add_argument("--T_mult", type=int, default=2)
-parser.add_argument("--eta_min", type=float, default=1e-7)
-parser.add_argument("--total_epochs", type=int, default=200)
-parser.add_argument("--eval_start", type=int, default=10)
-parser.add_argument("--eval_freq", type=int, default=1)
-parser.add_argument("--save_freq", type=int, default=5)
-parser.add_argument("--save_best_k", type=int, default=3)
-parser.add_argument("--amp", action="store_true")
-parser.add_argument("--num_workers", type=int, default=4)
-parser.add_argument("--local_rank", type=int, default=-1)
-parser.add_argument("--seed", type=int, default=42)
+# Parameters for optimizer (Adam)
+parser.add_argument("--lr", type=float, default=1e-4, help="The learning rate.")
+parser.add_argument("--weight_decay", type=float, default=1e-4, help="The weight decay.")
+
+# Parameters for learning rate scheduler
+parser.add_argument("--warmup_epochs", type=int, default=50, help="Number of epochs for warmup. The learning rate will increase from eta_min to lr.")
+parser.add_argument("--warmup_lr", type=float, default=1e-5, help="Learning rate for warmup.")
+parser.add_argument("--T_0", type=int, default=5, help="Number of epochs for the first restart.")
+parser.add_argument("--T_mult", type=int, default=2, help="A factor increases T_0 after a restart.")
+parser.add_argument("--eta_min", type=float, default=1e-7, help="Minimum learning rate.")
+
+# Parameters for training
+parser.add_argument("--total_epochs", type=int, default=2600, help="Number of epochs to train.")
+parser.add_argument("--eval_start", type=int, default=50, help="Start to evaluate after this number of epochs.")
+parser.add_argument("--eval_freq", type=int, default=10, help="Evaluate every this number of epochs.")
+parser.add_argument("--save_freq", type=int, default=5, help="Save checkpoint every this number of epochs. Could help reduce I/O.")
+parser.add_argument("--save_best_k", type=int, default=3, help="Save the best k checkpoints.")
+parser.add_argument("--amp", action="store_true", help="Use automatic mixed precision training.")
+parser.add_argument("--num_workers", type=int, default=4, help="Number of workers for data loading.")
+parser.add_argument("--local_rank", type=int, default=-1, help="Local rank for distributed training.")
+parser.add_argument("--seed", type=int, default=42, help="Random seed.")
+
+# NUOVO: Parametro per specificare la cartella di output
+parser.add_argument("--out", type=str, default=None, help="Output directory for checkpoints and configuration. If not specified, uses default location.")
 
 
 def run(local_rank: int, nprocs: int, args: ArgumentParser) -> None:
     print(f"Rank {local_rank} process among {nprocs} processes.")
     init_seeds(args.seed + local_rank)
     setup(local_rank, nprocs)
-    
+    print(f"Initialized successfully. Training with {nprocs} GPUs.")
     device = f"cuda:{local_rank}" if local_rank != -1 else "cuda:0"
+    print(f"Using device: {device}.")
+
     ddp = nprocs > 1
 
-    # Caricamento Bins (Logica originale)
     if args.regression:
         bins, anchor_points = None, None
     else:
-        # Assicurati che 'configs/reduction_16.json' esista se usi reduction 16
         with open(os.path.join(current_dir, "configs", f"reduction_{args.reduction}.json"), "r") as f:
             config = json.load(f)[str(args.truncation)][args.dataset]
-        bins = config["bins"][args.granularity]
-        anchor_points = config["anchor_points"][args.granularity]["average"] if args.anchor_points == "average" else config["anchor_points"][args.granularity]["middle"]
-        bins = [(float(b[0]), float(b[1])) for b in bins]
-        anchor_points = [float(p) for p in anchor_points]
+            bins = config["bins"][args.granularity]
+            anchor_points = config["anchor_points"][args.granularity]["average"] if args.anchor_points == "average" else config["anchor_points"][args.granularity]["middle"]
+            bins = [(float(b[0]), float(b[1])) for b in bins]
+            anchor_points = [float(p) for p in anchor_points]
 
     args.bins = bins
     args.anchor_points = anchor_points
 
-    # Init Model
     model = get_model(
         backbone=args.model,
-        input_size=args.input_size, 
+        input_size=args.input_size,
         reduction=args.reduction,
         bins=bins,
         anchor_points=anchor_points,
@@ -124,38 +125,37 @@ def run(local_rank: int, nprocs: int, args: ArgumentParser) -> None:
     ).to(device)
 
     grad_scaler = GradScaler() if args.amp else None
+
     loss_fn = get_loss_fn(args).to(device)
     optimizer, scheduler = get_optimizer(args, model)
 
-    # --- DIRECTORIES (Nuova Logica Ordinata: .../stage2) ---
-    config_name = f"{args.model}_{args.dataset}"
-    default_ckpt_dir = os.path.join(current_dir, "checkpoints", args.dataset, config_name, "stage2")
-    if args.out is not None and str(args.out).strip() != "":
+    # MODIFICATO: Gestione della directory dei checkpoint
+    if args.out is not None:
+        # Se --out è specificato, usa quella directory
         args.ckpt_dir = os.path.abspath(args.out)
     else:
-        args.ckpt_dir = default_ckpt_dir
-    os.makedirs(args.ckpt_dir, exist_ok=True)
-    if local_rank == 0:
-        print(f"📂 Checkpoints will be saved to: {args.ckpt_dir}")
+        # Altrimenti usa il percorso predefinito
+        ckpt_dir_name = f"{args.model}_{args.prompt_type}_" if "clip" in args.model else f"{args.model}_"
+        ckpt_dir_name += f"{args.input_size}_{args.reduction}_{args.truncation}_{args.granularity}_"
+        ckpt_dir_name += f"{args.weight_count_loss}_{args.count_loss}"
+        args.ckpt_dir = os.path.join(current_dir, "checkpoints", args.dataset, ckpt_dir_name)
     
-    # *** NOVITÀ: Salvataggio Configurazione su File ***
+    os.makedirs(args.ckpt_dir, exist_ok=True)
+    print(f"Checkpoints will be saved to: {args.ckpt_dir}")
+    
+    # Salva la configurazione utilizzata nella directory di output
     if local_rank == 0:
-        config_save_path = os.path.join(args.ckpt_dir, "config_stage2.yaml")
-        try:
-            with open(config_save_path, 'w') as f:
-                # Salviamo vars(args) che contiene tutti i parametri usati
-                yaml.dump(vars(args), f, default_flow_style=False)
-            print(f"📄 Configuration saved to {config_save_path}")
-        except Exception as e:
-            print(f"⚠️ Could not save config yaml: {e}")
-    # -------------------------------------------------------
+        config_file = os.path.join(args.ckpt_dir, "training_config.json")
+        with open(config_file, "w") as f:
+            json.dump(vars(args), f, indent=4, default=str)
+        print(f"Configuration saved to: {config_file}")
 
     model, optimizer, scheduler, grad_scaler, start_epoch, loss_info, hist_val_scores, best_val_scores = load_checkpoint(args, model, optimizer, scheduler, grad_scaler)
 
     if local_rank == 0:
         model_without_ddp = model
         writer = get_writer(args.ckpt_dir)
-        logger = get_logger(os.path.join(args.ckpt_dir, "train_stage2.log"))
+        logger = get_logger(os.path.join(args.ckpt_dir, "train.log"))
         logger.info(get_config(vars(args), mute=False))
         val_loader = get_dataloader(args, split="val", ddp=False)
 
@@ -165,11 +165,13 @@ def run(local_rank: int, nprocs: int, args: ArgumentParser) -> None:
 
     model = DDP(nn.SyncBatchNorm.convert_sync_batchnorm(model), device_ids=[local_rank], output_device=local_rank) if ddp else model
 
-    for epoch in range(start_epoch, args.total_epochs + 1):
+    for epoch in range(start_epoch, args.total_epochs + 1): # start from 1
         if local_rank == 0:
-            log(logger, epoch, args.total_epochs, message=f"\tlr: {optimizer.param_groups[0]['lr']:.3e}")
+            message = f"\tlr: {optimizer.param_groups[0]['lr']:.3e}"
+            log(logger, epoch, args.total_epochs, message=message)
 
-        if sampler is not None: sampler.set_epoch(epoch)
+        if sampler is not None:
+            sampler.set_epoch(epoch)
 
         model, optimizer, grad_scaler, loss_info = train(model, train_loader, loss_fn, optimizer, grad_scaler, device, local_rank, nprocs)
         scheduler.step()
@@ -181,7 +183,7 @@ def run(local_rank: int, nprocs: int, args: ArgumentParser) -> None:
             log(logger, None, None, loss_info=loss_info, message="\n" * 2 if not eval else None)
 
             if eval:
-                print("Evaluating Stage 2...")
+                print("Evaluating")
                 state_dict = model.module.state_dict() if ddp else model.state_dict()
                 model_without_ddp.load_state_dict(state_dict)
                 curr_val_scores = evaluate(
@@ -189,89 +191,98 @@ def run(local_rank: int, nprocs: int, args: ArgumentParser) -> None:
                     val_loader,
                     device,
                     args.sliding_window,
-                    args.window_size,
+                    args.input_size,
                     args.stride,
                 )
+                
+                # Stampa dettagliata delle metriche
+                mae = curr_val_scores.get('mae', curr_val_scores.get('MAE', 'N/A'))
+                rmse = curr_val_scores.get('rmse', curr_val_scores.get('RMSE', 'N/A'))
+                
+                eval_message = f"Epoch {epoch}/{args.total_epochs} - Validation Results:"
+                eval_message += f"\n  MAE:  {mae:.4f}" if isinstance(mae, (int, float)) else f"\n  MAE:  {mae}"
+                eval_message += f"\n  RMSE: {rmse:.4f}" if isinstance(rmse, (int, float)) else f"\n  RMSE: {rmse}"
+                
+                # Stampa tutte le altre metriche disponibili
+                for key, value in curr_val_scores.items():
+                    if key.lower() not in ['mae', 'rmse']:
+                        if isinstance(value, (int, float)):
+                            eval_message += f"\n  {key}: {value:.4f}"
+                        else:
+                            eval_message += f"\n  {key}: {value}"
+                
+                print(eval_message)
+                logger.info(eval_message)
+                
+                # Stampa i migliori risultati finora
+                best_mae = best_val_scores.get('mae', best_val_scores.get('MAE', None))
+                best_rmse = best_val_scores.get('rmse', best_val_scores.get('RMSE', None))
+                if best_mae is not None or best_rmse is not None:
+                    best_message = "  Best scores so far:"
+                    if best_mae is not None:
+                        best_mae_val = min(best_mae) if isinstance(best_mae, list) else best_mae
+                        best_message += f"\n    Best MAE:  {best_mae_val:.4f}"
+                    if best_rmse is not None:
+                        best_rmse_val = min(best_rmse) if isinstance(best_rmse, list) else best_rmse
+                        best_message += f"\n    Best RMSE: {best_rmse_val:.4f}"
+                    print(best_message)
+                    logger.info(best_message)
+                
                 hist_val_scores, best_val_scores = update_eval_result(epoch, curr_val_scores, hist_val_scores, best_val_scores, writer, state_dict, os.path.join(args.ckpt_dir))
                 log(logger, None, None, None, curr_val_scores, best_val_scores, message="\n" * 3)
-    
             if (epoch % args.save_freq == 0):
-                save_checkpoint(epoch + 1, (model.module if ddp else model).state_dict(), optimizer.state_dict(),
-                    scheduler.state_dict(), grad_scaler.state_dict() if grad_scaler else None,
-                    loss_info, hist_val_scores, best_val_scores, args.ckpt_dir)
+                save_checkpoint(
+                    epoch + 1,
+                    model.module.state_dict() if ddp else model.state_dict(),
+                    optimizer.state_dict(),
+                    scheduler.state_dict() if scheduler is not None else None,
+                    grad_scaler.state_dict() if grad_scaler is not None else None,
+                    loss_info,
+                    hist_val_scores,
+                    best_val_scores,
+                    args.ckpt_dir,
+                )
 
         barrier(ddp)
 
     if local_rank == 0:
         writer.close()
-        cleanup(ddp)
+        print("Training completed. Best scores:")
+        for k in best_val_scores.keys():
+            scores = " ".join([f"{best_val_scores[k][i]:.4f};" for i in range(len(best_val_scores[k]))])
+            print(f"  {k}: {scores}")
 
-
-def load_config_and_update_args(args):
-    # Se args.config è None, usa il default o esci (grazie al default="configs/config.yaml" nel parser, questo non dovrebbe più essere None)
-    if not args.config: 
-        print("⚠️ No config file specified. Using defaults/cli args only.")
-        return args
-
-    if os.path.exists(args.config):
-        print(f"Loading configuration from {args.config}...")
-        with open(args.config, 'r') as f: cfg = yaml.safe_load(f)
-    else:
-        print(f"⚠️ Config file {args.config} not found! Continuing with CLI args.")
-        return args
-
-    def is_passed_in_cli(arg_name): return f"--{arg_name}" in sys.argv
-
-    mapping = {
-        "dataset": ["DATASET"],
-        "model": ["MODEL"],             
-        "input_size": ["INPUT_SIZE"],   
-        "reduction": ["REDUCTION"],
-        "truncation": ["TRUNCATION"],   # <--- Questo mancava e causava KeyError
-        
-        # Train Stage 2 Params
-        "batch_size": ["TRAIN_STAGE2", "BATCH_SIZE"],
-        "num_workers": ["TRAIN_STAGE2", "NUM_WORKERS"],
-        "lr": ["TRAIN_STAGE2", "LR_HEAD"],
-        "weight_decay": ["TRAIN_STAGE2", "WEIGHT_DECAY"],
-        "total_epochs": ["TRAIN_STAGE2", "TOTAL_EPOCHS"],
-        "eval_freq": ["TRAIN_STAGE2", "EVAL_FREQ"],
-        "warmup_epochs": ["TRAIN_STAGE2", "WARMUP_EPOCHS"],
-        
-        "weight_count_loss": ["LOSS_STAGE2", "WEIGHT_COUNT_LOSS"],
-        "count_loss": ["LOSS_STAGE2", "COUNT_LOSS"],
-        "amp": ["TRAIN_STAGE2", "AMP"]
-    }
-
-    updated_count = 0
-    for arg_key, keys_path in mapping.items():
-        if not is_passed_in_cli(arg_key):
-            try:
-                val = cfg
-                for k in keys_path: val = val[k]
-                setattr(args, arg_key, val)
-                updated_count += 1
-            except (KeyError, TypeError): pass
-    
-    print(f"Stage 2 Config Loaded: Updated {updated_count} args.")
-    return args
+    cleanup(ddp)
 
 
 def main():
     args = parser.parse_args()
-    args = load_config_and_update_args(args)
-    
-    if args.dataset is None:
-        raise ValueError("Dataset name must be provided.")
+    args.model = args.model.lower()
     args.dataset = standardize_dataset_name(args.dataset)
 
-    # ... logica sliding window originale ...
+    if args.regression:
+        args.truncation = None
+        args.anchor_points = None
+        args.bins = None
+        args.prompt_type = None
+        args.granularity = None
+
+    if "clip_vit" not in args.model:
+        args.num_vpt = None
+        args.vpt_drop = None
+        args.shallow_vpt = None
+    if "clip" not in args.model:
+        args.prompt_type = None
+
     if args.sliding_window:
         args.window_size = args.input_size if args.window_size is None else args.window_size
         args.stride = args.input_size if args.stride is None else args.stride
-        assert not (args.zero_pad_to_multiple and args.resize_to_multiple), "Cannot use both."
+        assert not (args.zero_pad_to_multiple and args.resize_to_multiple), "Cannot use both zero pad and resize to multiple."
     else:
-        args.window_size = None; args.stride = None
+        args.window_size = None
+        args.stride = None
+        args.zero_pad_to_multiple = False
+        args.resize_to_multiple = False
 
     args.nprocs = torch.cuda.device_count()
     print(f"Using {args.nprocs} GPUs.")
@@ -279,6 +290,7 @@ def main():
         mp.spawn(run, nprocs=args.nprocs, args=(args.nprocs, args))
     else:
         run(0, 1, args)
+
 
 if __name__ == "__main__":
     main()

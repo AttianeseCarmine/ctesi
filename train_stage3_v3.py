@@ -6,7 +6,12 @@ from torch import nn
 import torch.nn.functional as F
 import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.cuda.amp import GradScaler, autocast
+from torch.cuda.amp import GradScaler
+# IMPORT CORRETTO PER LA COMPATIBILITÀ
+try:
+    from torch.amp import autocast
+except ImportError:
+    from torch.cuda.amp import autocast
 from tqdm import tqdm
 
 current_dir = os.path.abspath(os.path.dirname(__file__))
@@ -40,7 +45,7 @@ parser.add_argument("--batch_size", type=int, default=4)
 parser.add_argument("--num_workers", type=int, default=4)
 
 # bins cfg (come stage2)
-parser.add_argument("--regression", action="store_true")  # tienilo False (Stage2-style bins)
+parser.add_argument("--regression", action="store_true")
 parser.add_argument("--truncation", type=int, default=4)
 parser.add_argument("--anchor_points", type=str, default="average", choices=["average", "middle"])
 parser.add_argument("--prompt_type", type=str, default="word", choices=["word", "number"])
@@ -51,16 +56,16 @@ parser.add_argument("--shallow_vpt", action="store_true")
 
 # train
 parser.add_argument("--lr", type=float, default=1e-6)
+# AGGIUNTO IL PARAMETRO MANCANTE QUI SOTTO
+parser.add_argument("--lr_backbone", type=float, default=0.0) 
 parser.add_argument("--weight_decay", type=float, default=1e-4)
-parser.add_argument("--total_epochs", type=int, default=600)
+parser.add_argument("--total_epochs", type=int, default=50)
 parser.add_argument("--eval_start", type=int, default=1)
-parser.add_argument("--eval_freq", type=int, default=10)
+parser.add_argument("--eval_freq", type=int, default=1)
 parser.add_argument("--save_freq", type=int, default=1)
 parser.add_argument("--amp", action="store_true")
 parser.add_argument("--local_rank", type=int, default=-1)
 parser.add_argument("--seed", type=int, default=42)
-
-
 
 parser.add_argument("--num_crops", type=int, default=1)
 parser.add_argument("--min_scale", type=float, default=1.0)
@@ -81,8 +86,6 @@ parser.add_argument("--stride", type=int, default=None)
 parser.add_argument("--window_size", type=int, default=None)
 parser.add_argument("--resize_to_multiple", action="store_true")
 parser.add_argument("--zero_pad_to_multiple", action="store_true")
-
-
 
 # output
 parser.add_argument("--out", type=str, default=None)
@@ -201,7 +204,7 @@ def train_one_epoch_refined(model, loader, optimizer, scaler, device, rank, npro
 
         optimizer.zero_grad()
 
-        with autocast(enabled=(scaler is not None)):
+        with autocast("cuda", enabled=(scaler is not None)):
             out = model(imgs)
 
             # ---- 1) "CLIP loss" (qui metto la forma minima robusta) ----

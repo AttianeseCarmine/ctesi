@@ -114,9 +114,9 @@ class Crowd(Dataset):
                 assert len(self.image_names) == len(self.label_names) == 316, f"ShanghaiTech_B val split should have 316 images, but found {len(self.image_names)}."
         elif self.dataset == "nwpu":
             if self.split == "train":
-                assert len(self.image_names) == len(self.label_names) == 3109, f"NWPU train split should have 3109 images, but found {len(self.image_names)}."
+                assert len(self.image_names) == len(self.label_names) == 2887, f"NWPU train split should have 2887 images, but found {len(self.image_names)}."
             else:
-                assert len(self.image_names) == len(self.label_names) == 500, f"NWPU val split should have 500 images, but found {len(self.image_names)}."
+                assert len(self.image_names) == len(self.label_names) == 722, f"NWPU val split should have 722 images, but found {len(self.image_names)}."
         elif self.dataset == "qnrf":
             if self.split == "train":
                 assert len(self.image_names) == len(self.label_names) == 1201, f"UCF_QNRF train split should have 1201 images, but found {len(self.image_names)}."

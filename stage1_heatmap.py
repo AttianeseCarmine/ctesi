@@ -37,8 +37,37 @@ def main(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"🚀 Avvio Debug Stage 1 su: {args.image_path}")
     
-    # 1. Configurazione e Modello
-    config = load_config(args.config)
+    # 1. Configurazione: Carica e analizza
+    dataset_name = "unknown"
+    backbone_name = "unknown"
+
+    if os.path.exists(args.config):
+        print(f"📖 Leggo configurazione da: {args.config}")
+        config = load_config(args.config)
+        
+        # Recupera Dataset
+        dataset_name = config.get('dataset', 'sha')
+        
+        # Recupera Backbone (Gestione Robusta)
+        # Prima prova la chiave piatta 'model'
+        backbone_name = config.get('model')
+        
+        # Se 'model' non c'è, prova a scavare in BACKBONE -> TYPE
+        if not backbone_name:
+            backbone_cfg = config.get('BACKBONE', {})
+            if isinstance(backbone_cfg, dict):
+                backbone_name = backbone_cfg.get('TYPE', 'vit_b_16')
+            else:
+                backbone_name = 'vit_b_16' # Fallback estremo
+    else:
+        print("⚠️ Config file non trovato, uso valori default.")
+        config = {} # Config vuoto, il modello potrebbe crashare se non gestisce default
+        # In questo caso estremo, potresti voler aggiungere i parametri minimi a 'config' qui
+    
+    print(f"ℹ️  Dataset rilevato: {dataset_name}")
+    print(f"ℹ️  Backbone rilevata: {backbone_name}")
+
+    # Inizializza Modello
     model = ZIPModel(config).to(device)
     
     # 2. Caricamento Pesi (con controllo rigoroso)
@@ -69,11 +98,10 @@ def main(args):
     # 4. Inferenza
     with torch.no_grad():
         out = model(img_tensor)
-        # NOTA: train_stage1.py usa i LOGITS per la loss e la metrica
         logits = out['pi_logits'] 
         probs = torch.sigmoid(logits)
 
-    # 5. Analisi Statistica (Il cuore del debug)
+    # 5. Analisi Statistica
     l_min, l_max, l_mean = logits.min().item(), logits.max().item(), logits.mean().item()
     p_min, p_max, p_mean = probs.min().item(), probs.max().item(), probs.mean().item()
 
@@ -82,69 +110,52 @@ def main(args):
     print(f"   PROBS (0-1)   -> Min: {p_min:.4f}  | Max: {p_max:.4f}  | Mean: {p_mean:.4f}")
     print("-" * 60)
     
-    # Se il training usava pos_weight=10, è normale avere logit molto alti.
-    # La soglia usata nel training è 0.2 sui LOGITS.
     train_threshold_logit = 0.2
     mask_logits = (logits > train_threshold_logit).float()
-    
-    # Soglia utente sulle PROBABILITÀ (quella che provavi a cambiare)
     mask_probs = (probs > args.threshold).float()
 
     # 6. Visualizzazione
     img_vis = denormalize(img_tensor)
-    
-    # Upsampling delle maschere alle dimensioni immagine
     H, W = img_vis.shape[:2]
     
-    # Mappa di probabilità (Heatmap)
-    heatmap = F.interpolate(probs, size=(H, W), mode='bilinear', align_corners=False)
-    heatmap = heatmap.squeeze().cpu().numpy()
-    
-    # Maschera Logica Training
-    mask_train = F.interpolate(mask_logits, size=(H, W), mode='nearest')
-    mask_train = mask_train.squeeze().cpu().numpy()
-
-    # Maschera Logica Utente
-    mask_user = F.interpolate(mask_probs, size=(H, W), mode='nearest')
-    mask_user = mask_user.squeeze().cpu().numpy()
+    heatmap = F.interpolate(probs, size=(H, W), mode='bilinear', align_corners=False).squeeze().cpu().numpy()
+    mask_train = F.interpolate(mask_logits, size=(H, W), mode='nearest').squeeze().cpu().numpy()
+    mask_user = F.interpolate(mask_probs, size=(H, W), mode='nearest').squeeze().cpu().numpy()
 
     # PLOT
     fig, axes = plt.subplots(1, 4, figsize=(24, 6))
     
-    # A. Input
     axes[0].imshow(img_vis)
     axes[0].set_title("Input Image")
     axes[0].axis('off')
     
-    # B. Heatmap Probabilità (La verità pura)
     im = axes[1].imshow(heatmap, cmap='jet', vmin=0, vmax=1)
     axes[1].set_title("Probability Heatmap (0.0 - 1.0)")
     axes[1].axis('off')
     plt.colorbar(im, ax=axes[1], fraction=0.046, pad=0.04)
     
-    # C. Maschera (Logica Training: Logit > 0.2)
     axes[2].imshow(img_vis)
     axes[2].imshow(mask_train, alpha=0.5, cmap='Reds')
     axes[2].set_title(f"Training Logic\n(Logit > 0.2)")
     axes[2].axis('off')
     
-    # D. Maschera (Logica Utente: Prob > args.threshold)
     axes[3].imshow(img_vis)
     axes[3].imshow(mask_user, alpha=0.5, cmap='Greens')
     axes[3].set_title(f"User Logic\n(Prob > {args.threshold})")
     axes[3].axis('off')
 
-    out_file = f"stage1_{os.path.splitext(os.path.basename(args.image_path))[0]}.png"
-    plt.tight_layout()
+    # SALVATAGGIO
+    img_name_clean = os.path.splitext(os.path.basename(args.image_path))[0] # DEFINITA QUI ORA!
     output_dir = "visualize"
-    os.makedirs(output_dir, exist_ok=True) # Crea la cartella se non esiste
-
-    # Costruisci il path completo
-    img_name = os.path.splitext(os.path.basename(args.image_path))[0]
-    out_file = os.path.join(output_dir, f"stage1_{img_name}.png")
+    os.makedirs(output_dir, exist_ok=True)
+    
+    out_file = f"{output_dir}/stage1_heatmap_{dataset_name}_{backbone_name}_{img_name_clean}_thr{args.threshold}.png"
+    
+    plt.tight_layout()
     plt.savefig(out_file)
+    plt.close()
+    
     print(f"\n✅ Risultato salvato in: {out_file}")
-    print(f"   Guarda la 'Probability Heatmap': se è tutta rossa/gialla, il modello è molto confidente ovunque.")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

@@ -1,10 +1,10 @@
 # ============================================================
 # ZIP-CLIP-EBC: Configurazione Completa a 3 Stadi
-# Dataset: QNRF - Backbone: resnet (CLIP)
+# Dataset: NWPU - Backbone: resnet (CLIP)
 # ============================================================
 
 # Questi valori vengono usati se non specificati nei singoli stage o da terminale
-DATASET: "qnrf"
+DATASET: "nwpu"
 MODEL: "clip_resnet50"   # STAGE2 !!
 INPUT_SIZE: 448          # FONDAMENTALE: CLIP richiede 224x224 (o multipli/crop)
 REDUCTION: 8             # Fattore di riduzione delle feature map
@@ -35,8 +35,11 @@ TRAIN_STAGE1:
   LR_HEAD: 1.0e-4        # Normale per la testa di classificazione binaria (pi_head)
   WEIGHT_DECAY: 1.0e-4
   
-  # Parametri specifici (assunti gestiti internamente da train_stage1)
-  POS_WEIGHT: 10         # Peso maggiore per la classe "Folla" (che è minoritaria nei patch)
+  SLIDING_WINDOW: True
+  WINDOW_SIZE: 448
+  STRIDE: 448      
+
+  POS_WEIGHT: 15         # Peso maggiore per la classe "Folla" (che è minoritaria nei patch)
 
 # ============================================================
 # STAGE 2: CLIP-EBC Pure Training
@@ -44,24 +47,29 @@ TRAIN_STAGE1:
 # Nota: Qui usiamo la logica "Pura" con pesi OpenAI
 # ============================================================
 TRAIN_STAGE2:
-  TOTAL_EPOCHS: 2000      # Aumenta se il loss scende lentamente
+  TOTAL_EPOCHS: 2500      # Aumenta se il loss scende lentamente
   BATCH_SIZE: 16         # CLIP consuma VRAM, riduci a 8 se vai OOM (Out Of Memory)
   NUM_WORKERS: 8
   EVAL_FREQ: 5           # Valuta ogni 5 epoche per risparmiare tempo
   
   # Optimizer & Scheduler
   LR: 1.0e-5             # LR Base
-  LR_BACKBONE: 0.0       # 0.0 = FREEZE CLIP (Usiamo i pesi puri OpenAI senza modificarli)
+  LR_BACKBONE: 1e-8       # 0.0 = FREEZE CLIP (Usiamo i pesi puri OpenAI senza modificarli)
                          # Metti 1.0e-6 se vuoi fare fine-tuning leggerissimo della backbone
-  LR_HEAD: 1.0e-4        # Addestra il decoder EBC e i bin
+  LR_HEAD: 1.0e-6        # Addestra il decoder EBC e i bin
   WEIGHT_DECAY: 1.0e-4
   WARMUP_EPOCHS: 10      # Warmup più lungo per stabilità
   
+
+  SLIDING_WINDOW: True
+  WINDOW_SIZE: 448
+  STRIDE: 448       # O 224 se vuoi sovrapposizione (più lento ma più preciso)
+
   # Loss Function (DACE / EBC)
   WEIGHT_COUNT_LOSS: 1.0
   COUNT_LOSS: "dmcount"  # Distribution Matching Loss (consigliata per EBC)
-  WEIGHT_OT: 0.1         # Optimal Transport Loss (aiuta la convergenza spaziale)
-  WEIGHT_TV: 0.01        # Total Variation Loss (riduce il rumore nella density map)
+  WEIGHT_OT: 0.1 
+  WEIGHT_TV: 0.01   # Total Variation Loss (riduce il rumore nella density map)
 
 # ============================================================
 # STAGE 3: JOINT Fine-tuning

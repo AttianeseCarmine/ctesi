@@ -2,6 +2,7 @@
 import os
 import argparse
 import yaml
+import json
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -24,6 +25,43 @@ def construct_python_tuple(loader, node):
 
 
 SafeTupleLoader.add_constructor("tag:yaml.org,2002:python/tuple", construct_python_tuple)
+
+
+# -------------------------
+# Config loader (JSON + YAML)
+# -------------------------
+def load_config(config_path):
+    """
+    Carica un file di configurazione che può essere .json o .yaml/.yml
+    """
+    if not os.path.exists(config_path):
+        raise FileNotFoundError(f"Config not found: {config_path}")
+    
+    ext = os.path.splitext(config_path)[1].lower()
+    
+    if ext == '.json':
+        with open(config_path, 'r') as f:
+            cfg = json.load(f)
+        print(f"✅ Loaded JSON config from: {config_path}")
+    elif ext in ['.yaml', '.yml']:
+        with open(config_path, 'r') as f:
+            cfg = yaml.load(f, Loader=SafeTupleLoader)
+        print(f"✅ Loaded YAML config from: {config_path}")
+    else:
+        # Try both formats as fallback
+        try:
+            with open(config_path, 'r') as f:
+                cfg = json.load(f)
+            print(f"✅ Loaded config as JSON (no extension detected)")
+        except json.JSONDecodeError:
+            try:
+                with open(config_path, 'r') as f:
+                    cfg = yaml.load(f, Loader=SafeTupleLoader)
+                print(f"✅ Loaded config as YAML (no extension detected)")
+            except Exception as e:
+                raise ValueError(f"Could not parse config as JSON or YAML: {e}")
+    
+    return cfg or {}
 
 
 # -------------------------
@@ -91,7 +129,7 @@ def _resize_density_preserve_sum(density_b1hw, out_h, out_w):
 
 def _robust_vmax(m_2d, q=0.995):
     """
-    vmax robusto (percentile) così la mappa pred non resta “tutta blu”.
+    vmax robusto (percentile) così la mappa pred non resta "tutta blu".
     """
     x = m_2d.detach().float().cpu()
     if x.numel() == 0:
@@ -318,12 +356,8 @@ def visualize_stage2(
         print("ℹ️ CUDA non disponibile: uso CPU.")
         device = torch.device("cpu")
 
-    # ---- load YAML config ----
-    if not (config_path and os.path.exists(config_path)):
-        raise FileNotFoundError(f"Config not found: {config_path}")
-
-    with open(config_path, "r") as f:
-        cfg = yaml.load(f, Loader=SafeTupleLoader) or {}
+    # ---- load config (JSON or YAML) ----
+    cfg = load_config(config_path)
 
     # bins/anchor_points
     if "bins" not in cfg or "anchor_points" not in cfg:
@@ -332,7 +366,10 @@ def visualize_stage2(
     bins = []
     for a, b in cfg["bins"]:
         a = float(a)
-        if isinstance(b, str) and b.strip().lower() in [".inf", "inf"]:
+        # Gestione sia di stringhe "Infinity" che del valore float inf già parsato da JSON
+        if isinstance(b, str) and b.strip().lower() in [".inf", "inf", "infinity"]:
+            b = float("inf")
+        elif isinstance(b, float) and not np.isfinite(b):
             b = float("inf")
         else:
             b = float(b)
@@ -479,8 +516,8 @@ def visualize_stage2(
 # -------------------------
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
-    p.add_argument("--config", type=str, required=True)
-    p.add_argument("--ckpt", type=str, required=True)
+    p.add_argument("--config", type=str, required=True, help="Path to config file (.json or .yaml)")
+    p.add_argument("--checkpoint", type=str, required=True)
     p.add_argument("--dataset", type=str, required=True)
 
     p.add_argument("--model", type=str, required=True)  # es: clip_resnet50 / clip_vit_b_16
@@ -508,7 +545,7 @@ if __name__ == "__main__":
 
     visualize_stage2(
         config_path=args.config,
-        ckpt_path=args.ckpt,
+        ckpt_path=args.checkpoint,
         out_png=args.out_png,
         dataset=args.dataset,
         model_name=args.model,
@@ -525,4 +562,16 @@ if __name__ == "__main__":
     )
 
 
-# python visualize_stage2.py   --config checkpoints/shb/resnet50/stage2/config_stage2.yaml   --ckpt checkpoints/shb/resnet50/stage2/best_mae_0.pth   --dataset shb   --model clip_resnet50   --out_png visualize.png   --num_rows 3  
+# Esempi di utilizzo:
+# 
+# Con file JSON:
+# python visualize_stage2.py --config checkpoints/qnrf/resnet50/stage2/training_config.json --checkpoint checkpoints/qnrf/resnet50/stage2/best_mae_0.pth --dataset qnrf --model clip_resnet50 --out_png visualize_qnrf_resnet50.png --num_rows 3
+#
+# Con file YAML:
+# python visualize_stage2.py \
+#   --config checkpoints/shb/resnet50/stage2/config_stage2.yaml \
+#   --checkpoint checkpoints/shb/resnet50/stage2/best_mae_0.pth \
+#   --dataset shb \
+#   --model clip_resnet50 \
+#   --out_png visualize.png \
+#   --num_rows 3

@@ -67,7 +67,7 @@ parser.add_argument("--saltiness", type=float, default=1e-3, help="Saltiness for
 parser.add_argument("--spiciness", type=float, default=1e-3, help="Spiciness for pepper salt noise.")
 
 # Eval & Log
-parser.add_argument("--eval_freq", type=int, default=1)
+parser.add_argument("--eval_freq", type=int, default=15)
 parser.add_argument("--save_freq", type=int, default=5)
 parser.add_argument("--save_best_k", type=int, default=3)
 parser.add_argument("--amp", action="store_true", help="Use AMP.")
@@ -198,7 +198,7 @@ def train_one_epoch(model, loader, criterion, optimizer, scaler, device, rank, n
 # EVALUATION FUNCTION
 # =============================================================================
 @torch.no_grad()
-def evaluate_stage1(model, loader, device):
+def evaluate_stage1(model, loader, device, threshold=0.5):
     model.eval()
     tp, tn, fp, fn = 0, 0, 0, 0
     

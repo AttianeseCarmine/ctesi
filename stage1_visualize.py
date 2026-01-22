@@ -63,11 +63,6 @@ def load_gt_points(image_path):
     # Costruisci il path atteso per la label
     label_path = os.path.join(base_dir, 'labels', f'{name_no_ext}.npy')
     
-    # Fallback per struttura data_npy
-    if "data_npy" in base_dir and not os.path.exists(label_path):
-         # A volte la struttura è data_npy/sha/train/labels
-         pass
-
     print(f"🔍 [Data] Cerco labels in: {label_path}")
     
     if os.path.exists(label_path):
@@ -110,7 +105,6 @@ def draw_zip_prediction(image_rgb, pi_prob, threshold=0.3):
     total_blocks = h_grid * w_grid
     
     # 3. Disegna GRIGLIA ROSSA solo su FOREGROUND (dove il modello è confidente)
-    # Nota: Disegnare tutti i rettangoli può essere pesante, disegniamo solo i bordi dei patch attivi
     for r in range(h_grid):
         for c in range(w_grid):
             if prob_small[r, c] >= threshold:
@@ -119,7 +113,7 @@ def draw_zip_prediction(image_rgb, pi_prob, threshold=0.3):
                 x2 = int((c + 1) * patch_w)
                 y2 = int((r + 1) * patch_h)
                 
-                # Rettangolo rosso semi-trasparente o solo bordo
+                # Rettangolo rosso semi-trasparente (bordo)
                 draw.rectangle([x1, y1, x2, y2], outline=(255, 0, 0, 180), width=1)
 
     return np.array(pil_img), empty_blocks, total_blocks
@@ -132,12 +126,27 @@ def main(args):
     
     # 1. Carica Configurazione
     print(f"📂 Caricamento config da: {args.config}")
-    config = load_config(args.config)
+    if os.path.exists(args.config):
+        config = load_config(args.config)
+    else:
+        print("❌ Config file non trovato!")
+        return
+
+    # --- ESTRAZIONE INFO PER NOME FILE (Dataset & Backbone) ---
+    dataset_name = config.get('dataset', 'unknown')
     
-    # Nome run ed estrazione parametri base
-    run_name = os.path.basename(os.path.dirname(args.checkpoint)) # Usa il nome della cartella del checkpoint
+    # Recupera Backbone (Gestione Robusta)
+    backbone_name = config.get('model')
+    if not backbone_name:
+        backbone_cfg = config.get('BACKBONE', {})
+        if isinstance(backbone_cfg, dict):
+            backbone_name = backbone_cfg.get('TYPE', 'unknown')
+        else:
+            backbone_name = 'unknown'
+
     print(f"\n🚀 AVVIO VISUALIZZAZIONE STAGE 1")
-    print(f"   Modello:  {config.get('model', 'Unknown')}")
+    print(f"   Dataset:  {dataset_name}")
+    print(f"   Backbone: {backbone_name}")
     print(f"   Soglia:   {args.threshold}")
 
     # 2. Costruisci Modello
@@ -152,16 +161,16 @@ def main(args):
         print(f"📥 Caricamento pesi da: {args.checkpoint}")
         ckpt = torch.load(args.checkpoint, map_location=device)
         
-        # Gestione dizionario checkpoint (state_dict potrebbe essere annidato)
+        # Gestione dizionario checkpoint
         state_dict = ckpt['model_state_dict'] if 'model_state_dict' in ckpt else ckpt
-        state_dict = ckpt['model'] if 'model' in ckpt else state_dict # Fallback ulteriore
+        state_dict = ckpt['model'] if 'model' in ckpt else state_dict 
         
-        # Rimuovi prefisso 'module.' se presente (DDP)
+        # Rimuovi prefisso 'module.' se presente
         new_state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
         
         missing, unexpected = model.load_state_dict(new_state_dict, strict=False)
         if len(missing) > 0:
-            print(f"⚠️ Chiavi mancanti (potrebbe essere normale per backbone parziali): {len(missing)}")
+            print(f"⚠️ Chiavi mancanti: {len(missing)} (normale per caricamento parziale/backbone)")
     else:
         print("❌ Checkpoint non trovato!")
         return
@@ -172,11 +181,8 @@ def main(args):
         print(f"❌ Immagine non trovata: {args.image_path}")
         return
 
-    # Gestione npy o jpg
     if args.image_path.endswith('.npy'):
         img_np = np.load(args.image_path)
-        # Assumiamo npy sia [H, W, C] o [C, H, W]? Solitamente salvato come array numpy
-        # Se è float normalizzato, convertire. Qui assumiamo uint8 [0-255] RGB se npy.
         raw_img = Image.fromarray(img_np.astype('uint8')).convert('RGB')
     else:
         raw_img = Image.open(args.image_path).convert('RGB')
@@ -191,13 +197,12 @@ def main(args):
     # 5. Carica Ground Truth (Points)
     gt_points = load_gt_points(args.image_path)
     
-    # Riscala Punti GT per il plot (dato che l'immagine è ridimensionata)
+    # Riscala Punti GT per il plot
     gt_points_scaled = []
     if gt_points is not None and len(gt_points) > 0:
         scale_x = target_W / orig_W
         scale_y = target_H / orig_H
         for pt in gt_points:
-            # pt è [x, y]
             gt_points_scaled.append([pt[0] * scale_x, pt[1] * scale_y])
         gt_points_scaled = np.array(gt_points_scaled)
     else:
@@ -206,19 +211,17 @@ def main(args):
     # 6. Inferenza
     with torch.no_grad():
         out = model(img_tensor)
-        # ZIPModel restituisce 'pi_logits' nel dizionario di output
         pi_logits = out['pi_logits']
         pi_prob = torch.sigmoid(pi_logits)
 
     # 7. Visualizzazione
     img_vis = denormalize(img_tensor.squeeze())
     
-    # Genera Overlay (Destra)
+    # Genera Overlay
     mask_vis, empty_blocks, total_blocks = draw_zip_prediction(img_vis, pi_prob, threshold=args.threshold)
     empty_pct = (empty_blocks / total_blocks) * 100
 
     # PLOT
-    # Creiamo cartella output se non esiste
     os.makedirs("visualize", exist_ok=True)
     
     fig, axes = plt.subplots(1, 3, figsize=(24, 8))
@@ -228,10 +231,8 @@ def main(args):
     axes[0].set_title(f"Input ({orig_W}x{orig_H})", fontsize=16, fontweight='bold')
     axes[0].axis('off')
     
-    # --- PANNELLO 2: GROUND TRUTH (FILTRO BLU + PUNTI BIANCHI) ---
+    # --- PANNELLO 2: GROUND TRUTH ---
     axes[1].imshow(img_vis)
-    
-    # Overlay Blu
     blue_overlay = np.zeros_like(img_vis)
     blue_overlay[:, :, 2] = 255
     axes[1].imshow(blue_overlay, alpha=0.2)
@@ -252,29 +253,28 @@ def main(args):
         axes[1].set_title("GT: N/A", fontsize=16, fontweight='bold', color='gray')
     axes[1].axis('off')
     
-    # --- PANNELLO 3: MODEL PREDICTION (Zone attive evidenziate) ---
+    # --- PANNELLO 3: MODEL PREDICTION ---
     axes[2].imshow(mask_vis)
     title_str = (f"Stage 1 Output (Thr={args.threshold})\n"
                  f"Filtered: {int(empty_blocks)}/{total_blocks} patches ({empty_pct:.1f}%)")
     axes[2].set_title(title_str, fontsize=16, fontweight='bold', color='darkred')
     axes[2].axis('off')
 
-    # Salvataggio
+    # Salvataggio con Nome Parlante
     img_name_clean = os.path.splitext(os.path.basename(args.image_path))[0]
-    out_file = f"visualize/stage1_{img_name_clean}_thr{args.threshold}.png"
+    out_file = f"visualize/stage1_{dataset_name}_{backbone_name}_{img_name_clean}_thr{args.threshold}.png"
     
     plt.tight_layout()
     plt.savefig(out_file, dpi=100, bbox_inches='tight')
-    plt.close() # Chiudi per liberare memoria
+    plt.close()
     print(f"\n✅ Risultato salvato in: {out_file}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Visualizza output Stage 1 (Filtro Background)")
     parser.add_argument('--config', type=str, default='config_stage1.yaml', help="Path al file .yaml")
-    parser.add_argument('--checkpoint', type=str, required=True, help="Path al file .pth (best_model.pth)")
-    parser.add_argument('--image_path', type=str, required=True, help="Path all'immagine di input (.jpg)")
-    parser.add_argument('--threshold', type=float, default=0.5, help="Soglia probabilità (default 0.5)")
+    parser.add_argument('--checkpoint', type=str, required=True, help="Path al file .pth")
+    parser.add_argument('--image_path', type=str, required=True, help="Path all'immagine di input")
+    parser.add_argument('--threshold', type=float, default=0.5, help="Soglia probabilità")
     parser.add_argument('--device', type=str, default="cuda")
-    
     args = parser.parse_args()
     main(args)
