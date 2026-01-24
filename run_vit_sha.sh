@@ -1,6 +1,6 @@
 #!/bin/bash -l
 
-#SBATCH --job-name=s1sha_vit_train
+#SBATCH --job-name=s2sha_vit_train
 #SBATCH --account=did_crowd_counting_339
 #SBATCH --partition=aiq
 #SBATCH --gres=gpu:1
@@ -9,8 +9,8 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH --time=07:00:00
-#SBATCH -o logs/s1_sha_vit_%j.out
-#SBATCH -e logs/s1_sha_vit_%j.err
+#SBATCH -o logs/s2_sha_vit_%j.out
+#SBATCH -e logs/s2_sha_vit_%j.err
 #SBATCH --mail-user=c.attianese13@studenti.unisa.it
 #SBATCH --mail-type=ALL
 
@@ -39,12 +39,14 @@ python -c "import torch; print('torch', torch.__version__); print('cuda_availabl
 nvidia-smi
 
 
-srun python train_stage1.py --dataset sha --model vit_b_16 --input_size 448 --sliding_window --window_size 448 --stride 448 --pos_weight 15 --out checkpoints/sha/vit_b_16/stage1
-#srun python train_stage1.py --config configs/config_vit_sha.yaml --data_dir data --batch_size 16 --out checkpoints/sha/vit_b_16/stage1
+#srun python train_stage1.py --config configs/config_vit_sha.yaml --dataset sha --model vit_b_16 --input_size 448 --sliding_window --window_size 448 --stride 448 --pos_weight 15 --out checkpoints/sha/vit_b_16/stage1_v2
+#srun python trainer.py  --dataset sha  --model clip_vit_b_16  --input_size 224  --reduction 8  --truncation 4  --anchor_points average  --prompt_type word  --batch_size 16  --num_crops 2  --amp  --sliding_window  --window_size 224  --stride 224  --warmup_lr 1e-3  --count_loss dmcount  --weight_count_loss 1.0  --out checkpoints/sha/vit_b_16/stage2_v2
+srun python trainer.py --dataset sha --model clip_vit_b_16 --input_size 224 --reduction 8 --truncation 4 --anchor_points average --prompt_type word --batch_size 16 --num_crops 2 --amp --sliding_window --window_size 224 --stride 224 --count_loss dmcount --weight_count_loss 1.0 --out checkpoints/sha/vit_b_16/stage2 --resume checkpoints/sha/vit_b_16/stage2_v2/best_mae_0.pth
 
-#srun python trainer.py  --dataset sha  --model clip_vit_b_16  --input_size 448  --reduction 8  --truncation 4  --anchor_points average  --prompt_type word  --batch_size 16  --num_crops 2  --amp  --sliding_window  --window_size 448  --stride 448  --count_loss dmcount  --weight_count_loss 1.0  --out checkpoints/sha/vit_b_16/stage2
 
-#srun python trainer.py --dataset sha --model clip_vit_b_16 --input_size 224 --reduction 8 --truncation 4 --anchor_points average --prompt_type word --batch_size 16 --num_crops 2 --amp --sliding_window --window_size 224 --stride 224 --count_loss dmcount --weight_count_loss 1.0 --out checkpoints/sha/vit_b_16/stage2
+#srun python train_stage3_v2.py --config configs/config_vit_sha.yaml --model clip_vit_b_16 --dataset sha --s1 checkpoints/sha/vit_b_16/stage1_size224/best_model.pth --s2 checkpoints/sha/vit_b_16/stage2_v2/best_mae_0.pth --out checkpoints/sha/resnet50/stage3_v2 --lr 1e-4 --total_epochs 300 --base_steepness 1.0 --max_steepness 5.0 --zip_w 1.0 --cons_w 0.05
+
+
 
 #python -c "import torch; ck=torch.load('checkpoints/sha/vit_b_16/stage1/best_model.pth', map_location='cpu'); sd=ck.get('model_state_dict', ck); k=[x for x in sd if 'zip_head.shared.0.weight' in x][0]; print('key=',k,'shape=',sd[k].shape)"
 

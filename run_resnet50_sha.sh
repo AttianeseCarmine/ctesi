@@ -44,8 +44,12 @@ nvidia-smi
 
 #srun python train_stage3_v2.py --config configs/config_resnet_sha.yaml --s1 checkpoints/sha_res50/stage1/best_model.pth --s2 checkpoints/sha_res50/stage2/best_model.pth --out checkpoints/sha_res50/stage3
 
-srun python train_stage3_v2.py --config configs/config_resnet_sha.yaml --s1 checkpoints/sha/resnet50/stage1/best_model.pth --s2 checkpoints/sha/resnet50/stage2/best_mae_0.pth --lr 1e-4 --out checkpoints/sha/resnet50/stage3_refined
+#srun python train_stage3_v2.py --config configs/config_resnet_sha.yaml --s1 checkpoints/sha/resnet50/stage1/best_model.pth --s2 checkpoints/sha/resnet50/stage2/best_mae_0.pth --lr 1e-4 --out checkpoints/sha/resnet50/stage3_refined
 #srun python train_stage3_v2.py --config configs/config_resnet_sha.yaml --model clip_resnet50 --dataset sha --s1 checkpoints/sha/resnet50/stage1/best_model.pth --s2 checkpoints/sha/resnet50/stage2/best_mae_0.pth --out checkpoints/sha/resnet50/stage3_resid --lr 1e-4 --zip_w 0.1 --refine_w 1.0
 
 #python -c "import torch; ck=torch.load('checkpoints/sha/resnet50/stage1/best_model.pth', map_location='cpu'); sd=ck.get('model_state_dict', ck); k=[x for x in sd if 'zip_head.shared.0.weight' in x][0]; print('key=',k,'shape=',sd[k].shape)"
 #python -c "import torch; ck=torch.load('checkpoints/sha/resnet50/stage2/best_mae_0.pth', map_location='cpu'); sd=ck.get('model_state_dict', ck); k=[x for x in sd if 'zip_head.shared.0.weight' in x][0]; print('key=',k,'shape=',sd[k].shape)"
+#srun python train_stage3_v2.py --config configs/config_resnet_sha.yaml --model clip_resnet50 --dataset sha --s1 checkpoints/sha/resnet50/stage1/best_model.pth --s2 checkpoints/sha/resnet50/stage2/best_mae_0.pth --lr 1e-4 --out checkpoints/sha/resnet50/stage3_v3 --total_epochs 700 --zip_w 1.0 --cons_w 0.05
+
+
+srun python train_stage3_v2.py --config configs/config_resnet_sha.yaml --model clip_resnet50 --dataset sha --s1 checkpoints/sha/resnet50/stage1/best_model.pth --s2 checkpoints/sha/resnet50/stage2/best_mae_0.pth --out checkpoints/sha/resnet50/stage3_fixed_steepness --resume checkpoints/sha/resnet50/stage3_v3/best_model.pth --lr 1e-4 --total_epochs 300 --base_steepness 1.0 --max_steepness 5.0 --zip_w 1.0 --cons_w 0.05

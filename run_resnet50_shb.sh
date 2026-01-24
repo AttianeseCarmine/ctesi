@@ -41,4 +41,7 @@ nvidia-smi
 #srun python train_stage1.py --config configs/config_resnet_shb.yaml --data_dir data --batch_size 16
 
 
-srun python train_stage3_v2.py --config configs/config_resnet_shb.yaml --s1 checkpoints/shb/resnet50/stage1/best_model.pth --s2 checkpoints/shb/resnet50/stage2/best_mae_0.pth --lr 1e-4 --out checkpoints/shb/resnet50/stage3_refined
+#srun python train_stage3_v2.py --config configs/config_resnet_shb.yaml --s1 checkpoints/shb/resnet50/stage1/best_model.pth --s2 checkpoints/shb/resnet50/stage2/best_mae_0.pth --lr 1e-4 --out checkpoints/shb/resnet50/stage3_refined
+#srun python train_stage3_v2.py --config configs/config_resnet_shb.yaml --model clip_resnet50 --dataset shb --s1 checkpoints/shb/resnet50/stage1/best_model.pth --s2 checkpoints/shb/resnet50/stage2/best_mae_0.pth --lr 1e-4 --out checkpoints/shb/resnet50/stage3_v3 --total_epochs 700 --zip_w 1.0 --cons_w 0.05
+
+srun python train_stage3_v2.py --config configs/config_resnet_shb.yaml --model clip_resnet50 --dataset shb --s1 checkpoints/shb/resnet50/stage1/best_model.pth --s2 checkpoints/shb/resnet50/stage2/best_mae_0.pth --out checkpoints/shb/resnet50/stage3_fixed_steepness --resume checkpoints/shb/resnet50/stage3_v3/best_model.pth --lr 1e-4 --total_epochs 300 --base_steepness 1.0 --max_steepness 5.0 --zip_w 1.0 --cons_w 0.05

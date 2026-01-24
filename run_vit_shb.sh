@@ -1,6 +1,6 @@
 #!/bin/bash -l
 
-#SBATCH --job-name=s3shb_vit
+#SBATCH --job-name=s3hb_vit
 #SBATCH --account=did_crowd_counting_339
 #SBATCH --partition=aiq
 #SBATCH --gres=gpu:1
@@ -38,15 +38,14 @@ echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
 python -c "import torch; print('torch', torch.__version__); print('cuda_available', torch.cuda.is_available()); print('torch_cuda', torch.version.cuda)"
 nvidia-smi
 
-#srun python train_stage1.py --config configs/config_vit_shb.yaml --data_dir data --batch_size 16 --out checkpoints/shb/vit_b_16/stage1
+#srun python train_stage1.py --config configs/config_vit_shb.yaml --data_dir data --batch_size 16 --out checkpoints/shb/vit_b_16/stage1_v2
 
 
-#srun python trainer.py  --dataset shb  --model clip_vit_b_16  --input_size 448  --reduction 8  --truncation 4  --anchor_points average  --prompt_type word  --batch_size 16  --num_crops 2  --amp  --sliding_window  --window_size 448  --stride 448  --count_loss dmcount  --weight_count_loss 1.0  --out checkpoints/shb/vit_b_16/stage2
+#srun python trainer.py  --dataset shb  --model clip_vit_b_16  --input_size 448  --reduction 8  --truncation 4  --anchor_points average  --prompt_type word  --batch_size 16  --num_crops 2  --amp  --sliding_window  --window_size 448  --stride 448  --count_loss dmcount  --weight_count_loss 1.0 --out checkpoints/shb/vit_b_16/stage2_v2
 
-#srun python trainer.py --dataset shb --model clip_vit_b_16 --input_size 448 --reduction 8 --truncation 4 --anchor_points average --prompt_type word --batch_size 16 --num_crops 2 --amp --sliding_window --window_size 448 --stride 448 --count_loss dmcount --weight_count_loss 1.0 --out checkpoints/shb/vit_b_16/stage2
-
-#srun python train_stage3_v2.py --config configs/config_vit_shb.yaml --s1 checkpoints/shb/vit_b_16/stage1/best_model.pth --s2 checkpoints/shb/vit_b_16/stage2/best_mae_0.pth --out checkpoints/shb/vit_b_16/stage3 
+#srun python trainer.py --dataset shb --model clip_vit_b_16 --input_size 448 --reduction 8 --truncation 4 --anchor_points average --prompt_type word --batch_size 16 --num_crops 2 --amp --sliding_window --window_size 448 --stride 448 --count_loss dmcount --weight_count_loss 1.0 --resume checkpoints/shb/vit_b_16/stage2_v2/ckpt.pth --out checkpoints/shb/vit_b_16/stage2_v2
+srun python train_stage3_v2.py --config configs/config_vit_shb.yaml --model clip_vit_b_16 --dataset shb --s1 checkpoints/shb/vit_b_16/stage1_v2/best_model.pth --s2 checkpoints/shb/vit_b_16/stage2_v2/best_mae_0.pth --out checkpoints/shb/vit_b_16/stage3_v2 --lr 1e-4 --total_epochs 600 --base_steepness 1.0 --max_steepness 5.0 --zip_w 1.0 --cons_w 0.05
 
 
 #QUESTO LO USI PER ESEGUIRE IL TRAIN STAGE3 VIT SHB
-srun python train_stage3_v2.py --config configs/config_vit_shb.yaml --s1 checkpoints/shb/vit_b_16/stage1/best_model.pth --s2 checkpoints/shb/vit_b_16/stage2/best_mae_0.pth --input_size 448 --sliding_window --window_size 448 --stride 448 --out checkpoints/shb/vit_b_16/stage3 
+#srun python train_stage3_v2.py --config configs/config_vit_shb.yaml --s1 checkpoints/shb/vit_b_16/stage1/best_model.pth --s2 checkpoints/shb/vit_b_16/stage2/best_mae_0.pth --input_size 448 --sliding_window --window_size 448 --stride 448 --out checkpoints/shb/vit_b_16/stage3 

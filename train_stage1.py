@@ -45,7 +45,7 @@ parser.add_argument("--resume", type=str, default=None, help="Resume checkpoint"
 # Parametri Training Stage 1
 parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate for the Head.")
 parser.add_argument("--lr_backbone", type=float, default=1e-5, help="Learning rate for the Backbone (old style: lr*0.1).")
-parser.add_argument("--pos_weight", type=float, default=15.0, help="Positive class weight (old style default).")
+parser.add_argument("--pos_weight", type=float, default=3, help="Positive class weight (old style default).")
 
 parser.add_argument("--weight_decay", type=float, default=1e-4)
 parser.add_argument("--total_epochs", type=int, default=50)

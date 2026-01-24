@@ -1,6 +1,6 @@
 #!/bin/bash -l
 
-#SBATCH --job-name=eval_vit
+#SBATCH --job-name=eval_th_nwpu_s1
 #SBATCH --account=did_crowd_counting_339
 #SBATCH --partition=aiq
 #SBATCH --gres=gpu:1
@@ -9,8 +9,8 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH --time=07:00:00
-#SBATCH -o logs/eval_s1_qnrf%j.out
-#SBATCH -e logs/eval_s1_qnrf%j.err
+#SBATCH -o logs/s1_vit_nwpu_%j.out
+#SBATCH -e logs/eval_vit_nwpu_%j.err
 #SBATCH --mail-user=c.attianese13@studenti.unisa.it
 #SBATCH --mail-type=ALL
 
@@ -39,18 +39,29 @@ python -c "import torch; print('torch', torch.__version__); print('cuda_availabl
 nvidia-smi
 
 #EVAL THRESHOLD STAGE1
-srun python eval_threshold.py --config checkpoints/shb/vit_b_16/stage1/config_stage1.yaml --ckpt checkpoints/shb/vit_b_16/stage1/best_model.pth 
-srun python eval_threshold.py --config checkpoints/sha/vit_b_16/stage1/config_stage1.yaml --ckpt checkpoints/sha/vit_b_16/stage1/best_model.pth 
-srun python eval_threshold.py --config checkpoints/qnrf/vit_b_16/stage1/config_stage1.yaml --ckpt checkpoints/qnrf/vit_b_16/stage1/best_model.pth 
+#srun python eval_threshold.py --config checkpoints/shb/vit_b_16/stage1/config_stage1.yaml --ckpt checkpoints/shb/vit_b_16/stage1/best_model.pth 
+#srun python eval_threshold.py --config checkpoints/sha/vit_b_16/stage1/config_stage1.yaml --ckpt checkpoints/sha/vit_b_16/stage1/best_model.pth 
+srun python eval_threshold.py --config checkpoints/qnrf/vit_b_16/stage1_OLD/config_stage1.yaml --ckpt checkpoints/qnrf/vit_b_16/stage1_OLD/best_model.pth 
+#srun python eval_threshold.py --config checkpoints/nwpu/vit_b_16/stage1/config_stage1.yaml --ckpt checkpoints/nwpu/vit_b_16/stage1/best_model.pth 
 
-#srun python eval_threshold.py --config checkpoints/shb/resnet50/stage1/config_stage1.yaml --ckpt checkpoints/shb/resnet50/stage1/best_model.pth 
+#srun python eval_threshold.py --config checkpoints/nwpu/resnet50/stage1/config_stage1.yaml --ckpt checkpoints/nwpu/resnet50/stage1/best_model.pth 
 #srun python eval_threshold.py --config checkpoints/sha/resnet50/stage1/config_stage1.yaml --ckpt checkpoints/sha/resnet50/stage1/best_model.pth 
 #srun python eval_threshold.py --config checkpoints/qnrf/resnet50/stage1/config_stage1.yaml --ckpt checkpoints/qnrf/resnet50/stage1/best_model.pth 
+#srun python eval_threshold.py --config checkpoints/shb/resnet50/stage1/config_stage1.yaml --ckpt checkpoints/shb/resnet50/stage1/best_model.pth 
 
 
 
 #srun python stage1_visualize.py --config checkpoints/sha/vit_b_16/stage1/config_stage1.yaml --checkpoint checkpoints/sha/vit_b_16/stage1/best_model.pth --image_path data/sha/val/images/050.jpg --threshold 0.85
 #srun python stage1_heatmap.py --config checkpoints/sha/vit_b_16/stage1/config_stage1.yaml --checkpoint checkpoints/sha/vit_b_16/stage1/best_model.pth --image_path data/sha/val/images/050.jpg --threshold 0.5
+
+
+
+#srun python stage1_visualize.py --config checkpoints/sha/resnet50/stage1/config_stage1.yaml --checkpoint checkpoints/sha/resnet50/stage1/best_model.pth --image_path data/sha/val/images/050.jpg --threshold 0.35
+#srun python stage1_heatmap.py --config checkpoints/sha/resnet50/stage1/config_stage1.yaml --checkpoint checkpoints/sha/resnet50/stage1/best_model.pth --image_path data/sha/val/images/050.jpg --threshold 0.3
+
+
+#srun python stage1_visualize.py --config checkpoints/shb/resnet50/stage1/config_stage1.yaml --checkpoint checkpoints/shb/resnet50/stage1/best_model.pth --image_path data/shb/val/images/050.jpg --threshold 0.35
+#srun python stage1_heatmap.py --config checkpoints/shb/resnet50/stage1/config_stage1.yaml --checkpoint checkpoints/shb/resnet50/stage1/best_model.pth --image_path data/shb/val/images/050.jpg --threshold 0.3
 
 # STAGE 2 VISUALIZZAZIONE 
 #srun python visualize_stage2.py --config checkpoints/sha/clip_resnet50_sha/stage2/config_stage2.yaml --checkpoint checkpoints/sha/clip_resnet50_sha/stage2/best_mae_0.pth --image_path data/sha/val/images/050.jpg  

@@ -110,39 +110,25 @@ def main(args):
     print(f"   PROBS (0-1)   -> Min: {p_min:.4f}  | Max: {p_max:.4f}  | Mean: {p_mean:.4f}")
     print("-" * 60)
     
-    train_threshold_logit = 0.2
-    mask_logits = (logits > train_threshold_logit).float()
-    mask_probs = (probs > args.threshold).float()
 
     # 6. Visualizzazione
     img_vis = denormalize(img_tensor)
     H, W = img_vis.shape[:2]
     
     heatmap = F.interpolate(probs, size=(H, W), mode='bilinear', align_corners=False).squeeze().cpu().numpy()
-    mask_train = F.interpolate(mask_logits, size=(H, W), mode='nearest').squeeze().cpu().numpy()
-    mask_user = F.interpolate(mask_probs, size=(H, W), mode='nearest').squeeze().cpu().numpy()
 
-    # PLOT
-    fig, axes = plt.subplots(1, 4, figsize=(24, 6))
-    
+    # PLOT (solo 2 colonne: immagine input + heatmap)
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+
     axes[0].imshow(img_vis)
     axes[0].set_title("Input Image")
     axes[0].axis('off')
-    
+
     im = axes[1].imshow(heatmap, cmap='jet', vmin=0, vmax=1)
     axes[1].set_title("Probability Heatmap (0.0 - 1.0)")
     axes[1].axis('off')
     plt.colorbar(im, ax=axes[1], fraction=0.046, pad=0.04)
-    
-    axes[2].imshow(img_vis)
-    axes[2].imshow(mask_train, alpha=0.5, cmap='Reds')
-    axes[2].set_title(f"Training Logic\n(Logit > 0.2)")
-    axes[2].axis('off')
-    
-    axes[3].imshow(img_vis)
-    axes[3].imshow(mask_user, alpha=0.5, cmap='Greens')
-    axes[3].set_title(f"User Logic\n(Prob > {args.threshold})")
-    axes[3].axis('off')
+
 
     # SALVATAGGIO
     img_name_clean = os.path.splitext(os.path.basename(args.image_path))[0] # DEFINITA QUI ORA!

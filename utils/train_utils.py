@@ -100,35 +100,73 @@ def get_optimizer(args: ArgumentParser, model: nn.Module) -> Tuple[Adam, LambdaL
     return optimizer, scheduler
 
 
+# In utils/train_utils.py
 def load_checkpoint(
-    args: ArgumentParser,
-    model: nn.Module,
-    optimizer: Adam,
-    scheduler: LambdaLR,
-    grad_scaler: GradScaler,
-) -> Tuple[nn.Module, Adam, Union[LambdaLR, None], GradScaler, int, Union[Dict[str, float], None], Dict[str, List[float]], Dict[str, float]]:
-    ckpt_path = os.path.join(args.ckpt_dir, "ckpt.pth")
+    args,
+    model,
+    optimizer,
+    scheduler,
+    grad_scaler,
+):
+    # --- Gestione Path Checkpoint ---
+    if hasattr(args, "resume") and args.resume is not None:
+        ckpt_path = args.resume
+        print(f"🔄 Resuming from specific checkpoint: {ckpt_path}")
+    else:
+        ckpt_path = os.path.join(args.ckpt_dir, "last_model.pth")
+
+    # Inizializza valori di default (nel caso non si trovi il file o sia solo pesi)
+    start_epoch = 1
+    loss_info = None
+    hist_scores = {"mae": [], "rmse": []}
+    # Calcola k per i best scores
+    k = args.save_best_k if hasattr(args, "save_best_k") else 3
+    best_scores = {key: [float('inf')] * k for key in hist_scores.keys()}
+
     if os.path.exists(ckpt_path):
-        ckpt = torch.load(ckpt_path)
-        model.load_state_dict(ckpt["model_state_dict"])
-        optimizer.load_state_dict(ckpt["optimizer_state_dict"])
-        start_epoch = ckpt["epoch"]
-        loss_info = ckpt["loss_info"]
-        hist_scores = ckpt["hist_scores"]
-        best_scores = ckpt["best_scores"]
+        print(f"📂 Loading checkpoint from {ckpt_path}...")
+        # Usa weights_only=False per compatibilità, ma attenzione alla sicurezza se scarichi file da internet
+        ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+        
+        # --- CASO 1: Checkpoint Completo (Resume) ---
+        if "model_state_dict" in ckpt:
+            model.load_state_dict(ckpt["model_state_dict"])
+            
+            # Carichiamo anche lo stato dell'addestramento
+            optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+            start_epoch = ckpt["epoch"] + 1
+            
+            if "loss_info" in ckpt: loss_info = ckpt["loss_info"]
+            if "hist_scores" in ckpt: hist_scores = ckpt["hist_scores"]
+            if "best_scores" in ckpt: best_scores = ckpt["best_scores"]
 
-        if scheduler is not None:
-            scheduler.load_state_dict(ckpt["scheduler_state_dict"])
-        if grad_scaler is not None:
-            grad_scaler.load_state_dict(ckpt["grad_scaler_state_dict"])
+            if scheduler is not None and "scheduler_state_dict" in ckpt:
+                scheduler.load_state_dict(ckpt["scheduler_state_dict"])
+            if grad_scaler is not None and "grad_scaler_state_dict" in ckpt:
+                grad_scaler.load_state_dict(ckpt["grad_scaler_state_dict"])
+            
+            print(f"✅ Full Training State Restored. Resuming from Epoch {start_epoch}.")
 
-        print(f"Loaded checkpoint from {ckpt_path}.")
+        # --- CASO 2: Solo Pesi (Fine-tuning o Pre-trained) ---
+        else:
+            # Se il file è direttamente il dizionario dei pesi
+            # Rimuoviamo il prefisso "module." se presente (caso salvataggio DDP)
+            state_dict = ckpt
+            if list(state_dict.keys())[0].startswith('module.'):
+                state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
+            
+            # Carica solo i pesi, ignora epoch e optimizer (si riparte da zero)
+            msg = model.load_state_dict(state_dict, strict=False)
+            print(f"⚠️ Loaded ONLY Model Weights (No optimizer/epoch info found).")
+            print(f"   Missing keys: {msg.missing_keys}")
+            print(f"   Unexpected keys: {msg.unexpected_keys}")
+            print(f"🚀 Starting training from Epoch 1 (Fine-tuning mode).")
 
     else:
-        start_epoch = 1
-        loss_info, hist_scores = None, {"mae": [], "rmse": []}
-        best_scores = {k: [torch.inf] * args.save_best_k for k in hist_scores.keys()}
-        print(f"Checkpoint not found at {ckpt_path}.")
+        # File non trovato
+        if hasattr(args, "resume") and args.resume is not None:
+             print(f"⚠️ WARNING: Checkpoint '{args.resume}' not found!")
+        print(f"🚀 No checkpoint found at {ckpt_path}, starting training from scratch.")
 
     return model, optimizer, scheduler, grad_scaler, start_epoch, loss_info, hist_scores, best_scores
 

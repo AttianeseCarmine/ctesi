@@ -6,7 +6,7 @@ from torch.cuda.amp import GradScaler
 
 from argparse import ArgumentParser
 import os, json
-import yaml
+import yaml  # Importante per il salvataggio in yaml
 import sys
 
 current_dir = os.path.abspath(os.path.dirname(__file__))
@@ -69,25 +69,23 @@ parser.add_argument("--weight_decay", type=float, default=1e-4, help="The weight
 
 # Parameters for learning rate scheduler
 parser.add_argument("--warmup_epochs", type=int, default=50, help="Number of epochs for warmup. The learning rate will increase from eta_min to lr.")
-parser.add_argument("--warmup_lr", type=float, default=1e-5, help="Learning rate for warmup.")
+parser.add_argument("--warmup_lr", type=float, default=1e-6, help="Learning rate for warmup.")
 parser.add_argument("--T_0", type=int, default=5, help="Number of epochs for the first restart.")
 parser.add_argument("--T_mult", type=int, default=2, help="A factor increases T_0 after a restart.")
 parser.add_argument("--eta_min", type=float, default=1e-7, help="Minimum learning rate.")
 
 # Parameters for training
-parser.add_argument("--total_epochs", type=int, default=2600, help="Number of epochs to train.")
-parser.add_argument("--eval_start", type=int, default=50, help="Start to evaluate after this number of epochs.")
-parser.add_argument("--eval_freq", type=int, default=10, help="Evaluate every this number of epochs.")
+parser.add_argument("--total_epochs", type=int, default=2800, help="Number of epochs to train.")
+parser.add_argument("--eval_start", type=int, default=55, help="Start to evaluate after this number of epochs.")
+parser.add_argument("--eval_freq", type=int, default=1, help="Evaluate every this number of epochs.")
 parser.add_argument("--save_freq", type=int, default=5, help="Save checkpoint every this number of epochs. Could help reduce I/O.")
 parser.add_argument("--save_best_k", type=int, default=3, help="Save the best k checkpoints.")
 parser.add_argument("--amp", action="store_true", help="Use automatic mixed precision training.")
 parser.add_argument("--num_workers", type=int, default=4, help="Number of workers for data loading.")
 parser.add_argument("--local_rank", type=int, default=-1, help="Local rank for distributed training.")
 parser.add_argument("--seed", type=int, default=42, help="Random seed.")
-
-# NUOVO: Parametro per specificare la cartella di output
-parser.add_argument("--out", type=str, default=None, help="Output directory for checkpoints and configuration. If not specified, uses default location.")
-
+parser.add_argument("--out", type=str, default=None, help="Output directory override.")
+parser.add_argument("--resume", type=str, default=None, help="Path to checkpoint to resume from")
 
 def run(local_rank: int, nprocs: int, args: ArgumentParser) -> None:
     print(f"Rank {local_rank} process among {nprocs} processes.")
@@ -104,17 +102,17 @@ def run(local_rank: int, nprocs: int, args: ArgumentParser) -> None:
     else:
         with open(os.path.join(current_dir, "configs", f"reduction_{args.reduction}.json"), "r") as f:
             config = json.load(f)[str(args.truncation)][args.dataset]
-            bins = config["bins"][args.granularity]
-            anchor_points = config["anchor_points"][args.granularity]["average"] if args.anchor_points == "average" else config["anchor_points"][args.granularity]["middle"]
-            bins = [(float(b[0]), float(b[1])) for b in bins]
-            anchor_points = [float(p) for p in anchor_points]
+        bins = config["bins"][args.granularity]
+        anchor_points = config["anchor_points"][args.granularity]["average"] if args.anchor_points == "average" else config["anchor_points"][args.granularity]["middle"]
+        bins = [(float(b[0]), float(b[1])) for b in bins]
+        anchor_points = [float(p) for p in anchor_points]
 
     args.bins = bins
     args.anchor_points = anchor_points
 
     model = get_model(
         backbone=args.model,
-        input_size=args.input_size,
+        input_size=args.input_size, 
         reduction=args.reduction,
         bins=bins,
         anchor_points=anchor_points,
@@ -129,34 +127,54 @@ def run(local_rank: int, nprocs: int, args: ArgumentParser) -> None:
     loss_fn = get_loss_fn(args).to(device)
     optimizer, scheduler = get_optimizer(args, model)
 
-    # MODIFICATO: Gestione della directory dei checkpoint
-    if args.out is not None:
-        # Se --out è specificato, usa quella directory
-        args.ckpt_dir = os.path.abspath(args.out)
+    if args.out:
+        args.ckpt_dir = args.out
     else:
-        # Altrimenti usa il percorso predefinito
         ckpt_dir_name = f"{args.model}_{args.prompt_type}_" if "clip" in args.model else f"{args.model}_"
         ckpt_dir_name += f"{args.input_size}_{args.reduction}_{args.truncation}_{args.granularity}_"
         ckpt_dir_name += f"{args.weight_count_loss}_{args.count_loss}"
         args.ckpt_dir = os.path.join(current_dir, "checkpoints", args.dataset, ckpt_dir_name)
     
+
     os.makedirs(args.ckpt_dir, exist_ok=True)
-    print(f"Checkpoints will be saved to: {args.ckpt_dir}")
+
+    # ===================== RESUME NAME RESOLUTION =====================
+    # Se l'utente passa --resume con un nome file (es. ckpt.pth o best_mae_0.pth),
+    # lo risolviamo dentro args.ckpt_dir.
+    # Se passa un path (relativo con directory o assoluto), lo lasciamo com'è (assolutizzato).
+    if getattr(args, "resume", None):
+        raw = args.resume
+
+        # Caso 1: solo nome file (nessuna directory)
+        if (not os.path.isabs(raw)) and (os.sep not in raw):
+            resolved = os.path.join(args.ckpt_dir, raw)
+        else:
+            # Caso 2: path relativo con directory o assoluto
+            resolved = os.path.abspath(raw)
+
+        args.resume = resolved
+
+        if local_rank == 0:
+            print(f"🔄 Resume requested: '{raw}' -> using: '{args.resume}'")
+    # ================================================================
+
+    model, optimizer, scheduler, grad_scaler, start_epoch, loss_info, hist_val_scores, best_val_scores = load_checkpoint(
+        args, model, optimizer, scheduler, grad_scaler
+    )
     
-    # Salva la configurazione utilizzata nella directory di output
-    if local_rank == 0:
-        config_file = os.path.join(args.ckpt_dir, "training_config.json")
-        with open(config_file, "w") as f:
-            json.dump(vars(args), f, indent=4, default=str)
-        print(f"Configuration saved to: {config_file}")
-
-    model, optimizer, scheduler, grad_scaler, start_epoch, loss_info, hist_val_scores, best_val_scores = load_checkpoint(args, model, optimizer, scheduler, grad_scaler)
-
     if local_rank == 0:
         model_without_ddp = model
         writer = get_writer(args.ckpt_dir)
         logger = get_logger(os.path.join(args.ckpt_dir, "train.log"))
         logger.info(get_config(vars(args), mute=False))
+        
+        # --- MODIFICA 1: Salvataggio configurazione in formato YAML ---
+        config_path = os.path.join(args.ckpt_dir, 'config.yaml')
+        print(f"Saving configuration to {config_path}")
+        with open(config_path, 'w') as f:
+            yaml.dump(vars(args), f, default_flow_style=False, sort_keys=False)
+        # -------------------------------------------------------------
+
         val_loader = get_dataloader(args, split="val", ddp=False)
 
     args.batch_size = int(args.batch_size / nprocs)
@@ -165,7 +183,7 @@ def run(local_rank: int, nprocs: int, args: ArgumentParser) -> None:
 
     model = DDP(nn.SyncBatchNorm.convert_sync_batchnorm(model), device_ids=[local_rank], output_device=local_rank) if ddp else model
 
-    for epoch in range(start_epoch, args.total_epochs + 1): # start from 1
+    for epoch in range(start_epoch, args.total_epochs + 1):  # start from 1
         if local_rank == 0:
             message = f"\tlr: {optimizer.param_groups[0]['lr']:.3e}"
             log(logger, epoch, args.total_epochs, message=message)
@@ -194,42 +212,19 @@ def run(local_rank: int, nprocs: int, args: ArgumentParser) -> None:
                     args.input_size,
                     args.stride,
                 )
-                
-                # Stampa dettagliata delle metriche
-                mae = curr_val_scores.get('mae', curr_val_scores.get('MAE', 'N/A'))
-                rmse = curr_val_scores.get('rmse', curr_val_scores.get('RMSE', 'N/A'))
-                
-                eval_message = f"Epoch {epoch}/{args.total_epochs} - Validation Results:"
-                eval_message += f"\n  MAE:  {mae:.4f}" if isinstance(mae, (int, float)) else f"\n  MAE:  {mae}"
-                eval_message += f"\n  RMSE: {rmse:.4f}" if isinstance(rmse, (int, float)) else f"\n  RMSE: {rmse}"
-                
-                # Stampa tutte le altre metriche disponibili
-                for key, value in curr_val_scores.items():
-                    if key.lower() not in ['mae', 'rmse']:
-                        if isinstance(value, (int, float)):
-                            eval_message += f"\n  {key}: {value:.4f}"
-                        else:
-                            eval_message += f"\n  {key}: {value}"
-                
-                print(eval_message)
-                logger.info(eval_message)
-                
-                # Stampa i migliori risultati finora
-                best_mae = best_val_scores.get('mae', best_val_scores.get('MAE', None))
-                best_rmse = best_val_scores.get('rmse', best_val_scores.get('RMSE', None))
-                if best_mae is not None or best_rmse is not None:
-                    best_message = "  Best scores so far:"
-                    if best_mae is not None:
-                        best_mae_val = min(best_mae) if isinstance(best_mae, list) else best_mae
-                        best_message += f"\n    Best MAE:  {best_mae_val:.4f}"
-                    if best_rmse is not None:
-                        best_rmse_val = min(best_rmse) if isinstance(best_rmse, list) else best_rmse
-                        best_message += f"\n    Best RMSE: {best_rmse_val:.4f}"
-                    print(best_message)
-                    logger.info(best_message)
-                
                 hist_val_scores, best_val_scores = update_eval_result(epoch, curr_val_scores, hist_val_scores, best_val_scores, writer, state_dict, os.path.join(args.ckpt_dir))
+                
+                # --- MODIFICA 2: Stampa esplicita di Current vs Best MAE/RMSE nel log ---
+                log_msg = f"\n=== Evaluation Results [Epoch {epoch}] ===\n"
+                for metric, value in curr_val_scores.items():
+                    best_so_far = best_val_scores[metric][0] if isinstance(best_val_scores[metric], list) else best_val_scores[metric]
+                    log_msg += f"  {metric.upper()}: Current = {value:.4f} | Best (so far) = {best_so_far:.4f}\n"
+                log_msg += "==========================================\n"
+                logger.info(log_msg)
+                # ----------------------------------------------------------------------
+
                 log(logger, None, None, None, curr_val_scores, best_val_scores, message="\n" * 3)
+    
             if (epoch % args.save_freq == 0):
                 save_checkpoint(
                     epoch + 1,
@@ -250,7 +245,7 @@ def run(local_rank: int, nprocs: int, args: ArgumentParser) -> None:
         print("Training completed. Best scores:")
         for k in best_val_scores.keys():
             scores = " ".join([f"{best_val_scores[k][i]:.4f};" for i in range(len(best_val_scores[k]))])
-            print(f"  {k}: {scores}")
+            print(f"    {k}: {scores}")
 
     cleanup(ddp)
 
@@ -271,6 +266,7 @@ def main():
         args.num_vpt = None
         args.vpt_drop = None
         args.shallow_vpt = None
+    
     if "clip" not in args.model:
         args.prompt_type = None
 
@@ -278,6 +274,7 @@ def main():
         args.window_size = args.input_size if args.window_size is None else args.window_size
         args.stride = args.input_size if args.stride is None else args.stride
         assert not (args.zero_pad_to_multiple and args.resize_to_multiple), "Cannot use both zero pad and resize to multiple."
+
     else:
         args.window_size = None
         args.stride = None
