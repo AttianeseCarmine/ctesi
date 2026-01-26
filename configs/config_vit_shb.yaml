@@ -68,13 +68,11 @@ TRAIN_STAGE2:
 # Obiettivo: Unire ZIP e CLIP-EBC e rifinire il modello completo
 # ============================================================
 TRAIN_STAGE3:
-  TOTAL_EPOCHS: 1000
-  BATCH_SIZE: 4          # Molto basso: ora abbiamo in memoria Backbone + ZIP Head + EBC Head
+  TOTAL_EPOCHS: 200     # 1000 sono troppe per lo stage 3, suggerisco 100-200
+  BATCH_SIZE: 4
+  LR: 1.0e-6            # Ottimo per ViT
+  LR_BACKBONE: 1.0e-7
   NUM_WORKERS: 4
-  
-  # Learning Rate "Chirurgico"
-  LR: 1.0e-6             # LR infinitesimale per non distruggere ciò che Stage 1 e 2 hanno imparato
-  LR_BACKBONE: 1.0e-7    # Praticamente fermo
   
   EVAL_FREQ: 1
   SAVE_FREQ: 5

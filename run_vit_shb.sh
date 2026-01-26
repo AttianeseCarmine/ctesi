@@ -1,6 +1,6 @@
 #!/bin/bash -l
 
-#SBATCH --job-name=s3hb_vit
+#SBATCH --job-name=s3shb_vit
 #SBATCH --account=did_crowd_counting_339
 #SBATCH --partition=aiq
 #SBATCH --gres=gpu:1
@@ -49,4 +49,11 @@ nvidia-smi
 # Nota: Usa una cartella --out NUOVA per evitare di caricare i vecchi checkpoint sbagliati
 #srun python train_stage3_v2.py  --config configs/config_vit_shb.yaml  --s1 checkpoints/shb/vit_b_16/stage1_v2/best_model.pth  --s2 checkpoints/shb/vit_b_16/stage2_v2/best_mae_0.pth  --input_size 448  --lr 1e-4  --batch_size 4  --zip_w 0.5  --clip_w 0.1  --cons_w 20.0  --total_epochs 300  --eval_freq 1  --out ./checkpoints/shb/clip_vit_b_16/stage3_fixed_init
 
-srun python train_stage3_v2.py --config_stage1 configs/config_vit_shb.yaml --config_stage2 checkpoints/shb/vit_b_16/stage2_v2/config.yaml --s1 checkpoints/shb/vit_b_16/stage1_v2/best_model.pth --s2 checkpoints/shb/vit_b_16/stage2_v2/best_mae_0.pth --lr 1e-6 --weight_decay 1e-4 --total_epochs 600 --eval_freq 5 --eval_start 1 --lambda_zip 1.0 --lambda_clip 1.0 --lambda_count 10.0 --zip_pos_weight 15.0 --amp --out checkpoints/shb/vit_b_16/stage3_joint
+#srun python train_stage3_v2.py --config_stage1 configs/config_vit_shb.yaml --config_stage2 checkpoints/shb/vit_b_16/stage2_v2/config.yaml --s1 checkpoints/shb/vit_b_16/stage1_v2/best_model.pth --s2 checkpoints/shb/vit_b_16/stage2_v2/best_mae_0.pth --lr 1e-6 --weight_decay 1e-4 --total_epochs 600 --eval_freq 5 --eval_start 1 --lambda_zip 1.0 --lambda_clip 1.0 --lambda_count 10.0 --zip_pos_weight 15.0 --amp --out checkpoints/shb/vit_b_16/stage3_joint
+
+
+#srun python train_stage3_v3.py --config configs/config_vit_shb.yaml --dataset shb --c2 checkpoints/shb/vit_b_16/stage2_v2/config.yaml --s1 checkpoints/shb/vit_b_16/stage1_v2/best_model.pth --s2 checkpoints/shb/vit_b_16/stage2_v2/best_mae_0.pth --out checkpoints/shb/vit_b_16/stage3_v2 --gpu 0 --input_size 448
+
+#srun python train_stage3_v2.py  --dataset shb --config configs/config_vit_shb.yaml --s1 checkpoints/shb/vit_b_16/stage1_v2/best_model.pth --s2 checkpoints/shb/vit_b_16/stage2_v2/best_mae_0.pth --input_size 448 --sliding_window --window_size 448 --stride 448 --out checkpoints/shb/vut_b_16/stage3_v2
+
+srun python train_stage3_v2.py --config configs/config_vit_shb.yaml --s1 checkpoints/shb/vit_b_16/stage1_v2/best_model.pth --s2 checkpoints/shb/vit_b_16/stage2_v2/best_mae_0.pth --input_size 448 --sliding_window --window_size 448 --stride 448 --out checkpoints/shb/vit_b_16/stage3_v2_sliding --sliding_window

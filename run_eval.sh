@@ -1,6 +1,6 @@
 #!/bin/bash -l
 
-#SBATCH --job-name=eval_th_s1
+#SBATCH --job-name=eval_s3
 #SBATCH --account=did_crowd_counting_339
 #SBATCH --partition=aiq
 #SBATCH --gres=gpu:1
@@ -9,8 +9,8 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH --time=07:00:00
-#SBATCH -o logs/eval_th_%j.out
-#SBATCH -e logs/eval_th_%j.err
+#SBATCH -o logs/eval_s3_%j.out
+#SBATCH -e logs/eval_s3_%j.err
 #SBATCH --mail-user=c.attianese13@studenti.unisa.it
 #SBATCH --mail-type=ALL
 
@@ -39,8 +39,8 @@ python -c "import torch; print('torch', torch.__version__); print('cuda_availabl
 nvidia-smi
 
 #EVAL THRESHOLD STAGE1
-srun python eval_threshold.py --config checkpoints/sha/vit_b_16/stage1_v2_fp_safe/config_stage1.yaml --ckpt checkpoints/sha/vit_b_16/stage1_v2_fp_safe/best_model.pth 
-srun python eval_threshold.py --config checkpoints/sha/vit_b_16/stage1_size224/config_stage1.yaml --ckpt checkpoints/sha/vit_b_16/stage1_size224/best_model.pth 
+#srun python eval_threshold.py --config checkpoints/sha/vit_b_16/stage1_v2_fp_safe/config_stage1.yaml --ckpt checkpoints/sha/vit_b_16/stage1_v2_fp_safe/best_model.pth 
+#srun python eval_threshold.py --config checkpoints/sha/vit_b_16/stage1_size224/config_stage1.yaml --ckpt checkpoints/sha/vit_b_16/stage1_size224/best_model.pth 
 #srun python eval_threshold.py --config checkpoints/sha/vit_b_16/stage1/config_stage1.yaml --ckpt checkpoints/sha/vit_b_16/stage1/best_model.pth 
 #srun python eval_threshold.py --config checkpoints/qnrf/vit_b_16/stage1_v2/config_stage1.yaml --ckpt checkpoints/qnrf/vit_b_16/stage1_v2/best_model.pth 
 #srun python eval_threshold.py --config checkpoints/nwpu/vit_b_16/stage1/config_stage1.yaml --ckpt checkpoints/nwpu/vit_b_16/stage1/best_model.pth 
@@ -71,3 +71,11 @@ srun python eval_threshold.py --config checkpoints/sha/vit_b_16/stage1_size224/c
 #python visualize_stage2.py --config checkpoints/shb/resnet50/stage2/config_stage2.yaml --checkpoint checkpoints/shb/resnet50/stage2/best_mae_0.pth --dataset shb --model clip_resnet50 --out_png shb_resnet50.png
 #python visualize_stage2.py --config checkpoints/qnrf/vit_b_16/stage2/config_stage2.yaml --checkpoint checkpoints/qnrf/vit_b_16/stage2/best_mae_0.pth --dataset qnrf --model clip_vit_b_16 --out_png qnrf_vit_b_16.png
 #python visualize_stage2.py --config checkpoints/qnrf/resnet50/stage2/config_stage2.yaml --checkpoint checkpoints/qnrf/resnet50/stage2/best_mae_0.pth --dataset qnrf --model clip_resnet50 --out_png qnrf_resnet50.png
+
+
+#STAGE3
+
+python evaluation_stage3.py --config_zip checkpoints/shb/vit_b_16/stage1_v2/config_stage1.yaml --config_clip checkpoints/shb/vit_b_16/stage2_v2/config.yaml --ckpt_zip checkpoints/shb/vit_b_16/stage1_v2/best_model.pth --ckpt_clip checkpoints/shb/vit_b_16/stage2_v2/best_mae_0.pth --dataset_root shb 
+
+
+

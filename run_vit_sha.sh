@@ -61,4 +61,7 @@ nvidia-smi
 
 
 
-srun python train_stage3_v2.py --config_stage1 configs/config_vit_sha.yaml --config_stage2 checkpoints/sha/vit_b_16/stage2/config.yaml --s1 checkpoints/sha/vit_b_16/stage1_v2_fp_safe/best_model.pth --s2 checkpoints/sha/vit_b_16/stage2/best_mae_0.pth --lr 1e-6 --weight_decay 1e-4 --total_epochs 600 --eval_freq 5 --eval_start 1 --lambda_zip 1.0 --lambda_clip 1.0 --lambda_count 10.0 --zip_pos_weight 15.0 --amp --out checkpoints/sha/vit_b_16/stage3_joint
+#srun python train_stage3_v2.py --config_stage1 configs/config_vit_sha.yaml --config_stage2 checkpoints/sha/vit_b_16/stage2/config.yaml --s1 checkpoints/sha/vit_b_16/stage1_v2_fp_safe/best_model.pth --s2 checkpoints/sha/vit_b_16/stage2/best_mae_0.pth --lr 1e-6 --weight_decay 1e-4 --total_epochs 600 --eval_freq 5 --eval_start 1 --lambda_zip 1.0 --lambda_clip 1.0 --lambda_count 10.0 --zip_pos_weight 15.0 --amp --out checkpoints/sha/vit_b_16/stage3_joint
+
+
+srun python train_stage3_v2.py --config configs/config_vit_sha.yaml --s1 checkpoints/sha/vit_b_16/stage1_size224/best_model.pth --s2 checkpoints/sha/vit_b_16/stage2_size224_56/best_mae_0.pth --reduction 16 --truncation 8 --input_size 224 --sliding_window --window_size 224 --stride 224 --out checkpoints/sha/vit_b_16/stage3_sliding --sliding_window

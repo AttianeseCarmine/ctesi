@@ -1,6 +1,6 @@
 #!/bin/bash -l
 
-#SBATCH --job-name=s1qnrfvit_train
+#SBATCH --job-name=s2qnrfres_train
 #SBATCH --account=did_crowd_counting_339
 #SBATCH --partition=aiq
 #SBATCH --gres=gpu:1
@@ -9,8 +9,8 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH --time=07:00:00
-#SBATCH -o logs/s1_qnrf_vit_%j.out
-#SBATCH -e logs/s1_qnrf_vit_%j.err
+#SBATCH -o logs/s2_qnrf_res_%j.out
+#SBATCH -e logs/s2_qnrf_res_%j.err
 #SBATCH --mail-user=c.attianese13@studenti.unisa.it
 #SBATCH --mail-type=ALL
 
@@ -46,7 +46,7 @@ nvidia-smi
 
 #srun python train_stage1.py --config configs/config_vit_qnrf.yaml --model vit_b_16 --data_dir data --batch_size 16 --input_size 224 --reduction 8  --dataset qnrf --batch_size 16 --amp --num_crops 1 --sliding_window --window_size 224 --stride 224  --out  checkpoints/qnrf/vit_b_16/stage1_224
 
-srun python train_stage1.py --config configs/config_vit_qnrf.yaml --dataset qnrf --model vit_b_16 --input_size 224 --reduction 16 --sliding_window --window_size 224 --stride 224 --pos_weight 2 --lr 1e-4 --lr_backbone 1e-5 --batch_size 16 --total_epochs 2000 --eval_freq 5 --amp --out checkpoints/qnrf/vit_b_16/stage1_v2
+#srun python train_stage1.py --config configs/config_vit_qnrf.yaml --dataset qnrf --model vit_b_16 --input_size 224 --reduction 16 --sliding_window --window_size 224 --stride 224 --pos_weight 2 --lr 1e-4 --lr_backbone 1e-5 --batch_size 16 --total_epochs 2000 --eval_freq 5 --amp --out checkpoints/qnrf/vit_b_16/stage1_v2
 
 
 #BEST
@@ -58,7 +58,7 @@ srun python train_stage1.py --config configs/config_vit_qnrf.yaml --dataset qnrf
 
 
 #COME INDICATO NEL REPOUFFICIALE: 
-#srun python trainer.py  --dataset qnrf  --model clip_vit_b_16  --input_size 224  --reduction 8  --truncation 4  --anchor_points average  --granularity fine  --prompt_type word  --batch_size 16  --num_workers 4  --lr 1e-4  --warmup_lr 1e-3  --weight_decay 1e-4  --count_loss dmcount  --weight_count_loss 1.0  --amp  --num_crops 2  --sliding_window  --window_size 224  --stride 224  --out checkpoints/qnrf/vit_b16/stage2_official  --num_vpt 32  --save_best_k 1
+srun python trainer.py  --dataset qnrf  --model clip_resnet50  --input_size 224  --reduction 8  --truncation 4  --anchor_points average  --granularity fine  --prompt_type word  --batch_size 16  --num_workers 4  --lr 1e-4  --warmup_lr 1e-3  --weight_decay 1e-4  --count_loss dmcount  --weight_count_loss 1.0  --amp  --num_crops 2  --sliding_window  --window_size 224  --stride 224  --out checkpoints/qnrf/resnet50/stage2_official  --num_vpt 32  --save_best_k 1
 
 #srun python train_stage3_v2.py --config configs/config_vit_nwpu.yaml --s1 checkpoints/nwpu/vit_b_16/stage1/best_model.pth --s2 checkpoints/nwpu/vit_b_16/stage2/best_mae_0.pth --input_size 448 --sliding_window --window_size 448 --stride 448  --out checkpoints/nwpu/vit_b_16/stage3 
 #python train_stage3_v2.py  --config configs/config_resnet_qnrf.yaml  --dataset qnrf  --model clip_resnet50  --s1 checkpoints/qnrf/resnet50/stage1/best_model.pth  --s2 checkpoints/qnrf/resnet50/stage2/best_mae_0.pth  --input_size 448  --batch_size 8  --lr 1e-6  --total_epochs 600  --eval_freq 1  --save_freq 10  --out checkpoints/qnrf/resnet50/stage3
