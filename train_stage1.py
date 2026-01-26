@@ -48,7 +48,7 @@ parser.add_argument("--lr_backbone", type=float, default=1e-5, help="Learning ra
 parser.add_argument("--pos_weight", type=float, default=3, help="Positive class weight (old style default).")
 
 parser.add_argument("--weight_decay", type=float, default=1e-4)
-parser.add_argument("--total_epochs", type=int, default=50)
+parser.add_argument("--total_epochs", type=int, default=2000)
 
 
 # Augmentations
@@ -167,8 +167,14 @@ def train_one_epoch(model, loader, criterion, optimizer, scaler, device, rank, n
             # Target Binary Generation
             h_out, w_out = pi_logits.shape[2:]
             scale_factor = (images.shape[2] * images.shape[3]) / (h_out * w_out)
-            gt_down = F.adaptive_avg_pool2d(target_density, (h_out, w_out)) * scale_factor
-            target_binary = (gt_down > 0.001).float()
+            H, W = target_density.shape[-2:]
+            h_out, w_out = pi_logits.shape[-2:]
+            r_h = H // h_out
+            r_w = W // w_out
+
+            gt_block = F.max_pool2d(target_density, kernel_size=(r_h, r_w), stride=(r_h, r_w))
+            target_binary = (gt_block > 0.0).float()
+
 
             # Loss
             loss = criterion(pi_logits, target_binary)
