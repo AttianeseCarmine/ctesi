@@ -1,6 +1,6 @@
 #!/bin/bash -l
 
-#SBATCH --job-name=S3shbres_train
+#SBATCH --job-name=S1nwpures_train
 #SBATCH --account=did_crowd_counting_339
 #SBATCH --partition=aiq
 #SBATCH --gres=gpu:1
@@ -9,8 +9,8 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH --time=07:00:00
-#SBATCH -o logs/s3_res_shb_%j.out
-#SBATCH -e logs/s3_res_shb_%j.err
+#SBATCH -o logs/s1_res_nwpu_%j.out
+#SBATCH -e logs/s1_res_nwpu_%j.err
 #SBATCH --mail-user=c.attianese13@studenti.unisa.it
 #SBATCH --mail-type=ALL
 
@@ -52,7 +52,7 @@ nvidia-smi
 #srun python trainer.py --dataset qnrf --model clip_resnet50 --input_size 448 --reduction 8 --truncation 4 --granularity fine --prompt_type word --batch_size 16 --lr 1e-4 --weight_decay 1e-4 --warmup_epochs 10 --warmup_lr 1e-6 --count_loss dmcount --weight_count_loss 1.0 --amp --num_crops 2 --sliding_window --window_size 448 --stride 448 --out checkpoints/qnrf/resnet50/stage2
 
 #RESNET
-#srun python train_stage1.py --config configs/config_resnet_qnrf.yaml --dataset nwpu --data_dir data --batch_size 16  --out checkpoints/nwpu/resnet50/stage1
+srun python train_stage1.py --config configs/config_resnet_nwpu.yaml --dataset nwpu --data_dir data --batch_size 16  --out checkpoints/nwpu/resnet50/stage1_v2
 #srun python train_stage3_v2.py --config configs/config_resnet_nwpu.yaml --s1 checkpoints/nwpu/resnet50/stage1/best_model.pth --s2 checkpoints/nwpu/resnet50/stage2/best_mae_0.pth --out checkpoints/qnrf/resnet50/stage3 
 
 #srun python train_stage3_v2.py --config configs/config_resnet_qnrf.yaml --s1 checkpoints/qnrf/resnet50/stage1/best_model.pth --s2 checkpoints/qnrf/resnet50/stage2/best_mae_0.pth --out checkpoints/qnrf/resnet50/stage3 
@@ -64,4 +64,6 @@ nvidia-smi
 #srun python trainer.py  --dataset nwpu  --model clip_resnet50  --input_size 448  --reduction 8  --truncation 4  --granularity fine  --prompt_type word  --batch_size 8  --num_workers 4  --lr 1e-4  --weight_decay 1e-4  --warmup_epochs 10  --warmup_lr 1e-6  --count_loss dmcount  --weight_count_loss 1.0  --amp  --num_crops 2  --sliding_window  --window_size 448  --stride 448  --out checkpoints/nwpu/resnet50/stage2_v2
 
 
-srun python train_stage3_v2.py --config configs/config_resnet_shb.yaml --s1 checkpoints/shb/resnet50/stage1/best_model.pth --s2 checkpoints/shb/resnet50/stage2/best_mae_0.pth --input_size 448 --sliding_window --window_size 448 --stride 448 --out checkpoints/shb/resnet50/stage3_v2
+#srun python train_stage3_v2.py --config configs/config_resnet_shb.yaml --s1 checkpoints/shb/resnet50/stage1/best_model.pth --s2 checkpoints/shb/resnet50/stage2/best_mae_0.pth --input_size 448 --sliding_window --window_size 448 --stride 448 --out checkpoints/shb/resnet50/stage3_v2
+
+#srun python trainer.py  --dataset nwpu  --model clip_resnet50  --input_size 448  --reduction 8  --truncation 4  --anchor_points average  --prompt_type word  --granularity fine  --weight_count_loss 1.0  --count_loss dmcount  --lr 1e-4  --weight_decay 1e-4  --batch_size 16  --amp  --sliding_window  --stride 224  --window_size 448  --save_freq 5  --total_epochs 300
