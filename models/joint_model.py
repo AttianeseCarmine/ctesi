@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class ZIPCLIPJointModel(nn.Module):
-    def __init__(self, stage1_model, stage2_model, steepness=1.0): # Inizia con steepness bassa
+    def __init__(self, stage1_model, stage2_model, steepness=0.5): # Inizia con steepness bassa
         super().__init__()
         self.stage1 = stage1_model
         self.stage2 = stage2_model
@@ -55,7 +55,12 @@ class ZIPCLIPJointModel(nn.Module):
         pi_prob = torch.sigmoid(pi_logits_aligned * self.steepness)
         
         # 3. Applicazione
-        final_density = raw_density * pi_prob
+        if self.training:
+            alpha = 0.10  # 0.10–0.25, prova 0.15
+            final_density = raw_density * (alpha + (1.0 - alpha) * pi_prob)
+        else:
+            final_density = raw_density * pi_prob
+
         
         return {
             'pi_logits': pi_logits_aligned,

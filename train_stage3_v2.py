@@ -59,7 +59,7 @@ parser.add_argument("--s2", type=str, required=True)  # ckpt stage2
 # stage2 model name (clip_vit_b_16 etc.)
 parser.add_argument("--model", type=str, default="clip_vit_b_16")
 parser.add_argument("--input_size", type=int, default=224)
-parser.add_argument("--reduction", type=int, default=16, choices=[8, 16, 32])
+parser.add_argument("--reduction", type=int, default=8, choices=[8, 16, 32])
 
 # dataset
 parser.add_argument("--dataset", type=str, required=False)
@@ -113,9 +113,9 @@ parser.add_argument("--out", type=str, default=None)
 
 # refined knobs
 parser.add_argument("--base_steepness", type=float, default=1.0)
-parser.add_argument("--max_steepness", type=float, default=20.0)
-parser.add_argument("--zip_w", type=float, default=0.5)
-parser.add_argument("--cons_w", type=float, default=0.1)
+parser.add_argument("--max_steepness", type=float, default=8.0)
+parser.add_argument("--zip_w", type=float, default=0.1)
+parser.add_argument("--cons_w", type=float, default=0.05)
 
 # --- needed by utils.get_loss_fn (DACELoss path when bins != None) ---
 parser.add_argument("--weight_count_loss", type=float, default=1.0)
@@ -268,12 +268,13 @@ def train_one_epoch_refined(model, loader, optimizer, scaler, device, rank, npro
     model.train()
     total_loss = 0.0
     it = tqdm(loader, desc="Train S3") if rank == 0 else loader
-    bce = nn.BCEWithLogitsLoss()
+    pos_w = 5.0  # parti da 10, poi 5–15
+    bce = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([pos_w], device=device))
 
     # ViT-only: small stabilizer on final_density to prevent weird gating solutions
     # (kept off for ResNet to preserve behavior)
     lambda_final = 0.1 if vit_mode else 0.0
-    cons_w = 0.05 if vit_mode else args.cons_w  # ViT tends to be more sensitive to consistency pressure
+    cons_w = 0.0 if vit_mode else args.cons_w  # ViT tends to be more sensitive to consistency pressure
 
     for step, batch in enumerate(it):
         if isinstance(batch, dict):
@@ -309,8 +310,10 @@ def train_one_epoch_refined(model, loader, optimizer, scaler, device, rank, npro
 
                 # points expected as list (len B), each element: Nx2 coords in patch space
                 if points is not None and isinstance(points, (list, tuple)) and len(points) == B:
-                    cell_w = args.input_size / Wc
-                    cell_h = args.input_size / Hc
+                    img_h, img_w = imgs.shape[-2], imgs.shape[-1]
+                    cell_w = img_w / Wc
+                    cell_h = img_h / Hc
+
 
                     for bi in range(B):
                         pts = points[bi]
@@ -400,7 +403,8 @@ def train_one_epoch_refined(model, loader, optimizer, scaler, device, rank, npro
             h, w = pi_logits.shape[-2:]
             with torch.no_grad():
                 gt_pi = F.interpolate(gt_density, size=(h, w), mode="bilinear", align_corners=False)
-                gt_pi = gt_pi * ((gt_density.shape[-1] / w) ** 2)
+                scale = (gt_density.shape[-2] * gt_density.shape[-1]) / (h * w)
+                gt_pi = gt_pi * scale
                 mask_target = (gt_pi > 0.001).float()
             l_zip = bce(pi_logits, mask_target)
 
@@ -524,7 +528,14 @@ def run(local_rank: int, nprocs: int, args):
     # build Stage1 from YAML
     with open(args.config, "r") as f:
         cfg = yaml.safe_load(f)
-    zip_cfg = cfg
+
+    zip_head_cfg = cfg.get("ZIP_HEAD", {"HIDDEN_DIM": 256})
+
+    zip_cfg = {
+        "BACKBONE": cfg["BACKBONE"],
+        "ZIP_HEAD": zip_head_cfg,
+        "REDUCTION": int(args.reduction),
+    }
     stage1 = ZIPModel(zip_cfg).to(device)
 
     # stage2

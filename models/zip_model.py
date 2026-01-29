@@ -2,6 +2,7 @@
 import torch
 import torch.nn as nn
 from typing import Dict
+import torch.nn.functional as F
 
 # Importa il nuovo builder e la tua ZIPHead esistente
 from .backbone import build_backbone
@@ -18,7 +19,8 @@ class ZIPModel(nn.Module):
         
         # 1. Backbone Dinamico
         self.backbone = build_backbone(config)
-        
+        self.target_reduction = config.get("REDUCTION", None)
+
         # 2. ZIP Head (Stima Pi per la maschera)
         # Usa out_channels del backbone (512 per VGG, 2048 per ResNet)
         zip_cfg = config.get('ZIP_HEAD', {})
@@ -38,7 +40,30 @@ class ZIPModel(nn.Module):
         
         # FIX: Prendiamo 'logit_pi' (pre-sigmoid) per la BCEWithLogitsLoss
         pi_logits = zip_out['logit_pi']
-        
+        # ------------------------------------------------------------
+        # GEOMETRY FIX (ViT only): align pi_logits to (H/REDUCTION, W/REDUCTION)
+        # ------------------------------------------------------------
+        if hasattr(self.backbone, "native_reduction") and self.target_reduction is not None:
+            native = int(self.backbone.native_reduction)     # ViT-B/16 -> 16
+            target = int(self.target_reduction)              # es. 8
+            if target > 0:
+                H, W = x.shape[-2], x.shape[-1]
+                out_h, out_w = H // target, W // target
+
+                # se shape mismatch, riallineo
+                if pi_logits.shape[-2:] != (out_h, out_w):
+                    pi_logits = F.interpolate(
+                        pi_logits,
+                        size=(out_h, out_w),
+                        mode="bilinear",
+                        align_corners=False
+                    )
+
+       # print(f"[DEBUG ZIP] native={getattr(self.backbone,'native_reduction',None)} "
+        #    f"target={self.target_reduction} "
+         #   f"logits={tuple(pi_logits.shape)} "
+          #  f"input={tuple(x.shape)}")
+
         return {
             'pi_logits': pi_logits, # Per la Loss e per lo Stage 3
             'features': features    # Opzionale

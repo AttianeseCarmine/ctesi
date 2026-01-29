@@ -1,120 +1,70 @@
-#!/usr/bin/env python3
-import argparse
-from pathlib import Path
-import yaml
+# test_geometry.py
+import torch
+import torch.nn as nn
+from models.zip_model import ZIPModel
+from models import get_model
 
-# ----------------------------
-# YAML loader che supporta !!python/tuple
-# ----------------------------
-class SafeTupleLoader(yaml.SafeLoader):
-    pass
+print("--- Inizio Test Geometria ---")
 
-def _construct_python_tuple(loader, node):
-    return tuple(loader.construct_sequence(node))
+# 1. Configurazione ZIP (Simulata)
+config_vit = {
+    'BACKBONE': {'TYPE': 'vit_b_16', 'PRETRAINED': False},
+    'ZIP_HEAD': {'HIDDEN_DIM': 256},
+    'REDUCTION': 8,   # <-- AGGIUNGI QUESTA RIGA
+}
 
-SafeTupleLoader.add_constructor(
-    "tag:yaml.org,2002:python/tuple",
-    _construct_python_tuple
+
+print("1. Inizializzazione ZIP...")
+zip_model = ZIPModel(config_vit)
+zip_model.eval()
+
+# 2. Inizializzazione CLIP
+print("2. Inizializzazione CLIP...")
+clip_model = get_model(
+    backbone='clip_vit_b_16',
+    input_size=448,
+    reduction=8,  # <--- IMPORTANTE: Qui stai testando la riduzione 16
+    bins=[(0,0), (1,1), (2,2), (3,3), (4,float('inf'))],
+    anchor_points=[0, 1, 2, 3, 5],
+    # --- PARAMETRI MANCANTI CHE CAUSAVANO L'ERRORE ---
+    num_vpt=32,          # Default standard
+    prompt_type='word',  # Default standard
+    vpt_drop=0.0,
+    deep_vpt=True
 )
+clip_model.eval()
 
-# ----------------------------
-# Utils
-# ----------------------------
-def find_yaml_in_dir(d: Path) -> Path | None:
-    if not d.exists() or not d.is_dir():
-        return None
-    cands = list(d.glob("*.yaml")) + list(d.glob("*.yml"))
-    if not cands:
-        return None
+# 3. Creazione Input Dummy (Batch=1, RGB, 448x448)
+x = torch.randn(1, 3, 448, 448)
+print(f"3. Input Shape: {x.shape}")
 
-    # Preferisci nomi tipo "config*.yaml"
-    def score(p: Path):
-        name = p.name.lower()
-        return (0 if "config" in name else 1, len(name))
+# 4. Forward Pass
+print("4. Esecuzione Forward...")
+with torch.no_grad():
+    zip_out = zip_model(x)
+    clip_out = clip_model(x)
 
-    cands = sorted(cands, key=score)
-    return cands[0]
+# 5. Analisi Output ZIP
+print("\n--- RISULTATI ---")
+if isinstance(zip_out, dict):
+    # Cerca la chiave giusta
+    key = 'logits' if 'logits' in zip_out else list(zip_out.keys())[0]
+    zip_shape = zip_out[key].shape
+    print(f"ZIP output ({key}): {zip_shape}")
+else:
+    print(f"ZIP output (tensor): {zip_out.shape}")
 
-def locate_config_from_ckpt(ckpt_path: str) -> Path | None:
-    ckpt = Path(ckpt_path)
-    if not ckpt.exists():
-        raise FileNotFoundError(f"Checkpoint non trovato: {ckpt}")
+# 6. Analisi Output CLIP
+if isinstance(clip_out, dict):
+    if 'density' in clip_out:
+        print(f"CLIP output (density): {clip_out['density'].shape}")
+    if 'ebc_logits' in clip_out:
+        print(f"CLIP output (ebc_logits): {clip_out['ebc_logits'].shape}")
+elif isinstance(clip_out, (tuple, list)):
+    print(f"CLIP output (tuple[0]): {clip_out[0].shape}")
+    if len(clip_out) > 1:
+        print(f"CLIP output (tuple[1]): {clip_out[1].shape}")
+else:
+    print(f"CLIP output (tensor): {clip_out.shape}")
 
-    # Primo tentativo: stessa cartella del .pth
-    d0 = ckpt.parent
-    yml = find_yaml_in_dir(d0)
-    if yml is not None:
-        return yml
-
-    # Secondo tentativo: parent (es: .../stage2_v2/ -> .../vit_b_16/)
-    d1 = d0.parent
-    yml = find_yaml_in_dir(d1)
-    if yml is not None:
-        return yml
-
-    # Terzo tentativo: cerca ricorsivamente un config*.y*ml nelle due cartelle (limitato)
-    for base in [d0, d1]:
-        if base.exists() and base.is_dir():
-            for p in sorted(base.rglob("*.yaml")) + sorted(base.rglob("*.yml")):
-                if "config" in p.name.lower():
-                    return p
-
-    return None
-
-def read_input_size_from_yaml(yml_path: Path) -> int | None:
-    with open(yml_path, "r") as f:
-        cfg = yaml.load(f, Loader=SafeTupleLoader)
-
-    # supporta sia dict flat che nested
-    if isinstance(cfg, dict):
-        if "input_size" in cfg:
-            return cfg.get("input_size")
-        # se qualcuno l'ha annidato (non dovrebbe, ma per sicurezza)
-        for k, v in cfg.items():
-            if isinstance(v, dict) and "input_size" in v:
-                return v.get("input_size")
-    return None
-
-def get_input_size_from_ckpt(ckpt_path: str):
-    yml = locate_config_from_ckpt(ckpt_path)
-    if yml is None:
-        return None, None
-    inp = read_input_size_from_yaml(yml)
-    return inp, yml
-
-# ----------------------------
-# Main
-# ----------------------------
-def main():
-    ap = argparse.ArgumentParser(description="Check input_size from checkpoint config.yaml")
-    ap.add_argument("--s1", required=True, help="Path checkpoint .pth (stage1)")
-    ap.add_argument("--s2", required=True, help="Path checkpoint .pth (stage2)")
-    args = ap.parse_args()
-
-    s1_in, s1_yml = get_input_size_from_ckpt(args.s1)
-    s2_in, s2_yml = get_input_size_from_ckpt(args.s2)
-
-    print("==================================================")
-    print("📦 CHECK INPUT SIZE FROM CONFIGS")
-    print("==================================================")
-    print(f"[S1] ckpt: {args.s1}")
-    print(f"[S1] yaml: {s1_yml}")
-    print(f"[S1] input_size: {s1_in}")
-    print("--------------------------------------------------")
-    print(f"[S2] ckpt: {args.s2}")
-    print(f"[S2] yaml: {s2_yml}")
-    print(f"[S2] input_size: {s2_in}")
-    print("==================================================")
-
-    if s1_in is None:
-        raise RuntimeError(f"Non riesco a leggere input_size per S1 dal yaml: {s1_yml}")
-    if s2_in is None:
-        raise RuntimeError(f"Non riesco a leggere input_size per S2 dal yaml: {s2_yml}")
-
-    if s1_in != s2_in:
-        raise RuntimeError(f"❌ MISMATCH: stage1 input_size={s1_in} vs stage2 input_size={s2_in}")
-
-    print(f"✅ OK: input_size coincide -> {s1_in}")
-
-if __name__ == "__main__":
-    main()
+print("\n--- Fine Test ---")

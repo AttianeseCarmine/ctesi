@@ -59,4 +59,9 @@ nvidia-smi
 #srun python train_stage3_v2.py --config configs/config_vit_shb.yaml --s1 checkpoints/shb/vit_b_16/stage1_v2/best_model.pth --s2 checkpoints/shb/vit_b_16/stage2_v2/best_mae_0.pth --input_size 448 --sliding_window --window_size 448 --stride 448 --out checkpoints/shb/vit_b_16/stage3_v2_sliding --sliding_window
 
 
-srun python train_stage3_v2.py --config configs/config_vit_shb.yaml --model clip_vit_b_16 --s1 checkpoints/shb/vit_b_16/stage1_v2/best_model.pth --s2 checkpoints/shb/vit_b_16/stage2_v2/best_mae_0.pth --dataset shb --input_size 448 --sliding_window --window_size 448 --stride 448 --out checkpoints/shb/vit_b_16/stage3_v2_sliding
+#srun python train_stage3_v3.py --config configs/config_vit_shb.yaml --model clip_vit_b_16 --s1 checkpoints/shb/vit_b_16/stage1_v2/best_model.pth --s2 checkpoints/shb/vit_b_16/stage2_v2/best_mae_0.pth --dataset shb --input_size 448 --sliding_window --window_size 448 --stride 448 --out checkpoints/shb/vit_b_16/stage3_v2_sliding
+
+
+
+
+srun python train_stage3_v2.py   --config configs/config_vit_shb.yaml   --model clip_vit_b_16   --s1 checkpoints/shb/vit_b_16/stage1_v2/best_model.pth   --s2 checkpoints/shb/vit_b_16/stage2_v2/best_mae_0.pth   --dataset shb   --input_size 448   --reduction 8   --lr 1e-5   --sliding_window --window_size 448 --stride 448   --out checkpoints/shb/vit_b_16/stage3_P9

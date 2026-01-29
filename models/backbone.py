@@ -17,16 +17,18 @@ class Backbone(nn.Module):
                 self.model = models.vit_b_16(weights=weights)
                 self.out_channels = 768
                 self.patch_size = 16
+                self.native_reduction = self.patch_size  # <-- ADD
             elif 'l_16' in self.name:
                 weights = models.ViT_L_16_Weights.DEFAULT if pretrained else None
                 self.model = models.vit_l_16(weights=weights)
                 self.out_channels = 1024
                 self.patch_size = 16
+                self.native_reduction = self.patch_size  # <-- ADD
             else:
                 raise ValueError(f"ViT variant {self.name} not supported yet.")
-            
-            # Rimuoviamo la classification head (non serve per ZIP)
+
             self.model.heads = nn.Identity()
+
             
         # --- CNN (ResNet / VGG) ---
         elif 'resnet' in self.name:
