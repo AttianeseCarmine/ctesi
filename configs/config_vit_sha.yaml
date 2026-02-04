@@ -6,7 +6,7 @@
 # Questi valori vengono usati se non specificati nei singoli stage o da terminale
 DATASET: "sha"
 MODEL: "clip_vit_b_16"   # STAGE2 !!
-INPUT_SIZE: 448          # FONDAMENTALE: CLIP richiede 224x224 (o multipli/crop)
+INPUT_SIZE: 224          # FONDAMENTALE: CLIP richiede 224x224 (o multipli/crop)
 REDUCTION: 8             # Fattore di riduzione delle feature map
 TRUNCATION: 4            # Max count per bin (EBC logic)
 GRANULARITY: "fine"      # Granularità dei bin
@@ -29,6 +29,7 @@ TRAIN_STAGE1:
   TOTAL_EPOCHS: 2500
   BATCH_SIZE: 16
   NUM_WORKERS: 8
+  REDUCTION: 8
   
   # Learning Rates
   LR: 1.0e-4

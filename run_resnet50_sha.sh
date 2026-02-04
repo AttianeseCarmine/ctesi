@@ -1,6 +1,6 @@
 #!/bin/bash -l
 
-#SBATCH --job-name=s3sha_resnet50_train
+#SBATCH --job-name=s1sha_resnet50_train
 #SBATCH --account=did_crowd_counting_339
 #SBATCH --partition=aiq
 #SBATCH --gres=gpu:1
@@ -9,8 +9,8 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH --time=07:00:00
-#SBATCH -o logs/sha_resnet50_stage3_%j.out
-#SBATCH -e logs/sha_resnet50_stage3_%j.err
+#SBATCH -o logs/s1_sha_resnet50_%j.out
+#SBATCH -e logs/s1_sha_resnet50_%j.err
 #SBATCH --mail-user=c.attianese13@studenti.unisa.it
 #SBATCH --mail-type=ALL
 
@@ -38,6 +38,8 @@ echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
 python -c "import torch; print('torch', torch.__version__); print('cuda_available', torch.cuda.is_available()); print('torch_cuda', torch.version.cuda)"
 nvidia-smi
 
+srun python train_stage1.py --config configs/config_resnet_sha.yaml --input_size 224 --reduction 8 --pos_weight 4 --fbeta 2.0 --lambda_fbeta 0.5 --min_recall 0.95 --out checkpoints/sha/resnet50/stage1_v3/
+
 #srun python train_stage1.py --config configs/config_resnet_sha.yaml --data_dir data --batch_size 16
 
 #srun python trainer.py --config configs/config_resnet_sha.yaml --model clip_resnet50  --anchor_points average --prompt_type word --dataset sha --sliding_window --window_size 448 --stride 448 --count_loss dmcount 
@@ -52,4 +54,4 @@ nvidia-smi
 #srun python train_stage3_v2.py --config configs/config_resnet_sha.yaml --model clip_resnet50 --dataset sha --s1 checkpoints/sha/resnet50/stage1/best_model.pth --s2 checkpoints/sha/resnet50/stage2/best_mae_0.pth --lr 1e-4 --out checkpoints/sha/resnet50/stage3_v3 --total_epochs 700 --zip_w 1.0 --cons_w 0.05
 
 
-srun python train_stage3_v2.py --config configs/config_resnet_sha.yaml --model clip_resnet50 --dataset sha --s1 checkpoints/sha/resnet50/stage1/best_model.pth --s2 checkpoints/sha/resnet50/stage2/best_mae_0.pth --out checkpoints/sha/resnet50/stage3_fixed_steepness --resume checkpoints/sha/resnet50/stage3_v3/best_model.pth --lr 1e-4 --total_epochs 300 --base_steepness 1.0 --max_steepness 5.0 --zip_w 1.0 --cons_w 0.05
+#srun python train_stage3_v2.py --config configs/config_resnet_sha.yaml --model clip_resnet50 --dataset sha --s1 checkpoints/sha/resnet50/stage1/best_model.pth --s2 checkpoints/sha/resnet50/stage2/best_mae_0.pth --out checkpoints/sha/resnet50/stage3_fixed_steepness --resume checkpoints/sha/resnet50/stage3_v3/best_model.pth --lr 1e-4 --total_epochs 300 --base_steepness 1.0 --max_steepness 5.0 --zip_w 1.0 --cons_w 0.05

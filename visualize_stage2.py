@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # visualize_stage2.py
 import os
 import argparse
@@ -36,44 +37,46 @@ def load_config(config_path):
     """
     if not os.path.exists(config_path):
         raise FileNotFoundError(f"Config not found: {config_path}")
-    
+
     ext = os.path.splitext(config_path)[1].lower()
-    
-    if ext == '.json':
-        with open(config_path, 'r') as f:
+
+    if ext == ".json":
+        with open(config_path, "r") as f:
             cfg = json.load(f)
         print(f"✅ Loaded JSON config from: {config_path}")
-    elif ext in ['.yaml', '.yml']:
-        with open(config_path, 'r') as f:
+    elif ext in [".yaml", ".yml"]:
+        with open(config_path, "r") as f:
             cfg = yaml.load(f, Loader=SafeTupleLoader)
         print(f"✅ Loaded YAML config from: {config_path}")
     else:
         # Try both formats as fallback
         try:
-            with open(config_path, 'r') as f:
+            with open(config_path, "r") as f:
                 cfg = json.load(f)
-            print(f"✅ Loaded config as JSON (no extension detected)")
+            print("✅ Loaded config as JSON (no extension detected)")
         except json.JSONDecodeError:
             try:
-                with open(config_path, 'r') as f:
+                with open(config_path, "r") as f:
                     cfg = yaml.load(f, Loader=SafeTupleLoader)
-                print(f"✅ Loaded config as YAML (no extension detected)")
+                print("✅ Loaded config as YAML (no extension detected)")
             except Exception as e:
                 raise ValueError(f"Could not parse config as JSON or YAML: {e}")
-    
+
     return cfg or {}
 
 
 # -------------------------
 # Helpers
 # -------------------------
-def _unwrap_pred_density(model_out):
+def _unwrap_model_outputs(model_out):
     """
     Stage2 può ritornare:
       - Tensor pred_density
       - (pred_class, pred_density)
       - dict con chiavi tipo 'density', 'ebc_density', 'pred_density', 'final_density'
-    Qui estraiamo SEMPRE un Tensor Bx1xhxw.
+
+    Qui estraiamo SOLO la density.
+    Returns: density_tensor (Tensor Bx1xhxw o BxCxHxW)
     """
     if isinstance(model_out, torch.Tensor):
         return model_out
@@ -82,6 +85,7 @@ def _unwrap_pred_density(model_out):
         # convenzione comune: (pred_class, pred_density)
         if len(model_out) >= 2 and isinstance(model_out[1], torch.Tensor):
             return model_out[1]
+
         # fallback: primo tensore 4D
         for x in model_out:
             if isinstance(x, torch.Tensor) and x.dim() == 4:
@@ -97,6 +101,13 @@ def _unwrap_pred_density(model_out):
         raise KeyError(f"Dict output but no known density key found. Keys: {list(model_out.keys())}")
 
     raise TypeError(f"Unsupported model output type: {type(model_out)}")
+
+
+def _create_gaussian_kernel(kernel_size, sigma):
+    x = torch.arange(kernel_size).float() - kernel_size // 2
+    gauss = torch.exp(-x.pow(2) / (2 * sigma**2))
+    kernel = gauss.unsqueeze(0) * gauss.unsqueeze(1)
+    return kernel / kernel.sum()
 
 
 def _denorm_image(img_chw, mean, std):
@@ -180,6 +191,7 @@ def _find_indices_by_names(ds, names):
     """
     names: lista di stringhe (es. ["075.jpg","143.jpg"]).
     Match per basename (case-insensitive) o substring.
+    Funziona SOLO se il dataset espone i path.
     """
     wanted = [n.strip() for n in names if n.strip()]
     if not wanted:
@@ -243,7 +255,6 @@ def _count_points(target_points):
         # altrimenti lista di punti (x,y)
         return int(len(target_points))
 
-    # fallback
     try:
         return int(len(target_points))
     except Exception:
@@ -283,7 +294,6 @@ def _points_to_xy(target_points):
         ys = pts[:, 1]
         return xs, ys
 
-    # list di tuple
     pts = np.array(target_points, dtype=np.float32)
     if pts.size == 0:
         return None, None
@@ -329,8 +339,26 @@ def _make_args_for_dataloader(cfg, dataset, input_size):
     return args
 
 
+def _parse_indices(indices_str, num_rows):
+    """
+    Parse di --indices "1,2,3" -> [1,2,3]
+    """
+    if not indices_str:
+        return None
+    parts = [p.strip() for p in indices_str.split(",") if p.strip()]
+    if not parts:
+        return None
+    out = []
+    for p in parts:
+        try:
+            out.append(int(p))
+        except ValueError:
+            raise ValueError(f"--indices contiene un valore non intero: '{p}'")
+    return out[:num_rows]
+
+
 # -------------------------
-# Main visualize
+# Main visualize (3 columns only)
 # -------------------------
 def visualize_stage2(
     config_path: str,
@@ -341,12 +369,13 @@ def visualize_stage2(
     input_size: int,
     reduction: int,
     num_rows: int = 3,
-    names: str = None,      # comma-separated
+    names: str = None,       # comma-separated
+    indices: str = None,     # comma-separated integer indices (ALWAYS works)
     seed: int = 0,
     alpha_pred: float = 0.55,
-    alpha_gt_bg: float = 0.97,     # SFONDO COLONNA 2 quasi pieno
-    point_size: float = 28.0,      # PUNTI PIU GRANDI
-    point_edge: float = 0.5,       # bordo nero sottile
+    alpha_gt_bg: float = 0.97,
+    point_size: float = 28.0,
+    point_edge: float = 0.5,
     device: str = "cuda:0",
 ):
     # device (CPU fallback)
@@ -356,7 +385,7 @@ def visualize_stage2(
         print("ℹ️ CUDA non disponibile: uso CPU.")
         device = torch.device("cpu")
 
-    # ---- load config (JSON or YAML) ----
+    # ---- load config ----
     cfg = load_config(config_path)
 
     # bins/anchor_points
@@ -366,7 +395,6 @@ def visualize_stage2(
     bins = []
     for a, b in cfg["bins"]:
         a = float(a)
-        # Gestione sia di stringhe "Infinity" che del valore float inf già parsato da JSON
         if isinstance(b, str) and b.strip().lower() in [".inf", "inf", "infinity"]:
             b = float("inf")
         elif isinstance(b, float) and not np.isfinite(b):
@@ -408,34 +436,48 @@ def visualize_stage2(
     val_loader = get_dataloader(dl_args, split="val", ddp=False)
     ds = val_loader.dataset
 
-    # ---- choose indices ----
-    rng = np.random.default_rng(seed)
+    # ---- choose indices (priority: indices > names > random) ----
     chosen = None
 
-    if names:
+    # 1) explicit indices (ALWAYS works)
+    chosen = _parse_indices(indices, num_rows) if indices else None
+    if chosen is not None:
+        # sanity check
+        N = len(ds)
+        bad = [i for i in chosen if i < 0 or i >= N]
+        if bad:
+            raise IndexError(f"--indices fuori range (0..{N-1}): {bad}")
+
+    # 2) names (works only if dataset exposes paths)
+    if chosen is None and names:
         name_list = [x.strip() for x in names.split(",") if x.strip()]
         idxs = _find_indices_by_names(ds, name_list)
         if not idxs:
-            print("⚠️ Nessuna immagine trovata con quei nomi (o dataset non espone i path). Userò random dal validation set.")
+            print("⚠️ Nessuna immagine trovata con quei nomi (o dataset non espone i path).")
         else:
             chosen = idxs[:num_rows]
 
+    # 3) random but deterministic by seed
     if chosen is None:
+        rng = np.random.default_rng(seed)
         N = len(ds)
         if N < num_rows:
             chosen = list(range(N))
         else:
             chosen = rng.choice(N, size=num_rows, replace=False).tolist()
 
+    print(f"🧾 Selected indices: {chosen}")
+
     # ---- output ----
     if not out_png.lower().endswith(".png"):
         out_png = out_png + ".png"
     os.makedirs(os.path.dirname(out_png) or ".", exist_ok=True)
 
-    # ---- plot ----
-    fig, axes = plt.subplots(num_rows, 3, figsize=(15, 4.5 * num_rows))
+    # ---- plot: ALWAYS 3 columns ----
+    num_cols = 3
+    fig, axes = plt.subplots(num_rows, num_cols, figsize=(5 * num_cols, 4.5 * num_rows))
     if num_rows == 1:
-        axes = axes.reshape(1, 3)
+        axes = axes.reshape(1, num_cols)
 
     with torch.no_grad():
         for row, idx in enumerate(chosen):
@@ -443,7 +485,6 @@ def visualize_stage2(
             if not (isinstance(sample, (tuple, list)) and len(sample) >= 2):
                 raise TypeError(f"Dataset item non tuple/list. idx={idx} type={type(sample)}")
 
-            # prova a leggere in modo robusto
             image = sample[0]
             target_points = sample[1] if len(sample) >= 2 else None
 
@@ -455,7 +496,7 @@ def visualize_stage2(
 
             # pred
             out = model(image_b)
-            pred_density = _unwrap_pred_density(out)  # Bx1xhxw
+            pred_density = _unwrap_model_outputs(out)
 
             # counts
             gt_count = _count_points(target_points)
@@ -469,7 +510,7 @@ def visualize_stage2(
             pr_map = _resize_density_preserve_sum(pred_density[0:1].detach().cpu(), H, W)[0, 0]
             vmax_pr = _robust_vmax(pr_map, q=0.995)
 
-            # filename / idx
+            # filename / idx (se dataset non espone path: idx=...)
             pth = _dataset_get_path(ds, idx)
             name_show = os.path.basename(str(pth)) if pth else f"idx={idx}"
 
@@ -479,13 +520,12 @@ def visualize_stage2(
             ax.set_title(f"{name_show} | GT: {gt_count}")
             ax.axis("off")
 
-            # ---- COL 2: input + GT points (white bigger) ----
+            # ---- COL 2: input + GT points ----
             ax = axes[row, 1]
             ax.imshow(img.permute(1, 2, 0).numpy(), alpha=alpha_gt_bg)
 
             xs, ys = _points_to_xy(target_points)
             if xs is not None and ys is not None:
-                # clamp per sicurezza
                 xs = np.clip(xs, 0, W - 1)
                 ys = np.clip(ys, 0, H - 1)
                 ax.scatter(
@@ -502,7 +542,7 @@ def visualize_stage2(
             ax = axes[row, 2]
             ax.imshow(img.permute(1, 2, 0).numpy())
             ax.imshow(pr_map.numpy(), cmap="jet", vmin=0, vmax=vmax_pr, alpha=alpha_pred)
-            ax.set_title(f"Prediction Overlay | Pred: {pred_count:.1f}")
+            ax.set_title(f"Density Map | Pred: {pred_count:.1f}")
             ax.axis("off")
 
     plt.tight_layout()
@@ -527,10 +567,13 @@ if __name__ == "__main__":
     p.add_argument("--out_png", type=str, default="stage2_vis.png")
     p.add_argument("--num_rows", type=int, default=3)
 
-    # scegli manualmente immagini: match su basename o substring
-    p.add_argument("--names", type=str, default=None, help='Esempio: --names "075.jpg,143.jpg,067.jpg"')
+    # scegli manualmente immagini:
+    # - indices funziona SEMPRE
+    # - names funziona SOLO se il dataset espone i path
+    p.add_argument("--indices", type=str, default=None, help='Esempio: --indices "17,201,55" (indici nel validation set)')
+    p.add_argument("--names", type=str, default=None, help='Esempio: --names "IMG_4.jpg,IMG_43.jpg,IMG_86.jpg"')
 
-    # random seed se non passi --names
+    # random seed se non passi --indices/--names
     p.add_argument("--seed", type=int, default=0)
 
     # overlay params
@@ -553,6 +596,7 @@ if __name__ == "__main__":
         reduction=args.reduction,
         num_rows=args.num_rows,
         names=args.names,
+        indices=args.indices,
         seed=args.seed,
         alpha_pred=args.alpha_pred,
         alpha_gt_bg=args.alpha_gt_bg,
@@ -560,18 +604,3 @@ if __name__ == "__main__":
         point_edge=args.point_edge,
         device=args.device,
     )
-
-
-# Esempi di utilizzo:
-# 
-# Con file JSON:
-# python visualize_stage2.py --config checkpoints/qnrf/resnet50/stage2/training_config.json --checkpoint checkpoints/qnrf/resnet50/stage2/best_mae_0.pth --dataset qnrf --model clip_resnet50 --out_png visualize_qnrf_resnet50.png --num_rows 3
-#
-# Con file YAML:
-# python visualize_stage2.py \
-#   --config checkpoints/shb/resnet50/stage2/config_stage2.yaml \
-#   --checkpoint checkpoints/shb/resnet50/stage2/best_mae_0.pth \
-#   --dataset shb \
-#   --model clip_resnet50 \
-#   --out_png visualize.png \
-#   --num_rows 3

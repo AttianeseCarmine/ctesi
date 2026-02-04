@@ -159,7 +159,7 @@ def main(args):
     # 3. Carica Checkpoint
     if os.path.isfile(args.checkpoint):
         print(f"📥 Caricamento pesi da: {args.checkpoint}")
-        ckpt = torch.load(args.checkpoint, map_location=device)
+        ckpt = torch.load(args.checkpoint, map_location=device, weights_only=False)
         
         # Gestione dizionario checkpoint
         state_dict = ckpt['model_state_dict'] if 'model_state_dict' in ckpt else ckpt
@@ -255,7 +255,7 @@ def main(args):
     
     # --- PANNELLO 3: MODEL PREDICTION ---
     axes[2].imshow(mask_vis)
-    title_str = (f"Stage 1 Output (Thr={args.threshold})\n"
+    title_str = (f"Stage 1 Output \n"
                  f"Filtered: {int(empty_blocks)}/{total_blocks} patches ({empty_pct:.1f}%)")
     axes[2].set_title(title_str, fontsize=16, fontweight='bold', color='darkred')
     axes[2].axis('off')

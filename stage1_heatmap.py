@@ -73,7 +73,7 @@ def main(args):
     # 2. Caricamento Pesi (con controllo rigoroso)
     if os.path.isfile(args.checkpoint):
         print(f"📥 Caricamento checkpoint: {args.checkpoint}")
-        ckpt = torch.load(args.checkpoint, map_location=device)
+        ckpt = torch.load(args.checkpoint, map_location=device, weights_only=False)
         state_dict = ckpt['model_state_dict'] if 'model_state_dict' in ckpt else ckpt
         # Rimuove prefisso module. se presente
         new_state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
