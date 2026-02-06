@@ -3,17 +3,10 @@
 """
 Valutazione Stage 1 (ZIP) a livello patch + generazione Confusion Matrix.
 
-Obiettivo:
-- Calcolare TP/TN/FP/FN su griglia patch (stessa risoluzione di pi_logits)
-- Selezionare la soglia in modo "robusto":
-    1) vincolo di recall minima (target_recall)
-    2) vincolo "non far passare tutto" (max_pos_rate = frazione max di patch predette positive)
-    3) tra le soglie valide: minimizza FP, tie-break: massimizza F1
-- Salvare confusion matrix in stile "Blues" con TN/FP/FN/TP dentro le celle
-
-COERENZA COL TRAINING STAGE1:
-- Generazione label patch con max_pool2d sulla density GT
-- Soglia label GT: 1e-3
+- Calcola TP/TN/FP/FN su griglia patch (stessa risoluzione di pi_logits)
+- Seleziona soglia in modo "robusto"
+- Salva Confusion Matrix NORMALIZZATA (row-normalized) con:
+  LABEL + COUNT + (PERCENT%)
 """
 
 import argparse
@@ -85,7 +78,6 @@ def evaluate_patch_level(model, dataloader, device, thresholds, gt_thr=1e-3):
             gt_density = batch.get("density", batch.get("labels", None))
         elif isinstance(batch, (list, tuple)):
             img = batch[0] if len(batch) > 0 else None
-            # spesso: (img, points, density)
             if len(batch) >= 3 and torch.is_tensor(batch[2]):
                 gt_density = batch[2]
             elif len(batch) >= 2 and torch.is_tensor(batch[1]):
@@ -106,11 +98,9 @@ def evaluate_patch_level(model, dataloader, device, thresholds, gt_thr=1e-3):
         h_out, w_out = logits.shape[-2], logits.shape[-1]
         H, W = gt_density.shape[-2], gt_density.shape[-1]
 
-        # ratio tra densità GT e griglia output
         r_h = H // h_out
         r_w = W // w_out
         if r_h <= 0 or r_w <= 0:
-            # fallback (non dovrebbe succedere)
             r_h, r_w = 1, 1
 
         gt_block = F.max_pool2d(gt_density, kernel_size=(r_h, r_w), stride=(r_h, r_w))
@@ -130,11 +120,10 @@ def evaluate_patch_level(model, dataloader, device, thresholds, gt_thr=1e-3):
             stats[i]["fp"] += fp
             stats[i]["fn"] += fn
 
-            # Quanto densità reale "sopravvive" al filtro (solo per informazione)
+            # info
             mask_up = F.interpolate(pred_binary, size=gt_density.shape[-2:], mode="nearest")
             retained = (gt_density * mask_up).sum().item()
             total = gt_density.sum().item()
-
             stats[i]["retained_density"] += retained
             stats[i]["total_density"] += total
 
@@ -142,7 +131,7 @@ def evaluate_patch_level(model, dataloader, device, thresholds, gt_thr=1e-3):
 
 
 # -----------------------------
-# Confusion Matrix Plot
+# Confusion Matrix Plot (NORMALIZZATA + COUNT + %)
 # -----------------------------
 def plot_confusion_matrix_binary(tn, fp, fn, tp, dataset_name, backbone_name, out_path, th=None):
     """
@@ -150,12 +139,21 @@ def plot_confusion_matrix_binary(tn, fp, fn, tp, dataset_name, backbone_name, ou
         righe = True (0/1), colonne = Pred (0/1)
         [[TN, FP],
          [FN, TP]]
+
+    - Colormap: NORMALIZZATA PER RIGA (row-normalized)
+    - Celle: LABEL + COUNT + (PERCENT)
+    - Titolo: Confusion Matrix - dataset - backbone
     """
-    cm = np.array([[tn, fp], [fn, tp]], dtype=np.int64)
+    cm = np.array([[tn, fp], [fn, tp]], dtype=np.float64)
+
+    eps = 1e-12
+    cm_norm = cm / (cm.sum(axis=1, keepdims=True) + eps)  # row-normalized
 
     fig, ax = plt.subplots(figsize=(6, 4.5))
-    im = ax.imshow(cm, interpolation="nearest", cmap=plt.cm.Blues)
-    fig.colorbar(im, ax=ax)
+    im = ax.imshow(cm_norm, interpolation="nearest", cmap=plt.cm.Blues, vmin=0.0, vmax=1.0)
+
+    cbar = fig.colorbar(im, ax=ax)
+    cbar.set_label("Row-normalized fraction", rotation=90)
 
     ax.set(
         xticks=np.arange(2),
@@ -166,28 +164,34 @@ def plot_confusion_matrix_binary(tn, fp, fn, tp, dataset_name, backbone_name, ou
         ylabel="True",
     )
 
-    title = f"Confusion Matrix - {dataset_name} - {backbone_name}"
-    if th is not None:
-        title += f" (th={th:.2f})"
-    ax.set_title(title)
+    ax.set_title(f"Confusion Matrix - {dataset_name} - {backbone_name}")
 
     cell_labels = np.array([["TN", "FP"], ["FN", "TP"]])
-    thresh_val = cm.max() / 2.0 if cm.max() > 0 else 0
+
+    # per scegliere bianco/nero in base all’intensità (come la tua immagine)
+    thresh_val = 0.5
 
     for i in range(2):
         for j in range(2):
-            val = cm[i, j]
+            count = int(cm[i, j])
+            pct = cm_norm[i, j] * 100.0
             ax.text(
                 j,
                 i,
-                f"{cell_labels[i, j]}\n{val}",
+                f"{cell_labels[i, j]}\n{count}\n({pct:.1f}%)",
                 ha="center",
                 va="center",
-                color="white" if val > thresh_val else "black",
-                fontsize=11,
+                color="white" if cm_norm[i, j] > thresh_val else "black",
+                fontsize=12,
             )
 
     plt.tight_layout()
+
+    # crea la cartella se serve
+    out_dir = os.path.dirname(out_path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+
     fig.savefig(out_path, dpi=200, bbox_inches="tight")
     plt.close(fig)
 
@@ -196,15 +200,6 @@ def plot_confusion_matrix_binary(tn, fp, fn, tp, dataset_name, backbone_name, ou
 # Selezione soglia "robusta"
 # -----------------------------
 def choose_threshold(stats, thresholds, target_recall=0.90, max_pos_rate=0.60):
-    """
-    Selezione:
-    1) recall >= target_recall
-    2) pos_rate <= max_pos_rate  (pos_rate = (TP+FP)/tot)
-    3) tra le valide: minimizza FP, tie-break: massimizza F1
-    Fallback:
-    - se (1) ok ma (2) no: min FP tra quelle con recall ok
-    - se (1) no: scegli max recall
-    """
     eps = 1e-7
     candidates = []
 
@@ -264,11 +259,15 @@ def main():
     with open(args.config, "r") as f:
         config = yaml.safe_load(f)
 
+    # (opzionale) forza BACKBONE.TYPE se valuti stage1 salvato come args-only
+    config["BACKBONE"] = config.get("BACKBONE", {})
+    config["BACKBONE"]["TYPE"] = getattr(args, "model", None) or args.backbone or config["BACKBONE"].get("TYPE", "resnet50")
+
     # Aggiorna args con campi del config (se presenti)
     for k, v in (config.items() if isinstance(config, dict) else []):
         setattr(args, k, v)
 
-    # Defaults utili per loader (come avevi già fatto)
+    # Defaults per loader
     if not hasattr(args, "dataset"):
         args.dataset = "sha"
     args.sliding_window = False
@@ -280,8 +279,6 @@ def main():
     print("[*] Loading Dataset & Model...")
     loader = get_dataloader(args, split="val", ddp=False)
 
-    # Costruzione modello: nel tuo codice usavi ZIPModel(config)
-    # Mantengo quello, ma se il tuo ZIPModel si aspetta cfg/dict, va bene.
     model = ZIPModel(config).to(device)
 
     # Checkpoint
@@ -298,12 +295,50 @@ def main():
     state_dict = checkpoint["model_state_dict"] if "model_state_dict" in checkpoint else checkpoint
     model.load_state_dict({k.replace("module.", ""): v for k, v in state_dict.items()}, strict=False)
 
-    # Soglie
     thresholds = np.arange(args.th_start, args.th_end + 1e-9, args.th_step)
-
-    # Eval
     stats = evaluate_patch_level(model, loader, device, thresholds, gt_thr=1e-3)
 
+    # Scelta soglia robusta
+    chosen, status = choose_threshold(
+        stats, thresholds, target_recall=args.target_recall, max_pos_rate=args.max_pos_rate
+    )
+
+    print(status)
+    print(
+        f"[*] Scelto th={chosen['th']:.2f} | FP={chosen['fp']} | FPR={chosen['fpr']:.4f} | "
+        f"R={chosen['rec']:.4f} | P={chosen['prec']:.4f} | F1={chosen['f1']:.4f} | pos_rate={chosen['pos_rate']:.3f}"
+    )
+
+    dataset_name = getattr(args, "dataset", "unknown")
+
+    backbone_name = args.backbone
+    if backbone_name is None:
+        backbone_name = (
+            config.get("backbone")
+            or config.get("model")
+            or config.get("encoder")
+            or config.get("zip_backbone")
+            or getattr(args, "model", None)
+            or config.get("BACKBONE", {}).get("TYPE", None)
+            or "unknown_backbone"
+        )
+
+    if args.cm_out is None:
+        args.cm_out = f"confusion_matrix_{dataset_name}_{backbone_name}.png".replace("/", "_")
+
+    print(f"[*] Saving confusion matrix -> {args.cm_out}")
+    plot_confusion_matrix_binary(
+        tn=chosen["tn"],
+        fp=chosen["fp"],
+        fn=chosen["fn"],
+        tp=chosen["tp"],
+        dataset_name=dataset_name,
+        backbone_name=backbone_name,
+        out_path=args.cm_out,
+        th=chosen["th"],  # non usata nel titolo, ma la lascio per compatibilità
+    )
+
+    print(f"    TN={chosen['tn']}  FP={chosen['fp']}  FN={chosen['fn']}  TP={chosen['tp']}")
     # Tabella riassuntiva
     print("\n" + "=" * 110)
     print(
@@ -328,54 +363,6 @@ def main():
         )
 
     print("-" * 110)
-
-    # Scelta soglia robusta (FP basso + vincoli)
-    chosen, status = choose_threshold(
-        stats,
-        thresholds,
-        target_recall=args.target_recall,
-        max_pos_rate=args.max_pos_rate,
-    )
-
-    print(status)
-    print(
-        f"[*] Scelto th={chosen['th']:.2f} | FP={chosen['fp']} | FPR={chosen['fpr']:.4f} | "
-        f"R={chosen['rec']:.4f} | P={chosen['prec']:.4f} | F1={chosen['f1']:.4f} | pos_rate={chosen['pos_rate']:.3f}"
-    )
-    print("=" * 110 + "\n")
-
-    # Dataset + backbone intestazione
-    dataset_name = getattr(args, "dataset", "unknown")
-
-    backbone_name = args.backbone
-    if backbone_name is None:
-        backbone_name = (
-            config.get("backbone")
-            or config.get("model")
-            or config.get("encoder")
-            or config.get("zip_backbone")
-            or getattr(args, "model", None)
-            or "unknown_backbone"
-        )
-
-    # Output path confusion matrix
-    if args.cm_out is None:
-        args.cm_out = f"confusion_matrix_{dataset_name}_{backbone_name}.png".replace("/", "_")
-
-    # Plot confusion matrix con soglia scelta
-    print(f"[*] Saving confusion matrix -> {args.cm_out}")
-    plot_confusion_matrix_binary(
-        tn=chosen["tn"],
-        fp=chosen["fp"],
-        fn=chosen["fn"],
-        tp=chosen["tp"],
-        dataset_name=dataset_name,
-        backbone_name=backbone_name,
-        out_path=args.cm_out,
-        th=chosen["th"],
-    )
-
-    print(f"    TN={chosen['tn']}  FP={chosen['fp']}  FN={chosen['fn']}  TP={chosen['tp']}")
 
 
 if __name__ == "__main__":

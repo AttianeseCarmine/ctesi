@@ -1,70 +1,64 @@
 # models/zip_model.py
+
 import torch
 import torch.nn as nn
 from typing import Dict
 import torch.nn.functional as F
-
-# Importa il nuovo builder e la tua ZIPHead esistente
 from .backbone import build_backbone
 from .pi_head import ZIPHead
 
 class ZIPModel(nn.Module):
-    """
-    Modello Stage 1 PURO (No CLIP).
-    Usa Backbone (VGG/ResNet) + ZIPHead per predire la maschera binaria (pi).
-    """
-    
     def __init__(self, config: Dict):
         super().__init__()
         
-        # 1. Backbone Dinamico
         self.backbone = build_backbone(config)
-        self.target_reduction = config.get("REDUCTION", None)
+        
+        # --- FIX GEOMETRICO ---
+        # Determiniamo la riduzione nativa della backbone
+        # ViT-B/16 -> 16. ResNet -> Solitamente 8 (se dilated) o 32.
+        self.native_reduction = getattr(self.backbone, "native_reduction", 16) 
+        
+        # Il target per la localizzazione deve essere 8 per competere con ResNet
+        self.target_reduction = 8 
+        
+        self.upsampler = nn.Identity()
+        
+        if self.native_reduction == 16 and self.target_reduction == 8:
+            print("🔧 Using Stable Bilinear Upsampler + Refinement for ViT")
+            self.upsampler = nn.Sequential(
+                nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
+                nn.Conv2d(self.backbone.out_channels, self.backbone.out_channels, kernel_size=3, padding=1),
+                nn.BatchNorm2d(self.backbone.out_channels),
+                nn.ReLU(inplace=True)
+            )
 
-        # 2. ZIP Head (Stima Pi per la maschera)
-        # Usa out_channels del backbone (512 per VGG, 2048 per ResNet)
+        # La ZIP Head ora lavorerà sempre a stride 8
         zip_cfg = config.get('ZIP_HEAD', {})
         self.zip_head = ZIPHead(
             in_channels=self.backbone.out_channels,
             hidden_dim=zip_cfg.get('HIDDEN_DIM', 256)
         )
         
-        print(f"✅ ZIPModel Inizializzato: Backbone={config.get('BACKBONE', {}).get('TYPE')} -> OutCh={self.backbone.out_channels}")
-        
     def forward(self, x: torch.Tensor) -> Dict[str, torch.Tensor]:
-        # 1. Feature Extraction
+        # 1. Backbone (esce a 16x16 per ViT)
         features = self.backbone(x)
         
-        # 2. ZIP Prediction
-        zip_out = self.zip_head(features)
+        # 2. Upsampling (porta a 8x8 se necessario)
+        # Questo permette alla ZIP Head di avere la risoluzione spaziale necessaria
+        features = self.upsampler(features)
         
-        # FIX: Prendiamo 'logit_pi' (pre-sigmoid) per la BCEWithLogitsLoss
+        # 3. ZIP Head
+        zip_out = self.zip_head(features)
         pi_logits = zip_out['logit_pi']
-        # ------------------------------------------------------------
-        # GEOMETRY FIX (ViT only): align pi_logits to (H/REDUCTION, W/REDUCTION)
-        # ------------------------------------------------------------
-        if hasattr(self.backbone, "native_reduction") and self.target_reduction is not None:
-            native = int(self.backbone.native_reduction)     # ViT-B/16 -> 16
-            target = int(self.target_reduction)              # es. 8
-            if target > 0:
-                H, W = x.shape[-2], x.shape[-1]
-                out_h, out_w = H // target, W // target
-
-                # se shape mismatch, riallineo
-                if pi_logits.shape[-2:] != (out_h, out_w):
-                    pi_logits = F.interpolate(
-                        pi_logits,
-                        size=(out_h, out_w),
-                        mode="bilinear",
-                        align_corners=False
-                    )
-
-       # print(f"[DEBUG ZIP] native={getattr(self.backbone,'native_reduction',None)} "
-        #    f"target={self.target_reduction} "
-         #   f"logits={tuple(pi_logits.shape)} "
-          #  f"input={tuple(x.shape)}")
+        
+        # Controllo dimensioni finali (sicurezza)
+        H, W = x.shape[-2], x.shape[-1]
+        target_h, target_w = H // self.target_reduction, W // self.target_reduction
+        
+        if pi_logits.shape[-2:] != (target_h, target_w):
+            pi_logits = F.interpolate(pi_logits, size=(target_h, target_w), mode="bilinear", align_corners=False)
 
         return {
-            'pi_logits': pi_logits, # Per la Loss e per lo Stage 3
-            'features': features    # Opzionale
+            'pi_logits': pi_logits,
+            'features': features
         }

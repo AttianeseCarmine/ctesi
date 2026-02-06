@@ -154,7 +154,7 @@ class ZIPCLIPJointModel(nn.Module):
         pi_prob = torch.sigmoid(pi_logits_aligned * self.steepness)
         
         # 4. Applicazione Maschera
-        alpha = 0.5
+        alpha = 0.8
         final_density = raw_density * (alpha + (1.0 - alpha) * pi_prob)
 
         return {

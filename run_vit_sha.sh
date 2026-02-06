@@ -38,32 +38,18 @@ echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
 python -c "import torch; print('torch', torch.__version__); print('cuda_available', torch.cuda.is_available()); print('torch_cuda', torch.version.cuda)"
 nvidia-smi
 
-## TRAIN STAGE1 VIT SHA con reduction 16 
-#srun python train_stage1.py --config configs/config_vit_sha.yaml --dataset sha --model vit_b_16 --input_size 224 --reduction 16 --sliding_window --window_size 224 --stride 224   --focal_alpha 0.80 --focal_gamma 2.0 --lr 1e-4 --lr_backbone 1e-5 --total_epochs 2000 --eval_freq 5 --out checkpoints/sha/vit_b_16/stage1_recal16_fp_safe
-
-#srun python train_stage1.py --config configs/config_vit_sha.yaml --dataset sha --model vit_b_16 --input_size 224 --reduction 16 --sliding_window --window_size 224 --stride 224 --pos_weight 1.0 --lr 1e-4 --lr_backbone 1e-5 --total_epochs 2000 --eval_freq 5 --out checkpoints/sha/vit_b_16/stage1_v2_fp_safe
-#srun python train_stage1.py --config configs/config_vit_sha.yaml --input_size 224 --reduction 8 --pos_weight 3.0 --lr_backbone 1e-5  --target_recall 0.90 --save_freq 5 --out checkpoints/sha/vit_b_16/stage1_v5/
-#srun python train_stage1.py  --config configs/config_vit_sha.yaml  --input_size 224  --reduction 8  --focal_alpha 0.75  --focal_gamma 2.0  --target_recall 0.90  --lr_backbone 1e-5  --save_freq 5  --out checkpoints/sha/vit_b_16/stage1_focal_v1
+## TRAIN STAGE1 VIT SHA
+#srun python train_stage1.py   --config configs/config_vit_sha.yaml   --dataset sha    --total_epochs 500   --lr 1.0e-4   --focal_alpha 0.65    --out checkpoints/sha/vit_b_16/stage1_v9
 #srun python trainer.py  --dataset sha  --model clip_vit_b_16  --input_size 224  --reduction 8  --truncation 4  --anchor_points average  --prompt_type word  --batch_size 16  --num_crops 2  --amp  --sliding_window  --window_size 224  --stride 224  --warmup_lr 1e-3  --count_loss dmcount  --weight_count_loss 1.0  --out checkpoints/sha/vit_b_16/stage2_v2
 #srun python trainer.py --dataset sha --model clip_vit_b_16 --input_size 224 --reduction 8 --truncation 4 --anchor_points average --prompt_type word --batch_size 16 --num_crops 2 --amp --sliding_window --window_size 224 --stride 224 --count_loss dmcount --weight_count_loss 1.0 --out checkpoints/sha/vit_b_16/stage2 --resume checkpoints/sha/vit_b_16/stage2_v2/best_mae_0.pth
 
 #srun python train_stage3_v2.py --config configs/config_vit_sha.yaml --model clip_vit_b_16 --dataset sha --s1 checkpoints/sha/vit_b_16/stage1_size224/best_model.pth --s2 checkpoints/sha/vit_b_16/stage2_v2/best_mae_0.pth --out checkpoints/sha/resnet50/stage3_v2 --lr 1e-4 --total_epochs 300 --base_steepness 1.0 --max_steepness 5.0 --zip_w 1.0 --cons_w 0.05
 
 
-
-#python -c "import torch; ck=torch.load('checkpoints/sha/vit_b_16/stage1/best_model.pth', map_location='cpu'); sd=ck.get('model_state_dict', ck); k=[x for x in sd if 'zip_head.shared.0.weight' in x][0]; print('key=',k,'shape=',sd[k].shape)"
-
-
 #QUESTO LO USI PER TRAIN STAGE3 SHA
 #srun python train_stage3_v2.py --config configs/config_vit_sha.yaml --s1 checkpoints/sha/vit_b_16/stage1/best_model.pth --s2 checkpoints/sha/vit_b_16/stage2/best_mae_0.pth --input_size 448 --sliding_window --window_size 448 --stride 448  --out checkpoints/sha/vit_b_16/stage3 
-
 #srun python train_stage3_v2.py  --config configs/config_vit_sha.yaml  --s1 checkpoints/sha/vit_b_16/stage1_v2/best_model.pth  --s2 checkpoints/sha/vit_b_16/stage2_v2/best_mae_0.pth  --input_size 448  --lr 1e-4  --batch_size 4  --zip_w 0.5  --clip_w 0.1  --cons_w 20.0  --total_epochs 50  --eval_freq 1  --out ./checkpoints/sha/clip_vit_b_16/stage3_fixed_init
-
-
-
-
 #srun python train_stage3_v2.py --config_stage1 configs/config_vit_sha.yaml --config_stage2 checkpoints/sha/vit_b_16/stage2/config.yaml --s1 checkpoints/sha/vit_b_16/stage1_v2_fp_safe/best_model.pth --s2 checkpoints/sha/vit_b_16/stage2/best_mae_0.pth --lr 1e-6 --weight_decay 1e-4 --total_epochs 600 --eval_freq 5 --eval_start 1 --lambda_zip 1.0 --lambda_clip 1.0 --lambda_count 10.0 --zip_pos_weight 15.0 --amp --out checkpoints/sha/vit_b_16/stage3_joint
-
 
 
 #srun python train_stage3_v2.py   --config configs/config_vit_sha.yaml   --model clip_vit_b_16   --s1 checkpoints/sha/vit_b_16/stage1_v5/best_model.pth   --s2 checkpoints/sha/vit_b_16/stage2/best_mae_0.pth   --dataset sha   --input_size 224   --reduction 8   --lr 1e-6   --sliding_window --window_size 224 --stride 224   --out checkpoints/sha/vit_b_16/stage3_v5
@@ -71,4 +57,8 @@ nvidia-smi
 
 
 # NUOVO TRAIN STAGE3 #CONFIG -> configurazione stage2 
-srun python train_stage3_clip_vit_b_16.py --config_s1 checkpoints/sha/vit_b_16/stage1_v5/config_stage1.yaml --config_s2 checkpoints/sha/vit_b_16/stage2_size224_56/config.yaml --s1 checkpoints/sha/vit_b_16/stage1_v5/best_model.pth --s2 checkpoints/sha/vit_b_16/stage2_size224_56/best_mae_0.pth --dataset sha --model clip_vit_b_16  --input_size 224  --reduction 8  --batch_size 4  --lr 1e-5  --max_steepness 4.0  --zip_w 0.001  --total_epochs 3500  --eval_freq 5  --out checkpoints/sha/vit_b_16/stage3_v5
+
+
+
+#srun python train_stage3_clip_vit_b_16.py  --config_s1 checkpoints/sha/vit_b_16/stage1_v7_stable/config_stage1.yaml  --config_s2 checkpoints/sha/vit_b_16/stage2_size224_56/config.yaml  --s1 checkpoints/sha/vit_b_16/stage1_v7_stable/best_model.pth  --s2 checkpoints/sha/vit_b_16/stage2_size224_56/best_mae_0.pth  --dataset sha  --model clip_vit_b_16  --input_size 224  --reduction 8  --batch_size 4  --lr 1e-6  --max_steepness 2.0  --zip_w 0.001  --cons_w 0.01  --total_epochs 100  --eval_freq 1  --eval_start 1  --out checkpoints/sha/vit_b_16/stage3_v7
+srun python train_stage3_clip_vit_b_16.py  --config_s1 checkpoints/sha/vit_b_16/stage1_v7_stable/config_stage1.yaml  --config_s2 checkpoints/sha/vit_b_16/stage2_size224_56/config.yaml  --s1 checkpoints/sha/vit_b_16/stage1_v7_stable/best_model.pth  --s2 checkpoints/sha/vit_b_16/stage2_size224_56/best_mae_0.pth  --dataset sha  --model clip_vit_b_16  --input_size 224  --reduction 8  --batch_size 4  --lr 1e-6  --max_steepness 2.0  --zip_w 0.01  --cons_w 0.1  --total_epochs 600  --eval_freq 1  --eval_start 1  --out checkpoints/sha/vit_b_16/stage3_v7_zipw0.01

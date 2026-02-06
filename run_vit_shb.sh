@@ -1,6 +1,6 @@
 #!/bin/bash -l
 
-#SBATCH --job-name=s3shb_vit
+#SBATCH --job-name=s3_shb_vit
 #SBATCH --account=did_crowd_counting_339
 #SBATCH --partition=aiq
 #SBATCH --gres=gpu:1
@@ -38,8 +38,12 @@ echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
 python -c "import torch; print('torch', torch.__version__); print('cuda_available', torch.cuda.is_available()); print('torch_cuda', torch.version.cuda)"
 nvidia-smi
 
-#srun python train_stage1.py --config configs/config_vit_shb.yaml --data_dir data --batch_size 16 --out checkpoints/shb/vit_b_16/stage1_v2
 
+
+#ADDESTRAMENTO STAGE1 VIT SHB
+#srun python train_stage1.py    --config configs/config_vit_shb.yaml    --dataset shb    --total_epochs 300   --lr 5e-5   --focal_alpha 0.8  --out checkpoints/shb/vit_b_16/stage1_v8_stable
+
+#srun python train_stage1.py --config configs/config_vit_shb.yaml --data_dir data --batch_size 16 --out checkpoints/shb/vit_b_16/stage1_v2
 #srun python train_stage1.py --config configs/config_vit_shb.yaml --input_size 224 --reduction 8 --pos_weight 3.0 --lr_backbone 1e-5  --target_recall 0.90 --save_freq 5 --out checkpoints/shb/vit_b_16/stage1_v5/
 #srun python train_stage1.py   --config configs/config_vit_shb.yaml   --input_size 224   --reduction 8   --focal_alpha 0.75   --focal_gamma 2.0   --target_recall 0.90   --lr_backbone 1e-5   --save_freq 5   --out checkpoints/shb/vit_b_16/stage1_focal_v1
 #srun python trainer.py  --dataset shb  --model clip_vit_b_16  --input_size 448  --reduction 8  --truncation 4  --anchor_points average  --prompt_type word  --batch_size 16  --num_crops 2  --amp  --sliding_window  --window_size 448  --stride 448  --count_loss dmcount  --weight_count_loss 1.0 --out checkpoints/shb/vit_b_16/stage2_v2
@@ -67,4 +71,7 @@ nvidia-smi
 
 #srun python train_stage3_v2.py   --config configs/config_vit_shb.yaml   --model clip_vit_b_16   --s1 checkpoints/shb/vit_b_16/stage1_v5/best_model.pth   --s2 checkpoints/shb/vit_b_16/stage2_7/best_mae_0.pth   --dataset shb   --input_size 224   --reduction 8   --lr 1e-6   --sliding_window --window_size 224 --stride 224   --out checkpoints/shb/vit_b_16/stage3_v5
 
-srun python train_stage3_clip_vit_b_16.py --config_s1 checkpoints/shb/vit_b_16/stage1_v5/config_stage1.yaml --config_s2 checkpoints/shb/vit_b_16/stage2_7/config.yaml --s1 checkpoints/shb/vit_b_16/stage1_v5/best_model.pth --s2 checkpoints/shb/vit_b_16/stage2_7/best_mae_0.pth --dataset shb --model clip_vit_b_16  --input_size 224  --reduction 8  --batch_size 4  --lr 1e-5  --max_steepness 4.0  --zip_w 0.001  --total_epochs 3500  --eval_freq 5  --out checkpoints/shb/vit_b_16/stage3_v
+
+# TRAIN STAGE3 CLIP_VIT_B_16 SHB 
+#srun python train_stage3_clip_vit_b_16.py  --config_s1 checkpoints/shb/vit_b_16/stage1_v7_stable/config_stage1.yaml  --config_s2 checkpoints/shb/vit_b_16/stage2_7/config_stage2.yaml  --s1 checkpoints/shb/vit_b_16/stage1_v7_stable/best_model.pth  --s2 checkpoints/shb/vit_b_16/stage2_7/best_mae_0.pth  --dataset shb  --model clip_vit_b_16  --input_size 224  --reduction 8  --batch_size 4  --lr 1e-6  --max_steepness 2.0  --zip_w 0.001  --cons_w 0.01  --total_epochs 300  --eval_freq 1  --eval_start 1  --out checkpoints/shb/vit_b_16/stage3_aligned
+srun python train_stage3_clip_vit_b_16.py  --config_s1 checkpoints/shb/vit_b_16/stage1_v7_stable/config_stage1.yaml  --config_s2 checkpoints/shb/vit_b_16/stage2_7/config_stage2.yaml  --s1 checkpoints/shb/vit_b_16/stage1_v7_stable/best_model.pth  --s2 checkpoints/shb/vit_b_16/stage2_7/best_mae_0.pth  --dataset shb  --model clip_vit_b_16  --input_size 224  --reduction 8  --batch_size 4  --lr 1e-6  --max_steepness 2.0  --zip_w 0.01  --cons_w 0.1  --total_epochs 600  --eval_freq 1  --eval_start 1  --out checkpoints/shb/vit_b_16/stage3_aligned_zipw0.01

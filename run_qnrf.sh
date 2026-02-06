@@ -44,8 +44,9 @@ nvidia-smi
 
 
 
-#VIT_B_16
-
+#VIT_B_16 STAGE1 QNRF
+#srun python train_stage1.py  --config configs/config_vit_qnrf.yaml  --dataset qnrf  --model vit_b_16  --input_size 224  --reduction 8  --sliding_window  --window_size 224  --stride 224  --focal_alpha 0.80  --focal_gamma 2.0  --lr 1e-4  --lr_backbone 1e-5  --total_epochs 2000  --eval_freq 5  --out checkpoints/qnrf/vit_b_16/stage1_v6
+#srun python train_stage1.py   --config configs/config_vit_qnrf.yaml   --dataset qnrf   --total_epochs 300   --lr 5e-5   --focal_alpha 0.8   --out checkpoints/qnrf/vit_b_16/stage1_v7_stable
 #srun python train_stage1.py --config configs/config_vit_qnrf.yaml --model vit_b_16 --data_dir data --batch_size 16 --input_size 224 --reduction 8  --dataset qnrf --batch_size 16 --amp --num_crops 1 --sliding_window --window_size 224 --stride 224  --out  checkpoints/qnrf/vit_b_16/stage1_224
 
 #srun python train_stage1.py --config configs/config_vit_qnrf.yaml --dataset qnrf --model vit_b_16 --input_size 224 --reduction 16 --sliding_window --window_size 224 --stride 224 --pos_weight 2 --lr 1e-4 --lr_backbone 1e-5 --batch_size 16 --total_epochs 2000 --eval_freq 5 --amp --out checkpoints/qnrf/vit_b_16/stage1_v2
@@ -72,4 +73,6 @@ nvidia-smi
 #srun python train_stage3_v4.py --config configs/config_resnet_qnrf.yaml --s1 checkpoints/qnrf/resnet50/stage1_inputsize224/best_model.pth --s2 checkpoints/qnrf/resnet50/stage2_official/best_mae_0.pth --input_size 448 --sliding_window --window_size 448 --stride 448 --out checkpoints/qnrf/resnet50/stage3_v2
 
 
-srun python train_stage3_clip_vit_b_16.py --config_s1 checkpoints/qnrf/vit_b_16/stage1_v5/config_stage1.yaml --config_s2 checkpoints/qnrf/vit_b_16/stage2_v2/config.yaml --s1 checkpoints/qnrf/vit_b_16/stage1_v5/best_model.pth --s2 checkpoints/qnrf/vit_b_16/stage2_v2/best_mae_0.pth --dataset qnrf --model clip_vit_b_16  --input_size 224  --reduction 8  --batch_size 4  --lr 1e-5  --max_steepness 4.0  --zip_w 0.001  --total_epochs 3500  --eval_freq 5  --out checkpoints/qnrf/vit_b_16/stage3_v5
+# TRAIN STAGE3 CLIP_VIT_B_16 QNRF
+#srun python train_stage3_clip_vit_b_16.py  --config_s1 checkpoints/qnrf/vit_b_16/stage1_v7_stable/config_stage1.yaml  --config_s2 checkpoints/qnrf/vit_b_16/stage2_v2/config.yaml  --s1 checkpoints/qnrf/vit_b_16/stage1_v7_stable/best_model.pth  --s2 checkpoints/qnrf/vit_b_16/stage2_v2/best_mae_0.pth  --dataset qnrf  --model clip_vit_b_16  --input_size 224  --reduction 8  --batch_size 4  --lr 1e-6  --max_steepness 2.0  --zip_w 0.001  --cons_w 0.01  --total_epochs 100  --eval_freq 1  --eval_start 1  --out checkpoints/qnrf/vit_b_16/stage3_aligned
+srun python train_stage3_clip_vit_b_16.py  --config_s1 checkpoints/qnrf/vit_b_16/stage1_v7_stable/config_stage1.yaml  --config_s2 checkpoints/qnrf/vit_b_16/stage2_v2/config.yaml  --s1 checkpoints/qnrf/vit_b_16/stage1_v7_stable/best_model.pth  --s2 checkpoints/qnrf/vit_b_16/stage2_v2/best_mae_0.pth  --dataset qnrf  --model clip_vit_b_16  --input_size 224  --reduction 8  --batch_size 4  --lr 1e-6  --max_steepness 2.0  --zip_w 0.01  --cons_w 0.1  --total_epochs 500  --eval_freq 1  --eval_start 1  --out checkpoints/qnrf/vit_b_16/stage3_zipw0.01

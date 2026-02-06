@@ -33,7 +33,7 @@ TRAIN_STAGE1:
   
   # Learning Rates
   LR: 1.0e-4
-  LR_BACKBONE: 1.0e-4    # Basso per non rovinare i pesi iniziali
+  LR_BACKBONE: 1.0e-5    # Basso per non rovinare i pesi iniziali
   LR_HEAD: 1.0e-4        # Normale per la testa di classificazione binaria (pi_head)
   WEIGHT_DECAY: 1.0e-4
   

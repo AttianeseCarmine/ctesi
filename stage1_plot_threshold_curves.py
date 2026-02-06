@@ -182,8 +182,7 @@ def choose_threshold(stats, thresholds, target_recall, max_pos_rate):
     Scelta robusta:
     1) recall >= target_recall
     2) pos_rate <= max_pos_rate  (pos_rate = (TP+FP)/tot)
-    3) tra le valide: minimizza FP, tie-break: massimizza Precision (equivalente a ridurre FP a parità di TP)
-       (NB: prima usavi tie-break con F1; qui non lo calcoliamo più per mantenere script snello)
+    3) tra le valide: minimizza FP, tie-break: massimizza Precision
     Fallback:
     - se recall ok ma pos_rate no: min FP tra recall-ok
     - se recall non ok: max recall
@@ -218,31 +217,10 @@ def choose_threshold(stats, thresholds, target_recall, max_pos_rate):
     return chosen, status
 
 
-def pick_three_thresholds(thresholds, best_th):
-    thresholds = np.asarray(thresholds, dtype=np.float64)
-    best_idx = int(np.argmin(np.abs(thresholds - best_th)))
-
-    low_t = max(0.0, best_th - 0.20)
-    high_t = min(1.0, best_th + 0.20)
-
-    low_idx = int(np.argmin(np.abs(thresholds - low_t)))
-    high_idx = int(np.argmin(np.abs(thresholds - high_t)))
-
-    # fallback se coincidono
-    if len({low_idx, best_idx, high_idx}) < 3:
-        low_idx = int(np.argmin(np.abs(thresholds - 0.20)))
-        high_idx = int(np.argmin(np.abs(thresholds - 0.80)))
-        if len({low_idx, best_idx, high_idx}) < 3:
-            low_idx = int(np.argmin(np.abs(thresholds - 0.10)))
-            high_idx = int(np.argmin(np.abs(thresholds - 0.90)))
-
-    return low_idx, best_idx, high_idx
-
-
 # -----------------------------
-# Plot helper (stile "YOLO-like")
+# Plot helper (solo andamento)
 # -----------------------------
-def plot_metric_vs_threshold(th, y, title, y_label, out_path, points):
+def plot_metric_vs_threshold(th, y, title, y_label, out_path):
     plt.figure(figsize=(7.2, 4.8))
     plt.plot(th, y, marker="o", linewidth=1.5, markersize=3, label="Stage 1")
 
@@ -254,10 +232,6 @@ def plot_metric_vs_threshold(th, y, title, y_label, out_path, points):
     plt.ylabel(y_label)
     plt.grid(True, alpha=0.35)
 
-    for label, (t, val) in points.items():
-        plt.scatter([t], [val], s=60)
-        plt.annotate(f"{label}\nth={t:.2f}", (t, val), textcoords="offset points", xytext=(8, 8))
-
     plt.legend()
     plt.tight_layout()
     plt.savefig(out_path, dpi=220)
@@ -268,6 +242,7 @@ def main():
     parser = argparse.ArgumentParser("Stage1 curves (precision/recall vs threshold)")
     parser.add_argument("--config", type=str, required=True, help="Stage1 config yaml")
     parser.add_argument("--ckpt", type=str, required=True, help="Checkpoint .pth")
+    parser.add_argument("--backbone", type=str, default=None, help="Override backbone (es: vit_b_16, resnet50)")
     parser.add_argument("--out_dir", type=str, required=True, help="Output directory")
     args = parser.parse_args()
 
@@ -277,6 +252,15 @@ def main():
     # load config
     with open(args.config, "r") as f:
         cfg = yaml.safe_load(f)
+
+    # -----------------------------
+    # BACKBONE FIX (compatibile con config flat e nested)
+    # -----------------------------
+    bb = args.backbone or cfg.get("model") or cfg.get("backbone") or cfg.get("encoder") or cfg.get("zip_backbone")
+
+    cfg["BACKBONE"] = cfg.get("BACKBONE", {}) or {}
+    if bb is not None:
+        cfg["BACKBONE"]["TYPE"] = bb
 
     dl_args = build_args_for_dataloader(cfg)
     dataset_name = getattr(dl_args, "dataset", infer_dataset(cfg))
@@ -296,7 +280,10 @@ def main():
     print(f"    target_recall : {target_recall:.3f}")
     print(f"    max_pos_rate  : {max_pos_rate:.3f}")
     if len(thresholds) > 1:
-        print(f"    thresholds    : {thresholds[0]:.2f}..{thresholds[-1]:.2f} step={thresholds[1]-thresholds[0]:.3f} (N={len(thresholds)})")
+        print(
+            f"    thresholds    : {thresholds[0]:.2f}..{thresholds[-1]:.2f} "
+            f"step={thresholds[1]-thresholds[0]:.3f} (N={len(thresholds)})"
+        )
 
     # dataloader
     loader = get_dataloader(dl_args, split="val", ddp=False)
@@ -315,22 +302,14 @@ def main():
     chosen, status = choose_threshold(stats, thresholds, target_recall=target_recall, max_pos_rate=max_pos_rate)
 
     print(status)
-    print(f"[*] BEST th={chosen['th']:.2f} | P={chosen['prec']:.4f} R={chosen['rec']:.4f} "
-          f"| FP={chosen['fp']} | pos_rate={chosen['pos_rate']:.3f}")
+    print(
+        f"[*] BEST th={chosen['th']:.2f} | P={chosen['prec']:.4f} R={chosen['rec']:.4f} "
+        f"| FP={chosen['fp']} | pos_rate={chosen['pos_rate']:.3f}"
+    )
 
     # compute arrays
     m = compute_precision_recall(stats, thresholds)
     th = m["thresholds"]
-
-    # pick 3 thresholds far apart
-    low_idx, best_idx, high_idx = pick_three_thresholds(th, chosen["th"])
-
-    def pts(yarr):
-        return {
-            "low":  (float(th[low_idx]),  float(yarr[low_idx])),
-            "best": (float(th[best_idx]), float(yarr[best_idx])),
-            "high": (float(th[high_idx]), float(yarr[high_idx])),
-        }
 
     title_prefix = f"Stage1 ({dataset_name}, {backbone_name})"
 
@@ -348,7 +327,6 @@ def main():
         title=f"{title_prefix}: precision vs detector threshold",
         y_label="Precision",
         out_path=out_prec,
-        points=pts(m["precision"]),
     )
 
     plot_metric_vs_threshold(
@@ -356,16 +334,11 @@ def main():
         title=f"{title_prefix}: recall vs detector threshold",
         y_label="Recall",
         out_path=out_rec,
-        points=pts(m["recall"]),
     )
 
     print("[*] Saved plots:")
     print(f"    {out_prec}")
     print(f"    {out_rec}")
-
-    print("[*] Marked thresholds:")
-    for name, idx in [("low", low_idx), ("best", best_idx), ("high", high_idx)]:
-        print(f"    {name:>4}: th={th[idx]:.2f} | P={m['precision'][idx]:.3f} R={m['recall'][idx]:.3f}")
 
 
 if __name__ == "__main__":
