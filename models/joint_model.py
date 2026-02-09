@@ -4,17 +4,9 @@ import torch.nn.functional as F
 import math
 import types
 
-# ==============================================================================
-# 🛠️ PATCH DINAMICA PER VISION TRANSFORMER
-# Questa funzione sostituisce il forward originale del ViT a runtime.
-# Permette di gestire immagini di qualsiasi dimensione interpolando 
-# correttamente i Positional Embeddings.
-# ==============================================================================
 def forward_vit_dynamic(self, x: torch.Tensor):
-    # x: (Batch, 3, H, W)
     x = self.conv1(x)  # shape = [*, width, grid, grid]
     
-    # Catturiamo la geometria attuale della griglia
     B, C, H_grid, W_grid = x.shape
     
     x = x.reshape(x.shape[0], x.shape[1], -1)  # shape = [*, width, grid ** 2]
@@ -30,7 +22,6 @@ def forward_vit_dynamic(self, x: torch.Tensor):
     patch_pos_embed = pos_embed[1:, :] # (NumPatchesTrain, Dim)
     
     orig_num_patches = patch_pos_embed.shape[0]
-    # Assumiamo training quadrato (es. 14x14 = 196)
     orig_grid_size = int(math.sqrt(orig_num_patches)) 
     
     # Se la griglia attuale differisce da quella originale, interpoliamo
@@ -52,8 +43,6 @@ def forward_vit_dynamic(self, x: torch.Tensor):
     # Somma finale embeddings
     pos_embed = torch.cat((cls_pos_embed.unsqueeze(0), patch_pos_embed), dim=0)
     x = x + pos_embed
-
-    # Passaggi standard Transformer
     x = self.ln_pre(x)
     x = x.permute(1, 0, 2)  # NLD -> LND
     x = self.transformer(x)
@@ -111,8 +100,6 @@ class ZIPCLIPJointModel(nn.Module):
             print(f"[JointModel] 🛠️  ViT Backbone rilevata ({type(vit_module).__name__}).")
             print("[JointModel] 💉 Iniezione Patch: Attivazione interpolazione dinamica dei Positional Embeddings.")
             
-            # MONKEY PATCH: Sostituiamo il metodo sull'istanza specifica
-            # Usiamo MethodType per legare la funzione all'istanza (self funzionerà correttamente)
             vit_module.forward = types.MethodType(forward_vit_dynamic, vit_module)
         else:
             # Se è una ResNet o altro, non facciamo nulla
@@ -126,8 +113,7 @@ class ZIPCLIPJointModel(nn.Module):
         else:
             pi_logits_raw = out1
 
-        # 2. CLIP Stage (Contatore)
-        # Ora chiamerà la versione patchata se è un ViT
+        # 2. Stage 2
         out2 = self.stage2(x)
 
         if isinstance(out2, (tuple, list)):
@@ -135,8 +121,7 @@ class ZIPCLIPJointModel(nn.Module):
         else:
             raw_density = out2
             ebc_logits = None
-            
-        # --- ALLINEAMENTO ---
+
         # Adattiamo la maschera ZIP alla dimensione di CLIP
         target_h, target_w = raw_density.shape[2:]
         if pi_logits_raw.shape[2:] != (target_h, target_w):

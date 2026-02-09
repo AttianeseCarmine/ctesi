@@ -215,12 +215,18 @@ def main(args):
 
     # Save
     img_name_clean = os.path.splitext(os.path.basename(args.image_path))[0]
-    output_dir = "visualize"
+
+    output_dir = args.out_dir
     os.makedirs(output_dir, exist_ok=True)
 
     suffix = "vitminmax" if vit_mode else "raw"
-    out_file = f"{output_dir}/stage1_heatmap_{dataset_name}_{backbone_name}_{img_name_clean}_{suffix}.png"
-    out_file = out_file.replace("/", "_")
+
+    # sanitizzo solo i componenti del nome file (non la cartella)
+    safe_dataset = str(dataset_name).replace("/", "_")
+    safe_backbone = str(backbone_name).replace("/", "_")
+
+    filename = f"stage1_heatmap_{safe_dataset}_{safe_backbone}_{img_name_clean}_{suffix}.png"
+    out_file = os.path.join(output_dir, filename)
 
     plt.tight_layout()
     plt.savefig(out_file, dpi=120, bbox_inches="tight")
@@ -235,5 +241,6 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint", type=str, required=True)
     parser.add_argument("--image_path", type=str, required=True)
     parser.add_argument("--backbone", type=str, default=None, help="Override backbone (es: vit_b_16, resnet50)")
+    parser.add_argument("--out_dir", type=str, required=True, help="Directory di output per le immagini salvate")
     args = parser.parse_args()
     main(args)

@@ -1,3 +1,23 @@
+
+"""
+---------------------------------------------------------------------------
+TRAIN STAGE 1: Gating Network Pre-training (Zero-Inflated Branch)
+---------------------------------------------------------------------------
+Author: Carmine Attianese
+Thesis: Enhancing Crowd Counting in Complex Scenes via Zero-Inflated Vision-Language Models
+
+Description:
+This script performs the first stage of training, focusing on the binary 
+classification task (Background vs. Crowd). It trains the 'pi_head' (Gating Network) 
+to identify informative regions in the image.
+
+Key Objectives:
+1. Optimize Binary Focal Loss to handle class imbalance (mostly background).
+2. Maximize Recall (minimize False Negatives) to ensure the subsequent 
+   counting branch receives all valid crowd regions.
+---------------------------------------------------------------------------
+"""
+
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -97,6 +117,10 @@ def train_one_epoch(model, loader, criterion, optimizer, scaler, device, rank):
 
 @torch.no_grad()
 def validate_combined(model, loader, device, min_recall=0.80):
+    """
+    Validates the model by scanning multiple thresholds.
+    Strategy: Prioritizes models that maintain high Recall (safety) while maximizing F1.
+    """
     model.eval()
     all_logits, all_targets = [], []
     for batch in loader:

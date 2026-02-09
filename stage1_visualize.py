@@ -305,7 +305,6 @@ def main(args):
     print(f"[*] grid used    : {grid_name} -> {gh}x{gw}")
 
     # Plot
-    os.makedirs("visualize", exist_ok=True)
     fig, axes = plt.subplots(1, 3, figsize=(24, 8))
 
     axes[0].imshow(img_vis)
@@ -339,13 +338,21 @@ def main(args):
     axes[2].axis("off")
 
     img_name_clean = os.path.splitext(os.path.basename(args.image_path))[0]
-    out_file = f"visualize/stage1_{dataset_name}_{backbone_name}_{img_name_clean}_thr{args.threshold}.png"
-    out_file = out_file.replace("/", "_")
+
+    output_dir = args.out_dir
+    os.makedirs(output_dir, exist_ok=True)
+
+    safe_dataset = str(dataset_name).replace("/", "_")
+    safe_backbone = str(backbone_name).replace("/", "_")
+    filename = f"stage1_{safe_dataset}_{safe_backbone}_{img_name_clean}_thr{args.threshold}.png"
+
+    out_file = os.path.join(output_dir, filename)
 
     plt.tight_layout()
     plt.savefig(out_file, dpi=120, bbox_inches="tight")
     plt.close()
     print(f"\n✅ Risultato salvato in: {out_file}")
+
 
 
 if __name__ == "__main__":
@@ -356,5 +363,6 @@ if __name__ == "__main__":
     parser.add_argument("--threshold", type=float, default=0.5)
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--backbone", type=str, default=None, help="Override backbone (es: vit_b_16, resnet50)")
+    parser.add_argument("--out_dir", type=str, required=True, help="Cartella di output dove salvare la PNG")
     args = parser.parse_args()
     main(args)

@@ -41,7 +41,6 @@ class Backbone(nn.Module):
                 base = models.resnet101(weights=weights)
                 self.out_channels = 2048
             
-            # Rimuoviamo FC e AvgPool finali
             self.model = nn.Sequential(*list(base.children())[:-2])
             
         elif 'vgg' in self.name:
@@ -76,7 +75,6 @@ class Backbone(nn.Module):
         b, c, h, w = x.shape
         
         # 1. Patch Embedding (Conv2d interna di torchvision)
-        # USARE QUESTO al posto di _process_input evita l'AssertionError
         x = self.model.conv_proj(x)  # [B, 768, H/16, W/16]
         
         # Catturiamo le dimensioni della griglia
@@ -91,7 +89,6 @@ class Backbone(nn.Module):
         x = torch.cat([batch_class_token, x], dim=1)
         
         # 3. Positional Embedding Interpolation
-        # I pesi originali sono per 224x224 (14x14 patches + 1 cls)
         pos_embed = self.model.encoder.pos_embedding # [1, 197, 768]
         
         # Se il numero di patch attuali è diverso da quello di training
@@ -112,22 +109,16 @@ class Backbone(nn.Module):
             
             # Flatten di nuovo [1, 768, 28*28] -> [1, 784, 768]
             patch_pos = patch_pos.flatten(2).transpose(1, 2)
-            
-            # Riuniamo
             pos_embed = torch.cat([cls_pos, patch_pos], dim=1)
             
-        # Aggiungiamo i pos embedding interpolati
         x = x + pos_embed
         
         # 4. Encoder Layers
-        # ATTENZIONE: Chiamiamo direttamente i layers per evitare che l'encoder
-        # ri-aggiunga i pos_embedding originali sbagliati.
         x = self.model.encoder.dropout(x)
         x = self.model.encoder.layers(x)
         x = self.model.encoder.ln(x)
         
         # 5. Reshape back to Image
-        # Rimuoviamo CLS
         x = x[:, 1:] 
         
         # Reshape: [B, H*W, C] -> [B, C, H, W]

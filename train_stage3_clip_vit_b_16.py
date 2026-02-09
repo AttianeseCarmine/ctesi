@@ -1,5 +1,9 @@
-# train_stage3_clip_vit_b_16.py
-# Stage 3 (Joint ZIP + CLIP) - Full Logging, Sliding Window & Best Metric Tracking
+
+"""
+---------------------------------------------------------------------------
+TRAIN STAGE 3: Joint Optimization (Zero-Inflated CLIP)
+---------------------------------------------------------------------------
+"""
 
 import os, sys, json, yaml, shutil
 import logging
@@ -15,7 +19,6 @@ import math
 
 current_dir = os.path.abspath(os.path.dirname(__file__))
 
-# --- MONKEY PATCH PER CLIP ---
 try:
     import models.clip.utils as clip_utils
     def fixed_format_count(val, prompt_type):
@@ -34,7 +37,9 @@ from utils import setup, cleanup, init_seeds, get_config, barrier, get_dataloade
 try: from utils import get_loss_fn
 except Exception: get_loss_fn = None
 
-# --- LOGGER SETUP ---
+# =============================================================================
+# 1. LOGGING INFRASTRUCTURE
+# ======================================================================
 def setup_logger(output_dir):
     """Configura il logger per scrivere su file e console."""
     log_format = '%(asctime)s - %(levelname)s - %(message)s'
@@ -57,7 +62,9 @@ def setup_logger(output_dir):
     
     return logger
 
-# --- SLIDING WINDOW PREDICT (Logica Stage 2) ---
+# =============================================================================
+# 2. SLIDING WINDOW INFERENCE (Validation Strategy)
+# ======================================================================
 def sliding_window_predict(model, image, window_size, stride):
     """
     Esegue la predizione patch-based per mantenere l'accuratezza del ViT su immagini grandi.
@@ -118,7 +125,9 @@ def sliding_window_predict(model, image, window_size, stride):
     final_w = W // reduction
     return output_density[:, :, :final_h, :final_w]
 
-# --- SMART LOADER ---
+# =============================================================================
+# 3. ROBUST WEIGHT LOADING
+# =============================================================================
 def smart_load_weights(model, checkpoint_path, logger, model_name="Model"):
     if not os.path.exists(checkpoint_path):
         msg = f"❌ File non trovato: {checkpoint_path}"
@@ -152,7 +161,9 @@ def smart_load_weights(model, checkpoint_path, logger, model_name="Model"):
     else:
         logger.info(f"✅ [{model_name}] Loaded successfully!")
 
-# --- PARSER ---
+# =============================================================================
+# 4. ARGUMENT PARSING
+# ======================================================================
 parser = ArgumentParser("Train Stage 3")
 parser.add_argument("--config_s1", type=str, required=True)
 parser.add_argument("--config_s2", type=str, required=True)

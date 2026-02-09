@@ -1,5 +1,3 @@
-# losses/zip_nll.py
-# -*- coding: utf-8 -*-
 """
 Zero-Inflated Poisson Negative Log-Likelihood Loss.
 
@@ -49,15 +47,14 @@ def zip_nll(pi, lam, target_counts, eps=1e-8, reduction="mean"):
     is_zero = (y == 0).float()
     is_pos = 1.0 - is_zero
 
-    # log P(y=0) = log( (1-π) + π * e^{-λ} )
+
     log_p0 = torch.log((1.0 - pi) + pi * torch.exp(-lam) + eps)
 
-    # log P(y>0) = log(π) - λ + y*log(λ) - log(y!)
+
     log_pi = torch.log(pi + eps)
-    log_fact = torch.lgamma(y + 1.0)  # log(y!)
+    log_fact = torch.lgamma(y + 1.0)  
     log_py = log_pi - lam + y * torch.log(lam + eps) - log_fact
 
-    # NLL = -log P(y)
     nll = -(is_zero * log_p0 + is_pos * log_py)
 
     if reduction == "mean":

@@ -1,21 +1,6 @@
 # ============================================================
 # ZIP-CLIP-EBC: ZIP Head (Zero-Inflated Poisson)
 # ============================================================
-# Implementazione fedele al paper ZIP (Yiming-M/ZIP).
-#
-# La ZIP head modella il conteggio per blocco come:
-#   P(Y=0) = π + (1-π) * e^{-λ}
-#   P(Y=k) = (1-π) * (λ^k * e^{-λ}) / k!   per k > 0
-#
-# Dove:
-#   - π: probabilità che il blocco sia "strutturalmente vuoto"
-#   - λ: rate Poisson per blocchi non-vuoti (expected count)
-#
-# Output:
-#   - logit_pi: [B, 1, H, W] - logits per π (sigmoid → probabilità vuoto)
-#   - log_lambda: [B, 1, H, W] - log(λ) (exp → rate Poisson)
-# ============================================================
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -79,7 +64,6 @@ class ZIPHead(nn.Module):
         # ========================
         # π-Branch (Zero-Inflation)
         # ========================
-        # Output: probabilità che il blocco sia strutturalmente vuoto
         self.pi_head = nn.Sequential(
             nn.Conv2d(hidden_dim, hidden_dim // 2, kernel_size=3, padding=1, bias=False),
             nn.BatchNorm2d(hidden_dim // 2),
@@ -90,7 +74,6 @@ class ZIPHead(nn.Module):
         # ========================
         # λ-Branch (Poisson Rate)
         # ========================
-        # Output: rate Poisson (expected count per blocco non-vuoto)
         self.lambda_head = nn.Sequential(
             nn.Conv2d(hidden_dim, hidden_dim // 2, kernel_size=3, padding=1, bias=False),
             nn.BatchNorm2d(hidden_dim // 2),
@@ -117,9 +100,6 @@ class ZIPHead(nn.Module):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
         
-        # Inizializza π-head con bias negativo (favorisce "non-vuoto" all'inizio)
-        # Questo aiuta perché la maggior parte dei blocchi È vuota, 
-        # ma vogliamo che il modello impari a riconoscerli, non assumere tutto vuoto
         if self.pi_head[-1].bias is not None:
             nn.init.constant_(self.pi_head[-1].bias, -1.0)  # sigmoid(-1) ≈ 0.27
         
@@ -299,12 +279,7 @@ class ZIPHeadV2(nn.Module):
         }
 
 
-def build_zip_head(
-    in_channels: int = 512,
-    hidden_dim: int = 256,
-    version: str = "v1",
-    **kwargs
-) -> nn.Module:
+def build_zip_head(in_channels: int = 512, hidden_dim: int = 256, version: str = "v1",**kwargs) -> nn.Module:
     """
     Factory function per costruire la ZIP head.
     
@@ -325,9 +300,7 @@ def build_zip_head(
 
 
 if __name__ == "__main__":
-    # Test
-    print("Testing ZIP Heads...")
-    
+
     B, C, H, W = 2, 512, 16, 16
     x = torch.randn(B, C, H, W)
     
@@ -338,10 +311,6 @@ if __name__ == "__main__":
     
     for key, val in out_v1.items():
         print(f"  {key}: {val.shape}")
-    
-    print(f"\n  π range: [{out_v1['pi'].min():.3f}, {out_v1['pi'].max():.3f}]")
-    print(f"  λ range: [{out_v1['lambda_'].min():.3f}, {out_v1['lambda_'].max():.3f}]")
-    print(f"  Expected count sum: {out_v1['expected_count'].sum(dim=[1,2,3])}")
     
     # Test ZIPHead V2
     print("\n--- ZIPHead V2 ---")
@@ -354,4 +323,3 @@ if __name__ == "__main__":
     print(f"\n  π (vuoto) range: [{out_v2['pi'].min():.3f}, {out_v2['pi'].max():.3f}]")
     print(f"  λ range: [{out_v2['lambda_'].min():.3f}, {out_v2['lambda_'].max():.3f}]")
     
-    print("\n✅ Test completato!")
